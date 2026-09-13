@@ -19,7 +19,7 @@
 // model that answers instantly is exactly what the free-running reader in
 // e9999dc passed against and real hardware did not.
 
-`timescale 1ns / 1ns
+`timescale 1ns / 1ps
 
 // ---------------------------------------------------------------------------
 // A PSX device. Drives DAT on each falling bus-clock edge (the master samples
@@ -106,10 +106,21 @@ endmodule
 // ---------------------------------------------------------------------------
 module tb_snac_psx;
 
-localparam integer CLK_KHZ = 50000;   // 50 MHz, 20 ns period
+// Overridden from the command line: iverilog -P tb_snac_psx.CLK_KHZ=100000.
+// The module scales every timing constant from CLK_KHZ so the bus rate, the
+// ATT setup and the poll cadence are the same wall-clock intervals at every
+// supported clk rate -- a claim worth testing at the rates actually
+// instantiated, since each constant is an integer division that truncates.
+// AmigaCD drives it at 28375 (the pixel clock, which is why the parameter is
+// kHz and not MHz); Menu_MiSTer at 100000.
+parameter integer CLK_KHZ = 50000;
+
+// Half period in ns. Not an integer at 28.375 MHz, hence the 1ps precision
+// above; every check below is in wall-clock time and holds at any rate.
+localparam real HALF_NS = 1000000.0 / (2.0 * CLK_KHZ);
 
 reg clk = 0;
-always #10 clk = ~clk;
+always #(HALF_NS) clk = ~clk;
 
 reg reset  = 1;
 reg enable = 1;
@@ -306,8 +317,8 @@ initial begin
 	check8 ("unplugged id0",  id0,  8'h00);
 	check16("unplugged pad0", pad0, 16'h0000);
 
-	if (errors == 0) $display("RUN: PASS");
-	else             $display("RUN: FAIL (%0d)", errors);
+	if (errors == 0) $display("RUN: PASS (CLK_KHZ=%0d)", CLK_KHZ);
+	else             $display("RUN: FAIL (%0d errors, CLK_KHZ=%0d)", errors, CLK_KHZ);
 	$finish;
 end
 

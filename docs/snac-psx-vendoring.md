@@ -38,8 +38,19 @@ already does exactly that comparison locally against a checkout you point it at.
 
 1. Edit `rtl/snac_psx.v` here and make the bench cover the change:
    `rtl/sim/snac_psx/tb_snac_psx.sv`. Run it —
-   `cd rtl/sim/snac_psx && iverilog -g2012 -o tb_snac ../../snac_psx.v tb_snac_psx.sv && vvp tb_snac`
-   — and confirm `RUN: PASS`.
+   at every rate CI runs —
+
+       cd rtl/sim/snac_psx
+       for khz in 28375 50000 100000; do
+         iverilog -g2012 -P tb_snac_psx.CLK_KHZ=$khz -o tb_snac ../../snac_psx.v tb_snac_psx.sv
+         vvp tb_snac
+       done
+
+   — and confirm `RUN: PASS` from each. The bench is parameterised because
+   every timing constant in the module is an integer division of `CLK_KHZ`,
+   and the module's header claims the poll cadence is the same wall-clock
+   interval at all of them. 28375 is this core's rate, 100000 is
+   Menu_MiSTer's.
 2. **Falsify the new coverage.** Mutate the DUT so the behaviour you just added
    is wrong, and confirm the bench fails on the check that names it. A bench
    that has never failed has not been shown to test anything. The three
@@ -69,5 +80,7 @@ free-running reader passed against, and real hardware did not.
 | 8 | Unplugging clears a held button | every `ST_DONE` branch assigns fresh |
 
 Checks 1, 6 and 7 were each confirmed to fail under a matching DUT mutation on
-2026-09-13. Checks 2, 3, 4, 5 and 8 have not been falsified individually; treat
-them as weaker until they have been.
+2026-09-13 — check 6 at all three clk rates, checks 1 and 7 at the default.
+Checks 2, 3, 4, 5 and 8 have not been falsified individually; treat them as
+weaker until they have been. Menu_MiSTer's `docs/state-todo.md` M2 tracks that
+debt.

@@ -314,13 +314,22 @@ jobs:
       # Falsified 2026-09-13 against three DUT mutations: dropping 0x63 from
       # the axes gate, reading the raw ACK pin instead of the filtered one, and
       # shortening ATT setup. Each fails exactly the check that names it.
+      #
+      # Run at every clk rate the module is actually instantiated at: 28375
+      # here (the pixel clock, which is why the parameter is kHz and not MHz)
+      # and 100000 in Menu_MiSTer. Every timing constant in the module is an
+      # integer division of CLK_KHZ, and the header claims the poll cadence is
+      # the same wall-clock interval at all of them -- untested until now.
       - name: SNAC PSX pad reader
         run: |
           set -euo pipefail
           cd rtl/sim/snac_psx
-          iverilog -g2012 -o tb_snac ../../snac_psx.v tb_snac_psx.sv
-          vvp tb_snac | tee out.log
-          grep -q "RUN: PASS" out.log
+          for khz in 28375 50000 100000; do
+            iverilog -g2012 -P tb_snac_psx.CLK_KHZ=$khz -o tb_snac \
+              ../../snac_psx.v tb_snac_psx.sv
+            vvp tb_snac | tee out_$khz.log
+            grep -q "RUN: PASS" out_$khz.log
+          done
 
       # snac_psx.v is copied into the core repos (Menu_MiSTer today). Changing
       # it here without re-vendoring leaves those copies silently stale, and
