@@ -299,3 +299,45 @@ jobs:
           iverilog -g2012 -o tb_membank             rtl/minimig_bankmapper.v rtl/minimig_sram_bridge.v             rtl/sim/membank/tb_membank_map.sv
           vvp tb_membank | tee out_membank.log
           grep -q "RUN: PASS" out_membank.log
+
+      # snac_psx's ACK flow control, glitch filter and axes gate. The module's
+      # own header says "the testbench declares `timescale 1ns/1ns" -- that
+      # bench did not exist until 2026-09-13, in this repo or in the core repos
+      # that take a copy, and three of the four commits that built the module
+      # are fixes to behaviour only a device with real timing exposes.
+      #
+      # The pad model answers on the real schedule: ACK ~10 us after a byte's
+      # last clock edge, 2 us wide. That is the whole point. A model that
+      # answers instantly is what the original free-running reader passed
+      # against and real hardware did not.
+      #
+      # Falsified 2026-09-13 against three DUT mutations: dropping 0x63 from
+      # the axes gate, reading the raw ACK pin instead of the filtered one, and
+      # shortening ATT setup. Each fails exactly the check that names it.
+      - name: SNAC PSX pad reader
+        run: |
+          set -euo pipefail
+          cd rtl/sim/snac_psx
+          iverilog -g2012 -o tb_snac ../../snac_psx.v tb_snac_psx.sv
+          vvp tb_snac | tee out.log
+          grep -q "RUN: PASS" out.log
+
+      # snac_psx.v is copied into the core repos (Menu_MiSTer today). Changing
+      # it here without re-vendoring leaves those copies silently stale, and
+      # nothing else would notice: both copies compile and both look right.
+      #
+      # This is a stamp, not a cross-repo check -- it fails when the module
+      # changes and the stamp does not, which is the moment to re-vendor. The
+      # procedure is in docs/snac-psx-vendoring.md. Do NOT delete this step to
+      # get a green build; update rtl/snac_psx.sha256 and push the copy.
+      - name: SNAC module hash is stamped
+        run: |
+          set -euo pipefail
+          if ! sha256sum -c rtl/snac_psx.sha256; then
+            echo
+            echo "rtl/snac_psx.v changed but rtl/snac_psx.sha256 was not updated."
+            echo "Re-vendor the copy in Menu_MiSTer, then refresh the stamp:"
+            echo "    sha256sum rtl/snac_psx.v > rtl/snac_psx.sha256"
+            echo "See docs/snac-psx-vendoring.md."
+            exit 1
+          fi
