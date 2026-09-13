@@ -24,7 +24,7 @@ jobs:
   sim:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Icarus Verilog and GHDL
         run: sudo apt-get update && sudo apt-get install -y iverilog ghdl
