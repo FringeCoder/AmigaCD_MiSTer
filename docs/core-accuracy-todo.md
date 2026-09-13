@@ -805,6 +805,64 @@ invite someone to recover the original from git.
 
 ---
 
+## T23 — Settle the four unexplained timing-test rows  [no code — SUITE instrument]
+
+`docs/copperline-verification.md` records a Copperline A1200 run against the
+real-hardware column in `timing-test/compare-a1200.py`. Fourteen of the eighteen
+informative rows land within ±2 ticks of silicon and six are exact. **Rows 16,
+17, 21 and 31 do not**, and until they are explained they are marked in that doc
+as not evidence about anything — which is the right call but leaves a hole in
+the instrument we just adopted.
+
+Rows 16/17/21 are all off by the same ratio (0.906), which is a consistent
+scaling rather than phase noise, and they are exactly the per-frame
+VHPOSR-polling loops. Row 31 also misses the value Copperline's own README
+claims for itself (`0376`; we measure `035A`).
+
+Already ruled out, 2026-09-13:
+
+- Settling — capture at 32 s is byte-identical to 16 s.
+- Machine mismatch — the logged config is `tt-a1200.toml`'s machine exactly.
+- Our build — `cargo test --release --test probe_golden golden_timing_test`
+  passes pixel-for-pixel against the committed reference render.
+- Boot-insert phase — inserting at 0.00/0.02/0.05/0.11 s changes nothing, since
+  AROS boots on its own schedule regardless.
+
+The one remaining difference is the ROM: the reference run uses KS 3.1, ours
+used the bundled AROS because `tt-a1200.toml` names
+`../test-assets/Kickstart v3.1 r40.68 (1993)(Commodore)(A1200)[!].rom`, which
+upstream does not commit.
+
+**To do, needs a machine with the Kickstart images on it** — deferred
+2026-09-13 for that reason, not for difficulty. It is minutes of work:
+
+    ./copperline_probes.sh                      # clones to build/copperline
+    mkdir -p build/copperline/test-assets
+    cp "Kickstart v3.1 r40.68 (1993)(Commodore)(A1200)[!].rom" \
+       build/copperline/test-assets/
+    cd build/copperline && cargo build --release --bin copperline
+    cd timing-test && python3 compare-a1200.py
+
+Needs `rustup update stable` (rustc ≥ 1.95) and `libasound2-dev libudev-dev`
+first, or the build dies in `alsa-sys`.
+
+Three outcomes, all useful:
+
+1. The rows match under KS 3.1 → the ROM moves these four far more than the
+   "tick or two" upstream's README suggests. Update the caveat in
+   `docs/copperline-verification.md`, and treat every E-clock-referenced row as
+   ROM-bound rather than just `timing-test` and `bltprobe-pace`.
+2. They still miss → it is not the ROM, and the caveat stands but gets a second
+   ruled-out entry. Worth reporting upstream at that point, since their own
+   README figure for row 31 would not reproduce either.
+3. `compare-a1200.py` disagrees with our numbers on rows we called matching →
+   our invocation differs from their harness somewhere, and the whole table
+   needs re-taking before anything cites it.
+
+Nothing in this repository depends on the answer today. T7 does not: its scoring
+uses the beam probes and the published vAmigaTS values, neither of which touches
+these four rows.
+
 ## Order
 
 **Re-ranked 2026-08-31 (second pass).** T1, T16, T18, T21 and T21a are done. T0
@@ -834,6 +892,9 @@ off: nothing below is ordered by how much timing slack it buys any more.
    if a HOT item later needs some, but no longer a prerequisite for anything.
 8. **T5, T8** — steady cold-path accuracy work.
 9. **T9, T10, T11, T12** — each needs its own fit, and T7 in hand first.
+10. **T23** — minutes of work, but it needs a machine with the Kickstart images
+    on it, so it waits for one rather than for a slot. It gates nothing except
+    the credibility of four rows we are currently ignoring.
 
 ## What is not on this list
 

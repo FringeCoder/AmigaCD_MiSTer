@@ -154,8 +154,9 @@ The one remaining difference is the ROM: their reference run uses KS 3.1
 (`tt-a1200.toml` points at `../test-assets/`, which is not committed), ours uses
 the bundled AROS. **Anyone with a KS 3.1 image can settle this in one run** —
 drop it in `build/copperline/test-assets/` and run `compare-a1200.py` from
-`timing-test/`. Until then, rows 16, 17, 21 and 31 are not evidence about
-anything.
+`timing-test/`. That is tracked as T23 in `core-accuracy-todo.md`, with the
+exact commands and what each outcome would mean. Until then, rows 16, 17, 21
+and 31 are not evidence about anything.
 
 Related and separate: Copperline's CI deliberately excludes `timing-test` and
 `bltprobe-pace` from pixel-exact golden comparison, because the E-clock and
