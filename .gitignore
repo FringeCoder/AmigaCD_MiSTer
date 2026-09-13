@@ -47,3 +47,6 @@ build/
 # from a seed and a commit.
 seed_sweep/*.rbf
 seed_sweep/*.log
+
+# copperline_probes.sh clone and built probe disks
+build/

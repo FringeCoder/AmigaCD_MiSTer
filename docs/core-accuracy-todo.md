@@ -20,7 +20,12 @@ for chipset timing work, so every item below names what we *can* check it with:
   decrement the moment it landed. Nine bench directories run in CI today.
 - **SUITE** — a test program run on the core, scored against the *suite's own
   published reference values*. vAmigaTS ships expected output, so this needs no
-  reference Amiga — only the MiSTer and someone to read the screen.
+  reference Amiga — only the MiSTer and someone to read the screen. Since
+  2026-09-13 there is a second instrument and it does not need the someone:
+  Copperline's probe server boots on the core and takes probe uploads over the
+  serial link, returning results as ASCII hex. See
+  `docs/copperline-verification.md`; build the disks with
+  `./copperline_probes.sh`.
 - **TITLE** — regression observation against known-good software. Flink,
   Castlevania AGA, Cannon Fodder, Jim Power, save/restore, physical disc.
 - **FIT** — Quartus slacks. Both edges, always; a hold violation fails at every
@@ -350,6 +355,13 @@ This is a measurement, not a change, and it needs no reference Amiga: run the
 vAmigaTS VPOS suite on the core and score against the values vAmigaTS itself
 publishes. Do this before any other beam-counter work — it decides whether T9
 and the other HOT items are worth their timing cost.
+
+**Cheaper as of 2026-09-13.** `docs/copperline-verification.md` sets up
+Copperline's serial probe server on the core, which turns a scoring run from an
+SD-card round trip and a photographed screen into a scripted upload that returns
+hex. Its probe set also covers the beam directly, and 18 of its timing rows have
+a reading taken on real A1200 silicon — but note the four rows that document
+flags as unresolved, which include nothing this item depends on.
 
 ## T8 — Audit address decodes for over-breadth  [SIM]
 
