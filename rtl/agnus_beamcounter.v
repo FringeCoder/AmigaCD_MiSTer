@@ -149,6 +149,15 @@ parameter HHPOSR_DECODE = 1'b1;   // HHPOSR ($1DA) readback
 
 //--------------------------------------------------------------------------------------
 
+reg [10:0] vpos_rb;
+reg [10:0] vpos_d1;
+always @(posedge clk) begin
+	if (clk7_en) begin
+		vpos_d1 <= vpos;
+		vpos_rb <= vpos_d1;
+	end
+end
+
 //beamcounter read registers VPOSR and VHPOSR
 //
 // The light pen FREEZES these two registers, it does not replace them. That
@@ -173,7 +182,7 @@ wire lpen_frozen = lpen_trig & ~lpendis;
 always @(*) begin
 	if (reg_address_in[8:1]==VPOSR[8:1] || reg_address_in[8:1]==VPOSW[8:1])
 		data_out[15:0] = {long_frame,1'b0,ecs,ntsc,2'b00,{2{aga}},long_line,4'b0000,
-		                  lpen_frozen ? vpos_lpen[10:8] : vpos[10:8]};
+		                  lpen_frozen ? vpos_lpen[10:8] : vpos_rb[10:8]};
 	else if (reg_address_in[8:1]==VHPOSR[8:1] || reg_address_in[8:1]==VHPOSW[8:1])
 		// The live half is 06f30af verbatim: the internal hpos runs one colour
 		// clock ahead of what real Agnus reports, so the readback decrements it,
@@ -186,6 +195,12 @@ always @(*) begin
 		// geometry, which is already reported-space. Decrementing it again would
 		// shift the pen one colour clock left of where userspace aimed it.
 		//
+		// 2764b51 delayed the LIVE vertical readback by two clk7_en ticks
+		// (vpos_rb) so Hybris's beam polling sees the transition where real
+		// Agnus reports it. The frozen half stays on vpos_lpen for the same
+		// reason the horizontal one stays on hpos_lpen: it is already a
+		// reported-space value from userspace, not a sample of the counter.
+		//
 		// The trigger comparison in the latch below is the loose end: it matches
 		// the internal hpos against that reported-space target, so it arms one
 		// colour clock early. Left alone rather than guessed at -- the position
@@ -194,7 +209,7 @@ always @(*) begin
 		// LPEN_HPOS_MIN in support/lightpen/amiga_lightpen.cpp.
 		data_out[15:0] = lpen_frozen
 		    ? {vpos_lpen[7:0], hpos_lpen[8:1]}
-		    : {vpos[7:0], |hpos[8:1] ? hpos[8:1] - 8'd1 : ersy ? 8'd0 : htotal_cck};
+		    : {vpos_rb[7:0], |hpos[8:1] ? hpos[8:1] - 8'd1 : ersy ? 8'd0 : htotal_cck};
 	// HHPOSR ($1DA, ECS, read only) reports the same horizontal counter VHPOSR
 	// does, in the low byte and on its own. WinUAE custom.cpp: HHPOSR() returns
 	// the light pen latch when one is armed and hhpos otherwise, masked to

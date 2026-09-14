@@ -55,6 +55,9 @@ the 74d6ce0 netlist` — and `output_files/Minimig.sta.rpt` now reads:
 Both positive, TNS 0.000 on every domain, worst-case domain
 `emu|pll|...|counter[0].output_counter|divclk`. So all four chipset commits are
 affordable as they stand, `7ce2980` included, and nothing needs re-fitting.
+(`7ce2980` has since been reverted upstream -- see T10 -- so the netlist this
+paragraph measured no longer exists. The slack numbers below are still the last
+fitted ones; the `da7632e` sync has not been fitted.)
 
 What survives is the premise, not the blocker. **+0.117 ns of setup margin is
 thin, and it took a sweep to find it** — seed 1 in that same sweep was rejected
@@ -487,6 +490,17 @@ margin; a one colour clock shift does not close it.
 The constant is still a hand-tuned hack with no recorded derivation. That is a
 separate question from whether `7ce2980` disturbed it, and it did not. Written up
 at the site.
+
+**Moot upstream as of the `da7632e` sync (2026-09-14).** `0bf2182` reverted
+`7ce2980` outright -- it regressed TEK Rampage's DMA scheduling -- so `hpos_slot`
+no longer exists and `strhor_denise` is back on the raw counter alongside
+`strhor_paula`. The Hybris beam polling `7ce2980` was aimed at is now handled in
+`agnus_beamcounter.v` instead: `2764b51` delays the *vertical* readback by two
+`clk7_en` ticks (`vpos_rb`) and touches no DMA timing at all. The finding above
+stands as the record of what was checked; nothing in it is load-bearing now.
+
+`strhor_paula`'s hand-tuned constant remains underived either way, and with the
+grid back where it was it is exactly as it was before `7ce2980`.
 
 ## T11 — Bitplane pointer write delay  [SIM] — HOT — [SCOPED 2026-08-31, NOT ATTEMPTED]
 

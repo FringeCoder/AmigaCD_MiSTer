@@ -308,7 +308,7 @@ wire  dma_ref;        //refresh dma slots
 
 agnus_refresh ref1
 (
-	.hpos(hpos_slot),
+	.hpos(hpos),
 	.dma(dma_ref)
 );
 
@@ -326,7 +326,7 @@ agnus_diskdma dsk1
 	.dmal(disk_dmal),
 	.dmas(disk_dmas),
 	.speed(floppy_speed),
-	.hpos(hpos_slot),
+	.hpos(hpos),
 	.wr(wr_dsk),
 	.reg_address_in(reg_address),
 	.reg_address_out(reg_address_dsk),
@@ -348,7 +348,7 @@ agnus_audiodma aud1
 	.dma(dma_aud),
 	.audio_dmal(audio_dmal),
 	.audio_dmas(audio_dmas),
-	.hpos(hpos_slot),
+	.hpos(hpos),
 	.reg_address_in(reg_address),
 	.reg_address_out(reg_address_aud),
 	.data_in(data_in),
@@ -375,7 +375,6 @@ agnus_bitplanedma bpd1
 	.dmaena(bplen),
 	.vpos(vpos),
 	.hpos(hpos),
-	.hpos_slot(hpos_slot),
 	.hde(hde),
 	.dma(dma_bpl),
 	.reg_address_in(reg_address),
@@ -400,7 +399,7 @@ agnus_spritedma spr1
 	.ecs(ecs),
 	.reqdma(req_spr),
 	.ackdma(ack_spr),
-	.hpos(hpos_slot),
+	.hpos(hpos),
 	.vpos(vpos),
 	.vbl(vbl),
 	.vblend(vblend),
@@ -430,7 +429,6 @@ agnus_copper cp1
 	.blit_busy(blit_busy),
 	.vpos(vpos[7:0]),
 	.hpos(hpos),
-	.hpos_slot(hpos_slot),
 	.data_in(data_in),
 	.reg_address_in(reg_address),
 	.reg_address_out(reg_address_cop),
@@ -480,8 +478,6 @@ agnus_blitter bl1
 //--------------------------------------------------------------------------------------
 
 wire  [8:0] hpos;      //alternative horizontal beam counter
-wire  [7:0] hpos_slot_hi = (hpos[8:1] == htotal[8:1]) ? 8'd0 : hpos[8:1] + 8'd1;
-wire  [8:0] hpos_slot = {hpos_slot_hi, hpos[0]};
 wire [10:0] vpos;      //vertical beam counter
 
 assign ss_vpos_out = vpos;
@@ -528,22 +524,12 @@ agnus_beamcounter  bc1
 //horizontal strobe for Denise
 //in real Amiga Denise's hpos counter seems to be advanced by 4 CCKs in regards to Agnus' one
 //Minimig isn't cycle exact and compensation for different data delay in implemented Denise's video pipeline is required
-assign strhor_denise = hpos_slot==(6*2-1) && (vpos > 8 || ecs) ? 1'b1 : 1'b0;
-// Left on the raw counter deliberately, and checked again after 7ce2980 moved
-// the slot grid. 7ce2980's own message says so: "hde and strhor_paula are
-// deliberately left on the raw counter ... strhor_paula is an existing hack that
-// is out of scope here." Only strhor_denise moved to hpos_slot, because Denise
-// has no hde port and takes its entire horizontal phase from that strobe.
-//
-// The advance cannot have moved this one into a race either. strhor_paula
-// latches Paula's per-line DMA request registers (paula_audio.v: dmal <= dmareq
-// on strhor), and the earliest consumer of those is the channel 0 audio slot at
-// hpos_slot 9'b0001_0010_1 in agnus_audiodma.v -- colour clock 18 on the grid,
-// so 17 raw, against this strobe at raw colour clock 6. Eleven colour clocks of
-// margin, and a one colour clock grid shift does not close that.
-//
-// The hand-tuned constant itself is still a hack, and still unexplained. That is
-// a separate question from whether 7ce2980 disturbed it, which it did not.
+// 0bf2182 reverted 7ce2980's slot-grid advance outright -- it regressed TEK
+// Rampage's DMA scheduling -- so hpos_slot is gone and every consumer, this
+// strobe included, is back on the raw counter. The Hybris beam-polling fix
+// 7ce2980 was reaching for is now done in agnus_beamcounter.v instead, by
+// delaying the vertical readback (2764b51), which touches no DMA timing.
+assign strhor_denise = hpos==(6*2-1) && (vpos > 8 || ecs) ? 1'b1 : 1'b0;
 assign strhor_paula = hpos==(6*2+1) ? 1'b1 : 1'b0; //hack
 
 //--------------------------------------------------------------------------------------
