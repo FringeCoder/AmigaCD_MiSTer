@@ -145,6 +145,14 @@ jobs:
       # with no gun connected they froze at zero, so it hung with no light pen
       # in the room. The bench counts distinct VHPOSR values across a frame;
       # against the old code that count is 1.
+      #
+      # It also pins down 2764b51's readback delay and where it may be applied:
+      # the live vertical readback must be vpos held one colour clock, and a pen
+      # freeze must still report the userspace-supplied position undelayed.
+      # Both directions were falsified on 2026-09-14 -- dropping the delay fails
+      # the lag check, moving it onto the frozen path fails the three freeze
+      # checks -- so a future upstream merge cannot quietly put it on the wrong
+      # side of that split.
       - name: Light pen latch
         run: |
           set -euo pipefail
