@@ -59,7 +59,16 @@ localparam CONF_STR = {
 	// 1, so inserting anything above here shifts them and must shift
 	// SS_INFO_BASE with it. Order after "restored" is ss_ctrl's load_fail_code
 	// 1..6, in order, then the unknown-code fallback.
-	"Save state: saved,",
+	//
+	// "captured", not "saved": this fires when ss_ctrl finishes writing the
+	// state into the DDR3 window, which is the whole of what the CORE can know.
+	// The file is written afterwards by the host, and it can fail there -- a
+	// window that never updates, a short write, a full card. Calling this one
+	// "saved" told the user the save existed before anything had reached the
+	// card, and the host's own "Save state N written" then looked like a second
+	// message about the same event rather than the one that settles it.
+	// The host draws a progress bar between the two; see process_ss().
+	"Save state: captured,",
 	"Save state: FAILED,",
 	"State restored,",
 	"Restore: not a save state,",
