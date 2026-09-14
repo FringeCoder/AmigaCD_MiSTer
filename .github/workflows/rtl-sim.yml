@@ -196,6 +196,25 @@ jobs:
           vvp tb_ll | tee out_ll.log
           grep -q "RUN: PASS" out_ll.log
 
+      # denise_sprites_shifter's SPRxDATx write vs shift-register load ordering.
+      # A bus write landing exactly on the SPRxPOS match used to always reach
+      # that line's copy; real Denise decides by SPRxCTL bit 0 (WinUAE
+      # 1e47b230). Sixteen cells, of which only the two collision ones changed
+      # when the fix landed -- the other eleven are the guard that it moved
+      # nothing else, which is the half of this that is easy to break.
+      #
+      # Falsified 2026-09-14 against three mutations: the pre-fix load (fails
+      # the two bit0=0 collision checks), dropping the bit-0 term (fails the
+      # two bit0=1 ones), and swapping the per-register selects (fails the two
+      # bit0=0 ones). Each is caught by the checks that name it.
+      - name: Sprite SPRxDATx write ordering
+        run: |
+          set -euo pipefail
+          cd rtl/sim/sprites
+          iverilog -g2012 -o tb ../../denise_sprites_shifter.v tb_sprite_write_order.sv
+          vvp tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # ADKCON attach: one audio channel modulating the next. Covers both
       # directions of the old failure -- the modulator being heard when it should
       # be silent, and the modulation not happening -- plus channel 3, which is

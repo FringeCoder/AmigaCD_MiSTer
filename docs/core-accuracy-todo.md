@@ -807,6 +807,52 @@ invite someone to recover the original from git.
 
 ---
 
+## T23 — Sprite SPRxDATx write vs shift-register load ordering  [SIM] — [DONE 2026-09-14, taken from kblood `e6f8fbe`]
+
+`rtl/denise_sprites_shifter.v:136`. Not our finding: kblood wrote it on
+`hybris-copper-sprite-shift-fix` (2026-08-19) and it was picked up here on
+2026-09-14 during a survey of what his repos carry that we do not.
+
+Minimig copies SPRxDATA/SPRxDATB into the display shift register one `clk7`
+after the SPRxPOS horizontal match, and a bus write commits half a `clk7` after
+its write cycle — so a write landing **on** the match cycle always reached that
+same line's copy. Real Denise decides by SPRxCTL bit 0, the sprite's sub-pixel
+horizontal bit (WinUAE `1e47b230`, Toni Wilen 2014-04-17): bit 0 clear copies
+first, so the previously loaded value displays and the new one waits for the
+next match; bit 0 set stores first. Writes to SPRxPOS/SPRxCTL on the match
+cycle always copy first, which this core already did — the match is evaluated
+against the pre-write `hstart`/`armed`.
+
+The fix keeps a pre-write copy of each data register (`datla_pre`/`datlb_pre`)
+and selects it at load time when a write to that register collided with the
+match and `hstart[0]` was clear. `hstart[0]` is SPRxCTL bit 0 here, assigned at
+`:104`, so the rule keys off exactly the bit WinUAE keys off.
+
+This is the copper timing problem `e3a8a91` ("Fix Hybris scoreboard (#73)
+(#169)") suspected it was masking. That commit dropped the `load_del` stage and
+compensated with a flat one-`clk7` output pipeline, which restores pixel
+alignment but applies no ordering rule at all. The pipeline is left alone —
+only the collision case changes. Addresses the still-open jitter half of
+MiSTer-devel/Minimig-AGA_MiSTer#73.
+
+**Verified [SIM].** `rtl/sim/sprites/tb_sprite_write_order.sv`, in CI: four
+write positions (none, one cycle before, on the match, one cycle after) against
+both values of SPRxCTL bit 0, on both data registers. Thirteen checks, of which
+**two** change with the fix; the other eleven are byte-identical before and
+after it, which is the independent confirmation of kblood's claim that a quiet
+load, an odd-x collision, and a write either side of the match are untouched.
+
+Falsified against three mutations rather than trusted: the pre-fix load fails
+the two `bit0=0` collision checks, dropping the bit-0 term fails the two
+`bit0=1` ones, and swapping the per-register selects fails the two `bit0=0`
+ones. Each mutation is caught by the checks that name it and no others.
+
+**Not verified.** No fit and no hardware. The change adds two 64-bit registers
+and a 64-bit 2:1 mux in Denise's sprite path, eight times over — one per sprite
+— so it is not free in area, and the select lands on the shift register's load
+path. Both need a fit before this goes near hardware. The behaviour it targets
+is Hybris's sprite jitter, so Hybris is the title to watch [TITLE].
+
 ## Order
 
 **Re-ranked 2026-08-31 (second pass).** T1, T16, T18, T21 and T21a are done. T0
