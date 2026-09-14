@@ -55,6 +55,9 @@ the 74d6ce0 netlist` — and `output_files/Minimig.sta.rpt` now reads:
 Both positive, TNS 0.000 on every domain, worst-case domain
 `emu|pll|...|counter[0].output_counter|divclk`. So all four chipset commits are
 affordable as they stand, `7ce2980` included, and nothing needs re-fitting.
+(`7ce2980` has since been reverted upstream -- see T10 -- so the netlist this
+paragraph measured no longer exists. The slack numbers below are still the last
+fitted ones; the `da7632e` sync has not been fitted.)
 
 What survives is the premise, not the blocker. **+0.117 ns of setup margin is
 thin, and it took a sweep to find it** — seed 1 in that same sweep was rejected
@@ -488,6 +491,17 @@ The constant is still a hand-tuned hack with no recorded derivation. That is a
 separate question from whether `7ce2980` disturbed it, and it did not. Written up
 at the site.
 
+**Moot upstream as of the `da7632e` sync (2026-09-14).** `0bf2182` reverted
+`7ce2980` outright -- it regressed TEK Rampage's DMA scheduling -- so `hpos_slot`
+no longer exists and `strhor_denise` is back on the raw counter alongside
+`strhor_paula`. The Hybris beam polling `7ce2980` was aimed at is now handled in
+`agnus_beamcounter.v` instead: `2764b51` delays the *vertical* readback by two
+`clk7_en` ticks (`vpos_rb`) and touches no DMA timing at all. The finding above
+stands as the record of what was checked; nothing in it is load-bearing now.
+
+`strhor_paula`'s hand-tuned constant remains underived either way, and with the
+grid back where it was it is exactly as it was before `7ce2980`.
+
 ## T11 — Bitplane pointer write delay  [SIM] — HOT — [SCOPED 2026-08-31, NOT ATTEMPTED]
 
 `agnus_bitplanedma.v:223`: "TODO high bitplane pointer probably needs a delay
@@ -792,6 +806,118 @@ in muscle memory. Typing the old name should do the right thing, not fail and
 invite someone to recover the original from git.
 
 ---
+
+## T23 — Sprite SPRxDATx write vs shift-register load ordering  [SIM] — [DONE 2026-09-14, taken from kblood `e6f8fbe`]
+
+`rtl/denise_sprites_shifter.v:136`. Not our finding: kblood wrote it on
+`hybris-copper-sprite-shift-fix` (2026-08-19) and it was picked up here on
+2026-09-14 during a survey of what his repos carry that we do not.
+
+Minimig copies SPRxDATA/SPRxDATB into the display shift register one `clk7`
+after the SPRxPOS horizontal match, and a bus write commits half a `clk7` after
+its write cycle — so a write landing **on** the match cycle always reached that
+same line's copy. Real Denise decides by SPRxCTL bit 0, the sprite's sub-pixel
+horizontal bit (WinUAE `1e47b230`, Toni Wilen 2014-04-17): bit 0 clear copies
+first, so the previously loaded value displays and the new one waits for the
+next match; bit 0 set stores first. Writes to SPRxPOS/SPRxCTL on the match
+cycle always copy first, which this core already did — the match is evaluated
+against the pre-write `hstart`/`armed`.
+
+The fix keeps a pre-write copy of each data register (`datla_pre`/`datlb_pre`)
+and selects it at load time when a write to that register collided with the
+match and `hstart[0]` was clear. `hstart[0]` is SPRxCTL bit 0 here, assigned at
+`:104`, so the rule keys off exactly the bit WinUAE keys off.
+
+This is the copper timing problem `e3a8a91` ("Fix Hybris scoreboard (#73)
+(#169)") suspected it was masking. That commit dropped the `load_del` stage and
+compensated with a flat one-`clk7` output pipeline, which restores pixel
+alignment but applies no ordering rule at all. The pipeline is left alone —
+only the collision case changes. Addresses the still-open jitter half of
+MiSTer-devel/Minimig-AGA_MiSTer#73.
+
+**Verified [SIM].** `rtl/sim/sprites/tb_sprite_write_order.sv`, in CI: four
+write positions (none, one cycle before, on the match, one cycle after) against
+both values of SPRxCTL bit 0, on both data registers. Thirteen checks, of which
+**two** change with the fix; the other eleven are byte-identical before and
+after it, which is the independent confirmation of kblood's claim that a quiet
+load, an odd-x collision, and a write either side of the match are untouched.
+
+Falsified against three mutations rather than trusted: the pre-fix load fails
+the two `bit0=0` collision checks, dropping the bit-0 term fails the two
+`bit0=1` ones, and swapping the per-register selects fails the two `bit0=0`
+ones. Each mutation is caught by the checks that name it and no others.
+
+**Not verified.** No fit and no hardware. The change adds two 64-bit registers
+and a 64-bit 2:1 mux in Denise's sprite path, eight times over — one per sprite
+— so it is not free in area, and the select lands on the shift register's load
+path. Both need a fit before this goes near hardware. The behaviour it targets
+is Hybris's sprite jitter, so Hybris is the title to watch [TITLE].
+
+## T24 — A DDR3 read return was dropped when waitrequest was high  [SIM] — [DONE 2026-09-14]
+
+`rtl/ddram_ctrl.v:535`. Found by following kblood's `b20764a`
+(`z2-fix-lost-readdata`, 2026-08-11) during the 2026-09-14 survey; the analysis,
+the save-state interaction and the bench are ours.
+
+Avalon separates the two signals: `waitrequest` gates **command acceptance**,
+`readdatavalid` marks **returned data**, and a slave may hold the first while
+pulsing the second. State 1 waited for `~ram_busy & ram_dout_ready`, so a return
+arriving on a busy cycle was dropped — `ram_dout` is valid only during the pulse
+— and the state machine then waited for a second pulse that never comes. One
+drop wedges master 0 permanently.
+
+Both clients of state 1 are real paths:
+
+- **CPU cache fill.** `ramready` never rises, so the 68k stalls on a fast-RAM
+  fetch. Z2 fast RAM decodes to DDR3 here (`memory_router.v:73,111,120`), so
+  with Z2 enabled this is a stalled machine — which is what "Z2 fast RAM + a
+  mounted CD boots to a black screen" looks like from outside.
+- **Bridge DMA read.** `dmaACK` never pulses, so the Akiko TX command fetch from
+  Z2 never returns. `ddram_ctrl.v:131` already records that the CD32 BIOS hangs
+  when it allocates the Akiko CMD block in Z2.
+
+`ram_busy` is high more often under DDR3 contention, and the Akiko sector DMA is
+what generates that contention — which is why the host-side sector pacing in
+`AmigaCD` (`343c75c`, and kblood's `c7bd6d4`) makes the failure rare without
+explaining it. This is the explanation. The gate is inherited: upstream
+Minimig-AGA and kblood's `amigacd-core` both have it.
+
+**Our fix is not upstream's fix.** `b20764a` drops the `~ram_busy` term outright.
+That is correct in a tree without a save-state port and wrong in this one:
+`ss_port_own` is registered behind `ss_ram_idle`, so the grant lands on the first
+idle edge — and the state machine can arm on that same edge, because both read
+pre-edge values. A read parked that way sits in state 1 while `ss` owns master 0,
+and the next `ram_dout_ready` is `ss`'s. Taking it fed the save state payload
+into a CPU cache fill: **silent corruption, not a hang**. So the shipped
+condition is `ram_dout_ready & ~ss_port_own` — the Avalon half fixed, the
+ownership half kept.
+
+`ss_freeze` is deliberately not in that condition. A return owed to master 0
+while the freeze is up belongs to master 0, and consuming it is strictly better
+than the status quo — that is the "pulse arriving mid-freeze would be lost"
+hazard described at `ddram_ctrl.v:386`, which the quiesce avoids rather than
+handles.
+
+**Verified [SIM].** `rtl/sim/ddram/tb_ddram_readreturn.sv`, in CI. A slave model
+that asserts waitrequest exactly on its return cycles, both clients driven, a
+64-read soak under uncorrelated waitrequest, and a constructed grant edge with a
+read parked under `ss` ownership. The parked-edge check counts the cycles it
+actually spent in that state and fails if that count is zero, because the first
+version of it passed without ever entering the window.
+
+Falsified three ways, which is the whole argument for the exact condition:
+
+| condition | result |
+|---|---|
+| `~ram_busy & ram_dout_ready` (original) | both clients hang; 64/64 soak reads lost |
+| `ram_dout_ready` (upstream's fix) | CPU fill takes the ss payload in 6 of 8 constructions |
+| `ram_dout_ready & ~ss_port_own` (shipped) | passes |
+
+**Not verified.** No fit and no hardware. The change removes a term from a
+condition in the DDR3 path, so it should not cost timing, but the Z2 + CD boot
+is the test that matters and it has not been run. If it holds, the host-side
+sector pacing in `AmigaCD` becomes a fidelity choice rather than a crutch —
+see that repo's `343c75c`.
 
 ## Order
 

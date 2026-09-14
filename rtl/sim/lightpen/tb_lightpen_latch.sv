@@ -131,6 +131,29 @@ module tb_lightpen_latch;
 	reg [15:0] seen_prev;
 	integer i;
 
+	// Reference model for 2764b51's readback delay: VPOSR/VHPOSR report a vpos
+	// held two clk7_en ticks -- one colour clock -- behind the counter, so
+	// Hybris's beam polling sees the vertical transition where real Agnus
+	// reports it. Same clock and same enable as the DUT's own pair, so a
+	// correct DUT matches this exactly, cycle for cycle.
+	reg [10:0] ref_d1, ref_rb;
+	always @(posedge clk) if (clk7_en) begin
+		ref_d1 <= vpos;
+		ref_rb <= ref_d1;
+	end
+
+	reg     check_lag = 0;
+	integer lag_mismatch = 0;   // readback disagreed with the delayed reference
+	integer lag_observed = 0;   // ticks where the delay was actually visible
+
+	// Checked continuously rather than at sample points: the window where the
+	// delay shows is the two ticks after a line ends, which a mid-line sample
+	// like every other check here steps straight over.
+	always @(posedge clk) if (check_lag && !reset) begin
+		if (data_out[15:8] !== ref_rb[7:0]) lag_mismatch = lag_mismatch + 1;
+		if (ref_rb[7:0]    !== vpos[7:0])   lag_observed = lag_observed + 1;
+	end
+
 	initial begin
 		repeat (40) @(posedge clk);
 		reset = 0;
@@ -185,6 +208,29 @@ module tb_lightpen_latch;
 		wr(A_BPLCON0, 16'h0008);
 		goto_line(11'd150);
 		expect_eq("sentinel is not a pen position", {8'd150, SAMPLE_RD});
+
+		// ---- 7. the live vertical readback lags the counter by one CCK -------
+		// Guards our half of the 2764b51 resolution: the delay goes on the LIVE
+		// path. Check 4 above guards the other half -- a pen freeze still
+		// reports vpos_lpen, which is already in reported space and must not be
+		// delayed again.
+		wr(A_BPLCON0, 16'h0000);
+		reg_address_in = A_VHPOSR;
+		check_lag = 1;
+		for (i = 100; i < 106; i = i + 1) goto_line(i[10:0]);
+		check_lag = 0;
+
+		if (lag_mismatch != 0) begin
+			$display("FAIL: vertical readback is not the delayed vpos (%0d ticks disagreed)",
+			         lag_mismatch);
+			errors = errors + 1;
+		end else if (lag_observed == 0) begin
+			$display("FAIL: the delay window was never entered -- this check proved nothing");
+			errors = errors + 1;
+		end else begin
+			$display("ok:   vertical readback tracks vpos delayed one CCK (%0d ticks inside the window)",
+			         lag_observed);
+		end
 
 		if (errors == 0) $display("RUN: PASS");
 		else             $display("RUN: FAIL (%0d)", errors);
