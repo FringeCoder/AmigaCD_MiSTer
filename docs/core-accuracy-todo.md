@@ -853,6 +853,72 @@ and a 64-bit 2:1 mux in Denise's sprite path, eight times over — one per sprit
 path. Both need a fit before this goes near hardware. The behaviour it targets
 is Hybris's sprite jitter, so Hybris is the title to watch [TITLE].
 
+## T24 — A DDR3 read return was dropped when waitrequest was high  [SIM] — [DONE 2026-09-14]
+
+`rtl/ddram_ctrl.v:535`. Found by following kblood's `b20764a`
+(`z2-fix-lost-readdata`, 2026-08-11) during the 2026-09-14 survey; the analysis,
+the save-state interaction and the bench are ours.
+
+Avalon separates the two signals: `waitrequest` gates **command acceptance**,
+`readdatavalid` marks **returned data**, and a slave may hold the first while
+pulsing the second. State 1 waited for `~ram_busy & ram_dout_ready`, so a return
+arriving on a busy cycle was dropped — `ram_dout` is valid only during the pulse
+— and the state machine then waited for a second pulse that never comes. One
+drop wedges master 0 permanently.
+
+Both clients of state 1 are real paths:
+
+- **CPU cache fill.** `ramready` never rises, so the 68k stalls on a fast-RAM
+  fetch. Z2 fast RAM decodes to DDR3 here (`memory_router.v:73,111,120`), so
+  with Z2 enabled this is a stalled machine — which is what "Z2 fast RAM + a
+  mounted CD boots to a black screen" looks like from outside.
+- **Bridge DMA read.** `dmaACK` never pulses, so the Akiko TX command fetch from
+  Z2 never returns. `ddram_ctrl.v:131` already records that the CD32 BIOS hangs
+  when it allocates the Akiko CMD block in Z2.
+
+`ram_busy` is high more often under DDR3 contention, and the Akiko sector DMA is
+what generates that contention — which is why the host-side sector pacing in
+`AmigaCD` (`343c75c`, and kblood's `c7bd6d4`) makes the failure rare without
+explaining it. This is the explanation. The gate is inherited: upstream
+Minimig-AGA and kblood's `amigacd-core` both have it.
+
+**Our fix is not upstream's fix.** `b20764a` drops the `~ram_busy` term outright.
+That is correct in a tree without a save-state port and wrong in this one:
+`ss_port_own` is registered behind `ss_ram_idle`, so the grant lands on the first
+idle edge — and the state machine can arm on that same edge, because both read
+pre-edge values. A read parked that way sits in state 1 while `ss` owns master 0,
+and the next `ram_dout_ready` is `ss`'s. Taking it fed the save state payload
+into a CPU cache fill: **silent corruption, not a hang**. So the shipped
+condition is `ram_dout_ready & ~ss_port_own` — the Avalon half fixed, the
+ownership half kept.
+
+`ss_freeze` is deliberately not in that condition. A return owed to master 0
+while the freeze is up belongs to master 0, and consuming it is strictly better
+than the status quo — that is the "pulse arriving mid-freeze would be lost"
+hazard described at `ddram_ctrl.v:386`, which the quiesce avoids rather than
+handles.
+
+**Verified [SIM].** `rtl/sim/ddram/tb_ddram_readreturn.sv`, in CI. A slave model
+that asserts waitrequest exactly on its return cycles, both clients driven, a
+64-read soak under uncorrelated waitrequest, and a constructed grant edge with a
+read parked under `ss` ownership. The parked-edge check counts the cycles it
+actually spent in that state and fails if that count is zero, because the first
+version of it passed without ever entering the window.
+
+Falsified three ways, which is the whole argument for the exact condition:
+
+| condition | result |
+|---|---|
+| `~ram_busy & ram_dout_ready` (original) | both clients hang; 64/64 soak reads lost |
+| `ram_dout_ready` (upstream's fix) | CPU fill takes the ss payload in 6 of 8 constructions |
+| `ram_dout_ready & ~ss_port_own` (shipped) | passes |
+
+**Not verified.** No fit and no hardware. The change removes a term from a
+condition in the DDR3 path, so it should not cost timing, but the Z2 + CD boot
+is the test that matters and it has not been run. If it holds, the host-side
+sector pacing in `AmigaCD` becomes a fidelity choice rather than a crutch —
+see that repo's `343c75c`.
+
 ## Order
 
 **Re-ranked 2026-08-31 (second pass).** T1, T16, T18, T21 and T21a are done. T0

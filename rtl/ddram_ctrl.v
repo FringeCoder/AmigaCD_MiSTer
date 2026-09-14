@@ -507,7 +507,32 @@ always @ (posedge sysclk) begin
 						ddr_swap   <= ramshared;
 					end
 				end
-			1: if(~ram_busy & ram_dout_ready) begin
+			// Avalon splits waitrequest from readdatavalid: the first gates
+			// COMMAND acceptance, the second marks returned data, and a slave
+			// may hold one while pulsing the other. Waiting for ~ram_busy here
+			// dropped any return that arrived on a busy cycle -- ram_dout is
+			// valid only during the pulse -- and wedged master 0 permanently,
+			// because state 1 then waits for a second pulse that never comes.
+			// From outside that is a 68k stalled on a fast-RAM fetch, which is
+			// what Z2 + CD "boots to a black screen" looked like. State 0's
+			// ~ram_busy gate and the strobe clearing above are the real Avalon
+			// rules and stay exactly as they were.
+			//
+			// ~ss_port_own replaces the ownership half of what ram_busy was
+			// doing here, and only that half. ss_port_own is registered behind
+			// ss_ram_idle, so the grant lands on the first idle edge -- and the
+			// state machine can arm on that same edge, since both read pre-edge
+			// values. That parks a read in state 1 with ss owning master 0, and
+			// the next ram_dout_ready is then ss's, not ours. Taking it fed the
+			// save state payload into a CPU cache fill: silent corruption, not a
+			// hang. rtl/sim/ddram/tb_ddram_readreturn.sv constructs that edge.
+			//
+			// ss_freeze is deliberately NOT in this condition. A return owed to
+			// master 0 while the freeze is up belongs to master 0 and must be
+			// consumed -- that is the "pulse arriving mid-freeze would be lost"
+			// hazard described at the top of this file, which the quiesce avoids
+			// rather than handles.
+			1: if(ram_dout_ready & ~ss_port_own) begin
 					// Distinguish a bridge-DMA read (single 16-bit word, no
 					// cache_fill) from a CPU cache fill (4-beat burst into
 					// cpu_cache_new). dma_read_in_flight was set at state-0

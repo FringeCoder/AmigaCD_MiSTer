@@ -86,6 +86,29 @@ jobs:
           vvp tb_fwd | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # ddram_ctrl's read-return acceptance. Avalon lets a slave hold
+      # waitrequest while pulsing readdatavalid; state 1 used to wait for both
+      # to be favourable, so a return landing on a busy cycle was dropped and
+      # master 0 wedged for good -- a 68k stalled on a fast-RAM fetch, which is
+      # what Z2 fast RAM + a mounted CD looked like from outside.
+      #
+      # The bench drives both clients of that state (CPU cache fill, bridge DMA
+      # read) against a slave model that asserts waitrequest exactly on its
+      # return cycles, and separately constructs the save-state grant edge,
+      # where a read can be parked with ss owning master 0. Falsified three
+      # ways on 2026-09-14: the original condition hangs both clients, the
+      # unqualified fix feeds the save state payload into a CPU cache fill, and
+      # the shipped form passes. Do NOT simplify the condition back to either.
+      - name: DDR3 read return under waitrequest
+        run: |
+          set -euo pipefail
+          cd rtl/sim/ddram
+          iverilog -g2012 -o tb ../../ddram_ctrl.v ../../cpu_cache_new.v \
+            ../../A2065/a2065_ddram_arbiter.v ../cache/dpram_sim.v \
+            tb_ddram_readreturn.sv
+          vvp tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # cpu_cache_new's fill-vs-snoop interlock. sdram_ctrl drives snoop_act from
       # chipWE, so a change to the chip write path shows up here.
       - name: Cache fill/snoop interlock
