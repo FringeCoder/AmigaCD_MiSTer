@@ -402,6 +402,26 @@ measurement the item asks for, and the 36 failing rows are still uncounted here.
 What changed is that the beam readback now has a check that runs on every push
 and a second implementation to argue with.
 
+**The suite itself, 2026-09-15.** vAmigaTS is real and its references are
+photographs of an Amiga 500 — 2,967 of them, plus 18 of an A1200. That is the
+hardware this document's opening says we do not have. `Agnus/Registers/VPOS/`
+holds `probe1`–`13`, `vprobe1`–`4` and `ersy1`/`2`, and 13×16 + 4×16 + 2×16 =
+**304** — the row count above, by the names above. The numbers in this item came
+from there.
+
+A harness to run it on the core is `scripts/vamigats.sh` in the userspace repo
+(`docs/vamigats.md`); the whole loop is scriptable over ssh through
+`/dev/MiSTer_cmd`. Two constraints found by trying rather than by assuming: the
+suite is 3.6 GB so it is not vendored, and a Kickstart is required — a probe
+booted on a ROM replacement stops after printing its title.
+
+The comparison cannot be automatic: the reference is a photograph of a CRT and a
+pixel diff would measure the camera. So the durable artifact is
+`docs/reference/vamigats-groundtruth.tsv` over there — the values read off the
+photographs, after which a bench can hold this RTL to them with no suite, no
+photo and no machine. Two of nineteen probes are transcribed. That file is what
+would finally let this item be scored.
+
 ## T8 — Audit address decodes for over-breadth  [SIM]
 
 `74d6ce0` narrowed Gary's custom-register decode from all of `$C0-$DF` to
