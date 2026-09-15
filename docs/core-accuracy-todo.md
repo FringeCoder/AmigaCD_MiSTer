@@ -975,6 +975,49 @@ off: nothing below is ordered by how much timing slack it buys any more.
    if a HOT item later needs some, but no longer a prerequisite for anything.
 8. **T5, T8** — steady cold-path accuracy work.
 9. **T9, T10, T11, T12** — each needs its own fit, and T7 in hand first.
+10. **T25** — not effort, a decision: which repository owns the `ss_*` family.
+   Ranked last only because nothing is currently blocked on it, but it moves to
+   the top the moment a change touches the save state path, because that is
+   when picking the wrong copy costs a silent revert.
+
+## T25 — Eleven files are shared with FringeCoder/AmigaCD and one is stamped  [no code]
+
+`rtl/snac_psx.v` now carries `rtl/snac_psx.vendor` and a CI step, matching
+`FringeCoder/Menu_MiSTer`. That leaves ten more files that also exist in
+`FringeCoder/AmigaCD` with nothing recording that they are copies. Eight are
+byte-identical today:
+
+    rtl/snac_cd32.v        rtl/ss_dma.v           rtl/ss_regshadow.v
+    rtl/ss_crc32.v         rtl/ss_freeze_phase.v  rtl/ss_serdes.v
+                           rtl/ss_quiesce.v       rtl/ss_state_fanout.sv
+
+**Two have already drifted**, which is why this is a listed item and not a
+tidiness note. Measured 2026-09-15, `diff` against the AmigaCD copy:
+
+| file | differing lines |
+|---|---|
+| `rtl/ss_ctrl.v` | 64 |
+| `rtl/ss_state.vh` | 23 |
+
+Neither divergence was announced anywhere. `ss_ctrl.v` here carries
+`ss_peek_scan` where the AmigaCD copy still says `ss_rom_scan`, so this side is
+ahead — but "ahead" is an inference from reading both, which is exactly the work
+a stamp exists to make unnecessary.
+
+**What is blocked on a decision, not on effort.** `snac_psx.v` was stampable
+because ownership is written down in two places (the module header and
+`rtl/README.md` in AmigaCD). For the `ss_*` family nothing says which repository
+owns them, and the two that differ cannot be stamped in either direction without
+first deciding which copy is right. The benches are split across both — AmigaCD
+has `rtl/tb/ss_*_tb.v`, this repo has `rtl/sim/ssmux/` — so neither side is
+obviously the home.
+
+Worth settling before the next feature touches the save state path, because a
+fix applied to the wrong copy is reverted by the next sync and is invisible
+until then. The mechanism costs nothing once the direction is chosen:
+`snac_vendor_check.sh` is already generic apart from two filenames.
+
+---
 
 ## What is not on this list
 

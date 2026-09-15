@@ -40,6 +40,25 @@ jobs:
           set -euo pipefail
           bash syntax_check.sh
 
+      # rtl/snac_psx.v is a copy. FringeCoder/AmigaCD owns it, and a shared file
+      # with no stamp is a file that diverges silently -- two of the ten modules
+      # this repository shares with that one already have. This catches the copy
+      # being edited HERE, which is the common case and the cheap one: the fix is
+      # to move the edit to the canonical repo and re-vendor.
+      #
+      # It cannot catch the canonical side moving; that needs a checkout of the
+      # other repository, which CI has no token for. Deliberately a hard local
+      # check rather than a cross-repo one that degrades to "skipped" when a
+      # secret is absent. FringeCoder/Menu_MiSTer runs this same check on its own
+      # copy, against the same stamp.
+      #
+      # If this fails, do NOT delete it as stale or restamp to make it green.
+      # See rtl/snac_psx.vendor.
+      - name: snac_psx.v matches its vendor stamp
+        run: |
+          set -euo pipefail
+          ./snac_vendor_check.sh
+
       # The CIA CNT revert is permanent and will be re-applied on every future
       # Minimig-AGA sync, so it needs a control rather than a memory.
       #
