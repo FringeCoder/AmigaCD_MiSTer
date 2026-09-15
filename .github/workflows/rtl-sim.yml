@@ -30,7 +30,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y iverilog ghdl
 
       # Parse every synthesisable source standalone. Nothing else in this
-      # workflow ever parses Minimig.sv, and most of rtl/ is never parsed at
+      # workflow ever parses AmigaCD.sv, and most of rtl/ is never parsed at
       # all, so a plain syntax error otherwise passes CI in full and surfaces
       # only 18 seconds into a 35-minute Quartus fit. Seconds of runtime, and it
       # fails the cheap way. See syntax_check.sh for what it does and does not

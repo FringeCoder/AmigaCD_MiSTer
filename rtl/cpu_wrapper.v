@@ -48,7 +48,7 @@ module cpu_wrapper
 	// ss_cpu_d0..a7 must already have finished by then. Driven from
 	// ss_ctrl's save_busy, which rises the moment a save is requested and
 	// stays high until it completes, so this also holds the CPU for the
-	// whole dump. Minimig.sv ORs load_busy and the restore fan-out's busy
+	// whole dump. AmigaCD.sv ORs load_busy and the restore fan-out's busy
 	// into it as well, so the same park covers a restore -- including the
 	// window in which the fan-out is writing the register file, which must
 	// not overlap the CPU executing again.
@@ -72,7 +72,7 @@ module cpu_wrapper
 	// asking for one or the memory has answered. Parking at ~cpu_req used to
 	// give this for free; parking at an instruction boundary does not, and the
 	// freeze must not be taken with a cache fill half done, because it hands
-	// the SDRAM CPU port to ss_dma. Minimig.sv latches this into cpu_boundary.
+	// the SDRAM CPU port to ss_dma. AmigaCD.sv latches this into cpu_boundary.
 	output            ss_bus_settled,
 	output     [15:0] ss_sr,
 	output     [31:0] ss_usp,
@@ -224,7 +224,7 @@ memory_router u_memory_router
 	.sel_dd        (sel_dd        ),
 	.sel_rtg       (sel_rtg       ),
 	.ramaddr       (ramaddr       ),
-	.zram_sel      (              )  // unused at CPU side; Minimig.sv recomputes per port
+	.zram_sel      (              )  // unused at CPU side; AmigaCD.sv recomputes per port
 );
 
 
@@ -359,7 +359,7 @@ cpu_inst_p
   .ss_usp(ss_usp),
 
   // Restore path -- TG68K only. fx68k has no equivalent write port and is
-  // locked out of the savestate path in Minimig.sv.
+  // locked out of the savestate path in AmigaCD.sv.
   .ss_wr_index(ss_wr_index),
   .ss_wr_data(ss_wr_data),
   .ss_wr_en(ss_wr_en),

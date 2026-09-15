@@ -260,8 +260,8 @@ set_global_assignment -name VERILOG_FILE rtl/ss_freeze_phase.v
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ss_state_fanout.sv
 set_global_assignment -name VERILOG_FILE hps_ext.v
 set_global_assignment -name VERILOG_FILE rtl/cdda.v
-set_global_assignment -name SDC_FILE Minimig.sdc
-set_global_assignment -name SYSTEMVERILOG_FILE Minimig.sv
+set_global_assignment -name SDC_FILE AmigaCD.sdc
+set_global_assignment -name SYSTEMVERILOG_FILE AmigaCD.sv
 set_instance_assignment -name FAST_INPUT_REGISTER ON -to SDRAM_DQ[*]
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to HDMI_TX_CLK
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to HDMI_TX_DE

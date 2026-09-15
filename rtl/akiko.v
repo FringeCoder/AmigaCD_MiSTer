@@ -124,7 +124,7 @@ module akiko #(parameter NATIVE_CD32 = 0)
 	output            hps_nvr_dirty,
 
 	// NVRAM load-from-disk port. Driven by hps_io.ioctl_download via a
-	// gated signal at Minimig.sv level (NVR_LOAD_INDEX). Lives in HPS
+	// gated signal at AmigaCD.sv level (NVR_LOAD_INDEX). Lives in HPS
 	// reset domain — fires before BIOS sees the I²C bus, so there's no
 	// contention between the load and BIOS-initiated I²C transactions.
 	// nvr_load_we does NOT set the dirty flag (loading saved state must
@@ -321,7 +321,7 @@ if (NATIVE_CD32) begin : g_cd
 	// (nvram_io / nvram_dir). The slave only ever pulls SDA low for
 	// ACK / read-data; SCL is master-only. NVRAM LOAD from disk does NOT
 	// touch this bus — it goes through akiko_nvram's load_we port directly
-	// (driven by hps_io.ioctl_download from Minimig.sv).
+	// (driven by hps_io.ioctl_download from AmigaCD.sv).
 	wire       nvram_scl_master_drive = nvram_dir[7];
 	wire       nvram_sda_master_drive = nvram_dir[6];
 	wire       nvram_scl_bus = nvram_scl_master_drive ? nvram_io[7] : 1'b1;

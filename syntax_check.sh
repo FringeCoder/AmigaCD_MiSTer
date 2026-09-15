@@ -4,10 +4,11 @@
 # a real syntax error.
 #
 # Why this exists: every step in .github/workflows/rtl-sim.yml compiles a small
-# subset of files for one bench, so most of rtl/ -- and all of Minimig.sv -- is
+# subset of files for one bench, so most of rtl/ -- and all of AmigaCD.sv -- is
 # never parsed by CI at all. A plain syntax error therefore passes the whole
-# pipeline and surfaces only in Quartus. On 2026-08-27 a missing comma in a
-# Minimig.sv port list produced
+# pipeline and surfaces only in Quartus. On 2026-08-27 a missing comma in the
+# top level's port list produced -- the file was named Minimig.sv then, which is
+# why the quote below says so:
 #
 #     Error (10170): Verilog HDL syntax error at Minimig.sv(1728) near text: "."
 #
@@ -32,9 +33,9 @@ NULLOUT=${TMPDIR:-/tmp}/syntax_check.$$
 BUILD_ID_STUB=0
 trap 'rm -f "$NULLOUT"; [ "$BUILD_ID_STUB" = 1 ] && rm -f build_id.v' EXIT
 
-# Minimig.sv includes build_id.v, which Quartus generates from its pre-flow
+# AmigaCD.sv includes build_id.v, which Quartus generates from its pre-flow
 # script (sys/build_id.tcl) and .gitignore excludes. A clean checkout therefore
-# does not have it, and Minimig.sv -- the single file this gate exists to cover,
+# does not have it, and AmigaCD.sv -- the single file this gate exists to cover,
 # since nothing else in CI parses it -- fails on the missing include rather than
 # on anything about its own syntax. Icarus reports that as a syntax error on the
 # line AFTER the include, which is a thoroughly misleading place to start

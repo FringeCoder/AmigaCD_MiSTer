@@ -9,6 +9,13 @@ re-checked against the current code and its citations still resolve. What
 changed: T0's numbers were superseded by a seed choice and are corrected below,
 and T1, T16, T18, T21 and T21a are now done.
 
+**File names, 2026-09-15.** The Quartus project was renamed `Minimig` →
+`AmigaCD`, so the top level is `AmigaCD.sv` and the fit writes
+`output_files/AmigaCD.rbf`. Citations below were updated. Two blocks were not:
+the tool output quoted verbatim under T21 and T21a, which named the file as it
+was called on the day it was produced. Those are transcripts, not paths to
+follow.
+
 ## How we verify, given no reference Amiga
 
 We cannot measure against real hardware. That rules out the method upstream uses
@@ -47,7 +54,7 @@ first recorded **setup −0.347, hold −0.401**, TNS −3.303 / −1.104 at the
 might have to be dropped.
 
 **They did not.** The merge closed on seed 10 — `1a4c33e quartus: seed 10 for
-the 74d6ce0 netlist` — and `output_files/Minimig.sta.rpt` now reads:
+the 74d6ce0 netlist` — and `output_files/AmigaCD.sta.rpt` now reads:
 
     Worst-case setup slack is 0.117
     Worst-case hold slack is 0.234
@@ -213,7 +220,7 @@ runs is how the last two rotted.
 waiting to be ported — its DUT does not exist in this branch at all. `6f8abca`
 added the bench and its two runners without `rtl/chipset_bus_trace.v`, which
 `git log --all` finds only on the unmerged `hybris-blit-vpos-trace` and
-`hybris-blt-dest-trace` branches, and nothing in `rtl/` or `Minimig.sv`
+`hybris-blt-dest-trace` branches, and nothing in `rtl/` or `AmigaCD.sv`
 references `chipset_bus_trace` or `uio_cs_trace`. `run_chipset_trace.do`
 compiles a file that is not there, so it has never run under any simulator here.
 
@@ -633,7 +640,7 @@ fixed in 2026-08, so removing it costs no capability and cannot break behaviour.
 Both halves are true. What does not follow is that any of it is *costing*
 anything.
 
-- Of the module's seventy ports, exactly two had no consumer in `Minimig.sv`:
+- Of the module's seventy ports, exactly two had no consumer in `AmigaCD.sv`:
   `peek_acks` and `peek_timeout`. **Quartus was therefore already removing them
   and the counters behind them**, so deleting them buys nothing that has not
   already been bought.
@@ -716,10 +723,10 @@ UI.
 ## T21 — CI has no syntax gate, so a parse error costs a 35-minute fit  [SIM] — [DONE 2026-08-31]
 
 Every step in `rtl-sim.yml` compiles a small subset of files for one bench.
-**Nothing ever parses `Minimig.sv`, and most of `rtl/` is never parsed at all.**
+**Nothing ever parses `AmigaCD.sv`, and most of `rtl/` is never parsed at all.**
 A plain syntax error therefore passes CI in full and surfaces only in Quartus.
 
-That is not hypothetical. On 2026-08-27 a missing comma in a `Minimig.sv` port
+That is not hypothetical. On 2026-08-27 a missing comma in a `AmigaCD.sv` port
 list produced
 
     Error (10170): Verilog HDL syntax error at Minimig.sv(1728) near text: "."
@@ -753,7 +760,7 @@ The single syntax hit above is real, not a false positive:
     module cdda #(parameter CLK_RATE)      // rtl/cdda.v:2
 
 Quartus accepts it; Icarus rejects it under both `-g2012` and `-g2005-sv`. There
-is exactly one instantiation, `Minimig.sv:2878` (`cdda #(28375160)`), so giving
+is exactly one instantiation, `AmigaCD.sv:2878` (`cdda #(28375160)`), so giving
 it `= 0` costs nothing and makes the file parse anywhere. Needed before T21 can
 be clean, and worth doing regardless for portability.
 

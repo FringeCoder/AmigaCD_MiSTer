@@ -47,3 +47,19 @@ build/
 # from a seed and a commit.
 seed_sweep/*.rbf
 seed_sweep/*.log
+
+# Icarus bench output. Every rtl/sim/<area>/ step compiles to a bare executable
+# named tb or tb_something and tees its run to a log. CI builds these in a fresh
+# checkout, so they only appear after running the suite locally -- which is
+# exactly when a `git add -A` sweeps a few megabytes of binaries into a commit.
+#
+# The negations matter and are not tidiness: bench SOURCES are also called
+# tb_*, so without them a NEW bench file would be silently ignored and pushed
+# as a workflow step that compiles nothing. Already-tracked files are unaffected
+# by .gitignore either way, so the damage would land on the next bench written,
+# not on the ones here -- the worst kind of trap.
+tb*
+!tb*.v
+!tb*.sv
+!tb*.vh
+out*.log

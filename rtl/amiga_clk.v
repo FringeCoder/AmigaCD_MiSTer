@@ -17,7 +17,7 @@ module amiga_clk
   // one-of-four phase decodes inside agnus/denise/the sram bridge true every
   // clk_28 cycle instead of one in four. Stopping the generator is the only
   // way to hold the Amiga side still. Used by the save state freeze, which
-  // drives a second instance of this module (see Minimig.sv) so the
+  // drives a second instance of this module (see AmigaCD.sv) so the
   // sdram_ctrl/chipdma_arb timebase keeps running -- refresh must not stop,
   // and the state dump reads chip RAM through sdram_ctrl's CPU port.
   input        ce,

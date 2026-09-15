@@ -4,10 +4,19 @@ An Amiga CD32 / CDTV core for the [MiSTer board](https://github.com/MiSTer-devel
 forked from [Minimig-AGA_MiSTer](https://github.com/MiSTer-devel/Minimig-AGA_MiSTer)
 by way of [kblood's native-akiko line](https://github.com/kblood/Minimig-AGA-cd32-cdtv-native-akiko).
 
-It identifies itself as `AmigaCD` (`CONF_STR`, `Minimig.sv:39`) and runs beside a
-stock Minimig install rather than replacing it. The userspace half lives in
-[FringeCoder/AmigaCD](https://github.com/FringeCoder/AmigaCD) — several features
-below are split across the two, and this file says which half does what.
+It identifies itself as `AmigaCD` (`CONF_STR`, `AmigaCD.sv:39`) and runs beside a
+stock Minimig install rather than replacing it. **This is the core half** — the
+RTL that Quartus fits into the `.rbf`. The userspace half, a `Main_MiSTer` fork,
+lives in [FringeCoder/AmigaCD](https://github.com/FringeCoder/AmigaCD) — several
+features below are split across the two, and this file says which half does what.
+
+> **Renamed 2026-09-15.** This repository was
+> `FringeCoder/Minimig-AGA-cd32-cdtv-native-akiko`, character-for-character the
+> same name as [kblood's](https://github.com/kblood/Minimig-AGA-cd32-cdtv-native-akiko),
+> which is the fork it descends from and not the same thing. GitHub redirects
+> the old URL, so existing clones and links keep working; `git remote set-url`
+> when convenient. The Quartus project was renamed in the same change —
+> `Minimig.qpf` → `AmigaCD.qpf`, and the fit now writes `output_files/AmigaCD.rbf`.
 
 **What this fork is for:** running CD32 and CDTV software the way the hardware
 did — including from a real CD-ROM drive — with save states, real floppy drives,
@@ -294,7 +303,7 @@ Keyboard special keys:
 bash syntax_check.sh    # parse every synthesisable source, seconds
 ```
 
-Run it before proposing anything — nothing else parses `Minimig.sv` or `rtl/`
+Run it before proposing anything — nothing else parses `AmigaCD.sv` or `rtl/`
 until Quartus does, 18 seconds into a fit.
 
 Benches live in `rtl/sim/<area>/`, compile with `iverilog -g2012`, and print
@@ -303,6 +312,14 @@ mutate the DUT so the behaviour is wrong and confirm the bench fails on the chec
 that names it. A check that has never failed has not been shown to test anything,
 and checks here have been caught passing vacuously more than once — comparing
 defaults against defaults, or never reaching the state they claimed to test.
+
+The Quartus project is `AmigaCD.qpf` (revision `AmigaCD`; `AmigaCD_Q13.qpf` is
+the Quartus 13.1 revision, kept for the older toolchain). A fit writes
+`output_files/AmigaCD.rbf`, which `scripts/stage-output.sh` in the userspace
+repository copies to the card as `amigacd.rbf`. It was called `Minimig` until
+2026-09-15; older logs, `seed_sweep/` bitstreams and `releases/Minimig_*.rbf`
+still carry that name, and `releases/` in particular holds upstream's builds
+rather than ours, so those were left alone.
 
 Timing is closed with `seed_sweep_both.sh`, which requires both slacks positive.
 The open accuracy and timing backlog, ranked and each item citing a file and

@@ -16,10 +16,10 @@
 // they cannot see is whether that sequence LANDS: they end at the module's
 // pins. This bench instantiates the real minimig -- real agnus, real paula,
 // real denise, real gary -- alongside a real ss_regshadow, wires them the way
-// Minimig.sv does including both amiga_clk instances and the freeze, and then
+// AmigaCD.sv does including both amiga_clk instances and the freeze, and then
 // reads the chipset's own registers to see whether a replay arrived.
 //
-// The Amiga-side clock generator matters and is not a detail. Minimig.sv runs
+// The Amiga-side clock generator matters and is not a detail. AmigaCD.sv runs
 // two amiga_clk instances: a master that always runs, and the Amiga's own,
 // whose `ce` is dropped by the save state freeze. ss_regshadow is clocked by
 // the master, minimig.v by the Amiga's. Every chipset register write in the
@@ -67,7 +67,7 @@ always #17.618 clk_r = ~clk_r;      // 28.37516 MHz
 
 reg rst_n = 1'b0;
 
-// The master generator: Minimig.sv's first amiga_clk, ce tied high. It clocks
+// The master generator: AmigaCD.sv's first amiga_clk, ce tied high. It clocks
 // ss_ctrl and ss_regshadow and never stops.
 wire        m_clk7_en;
 wire        m_clk7n_en;
@@ -87,7 +87,7 @@ amiga_clk master_clk
 	.reset_n  (rst_n      )
 );
 
-// The freeze and the replay tick, from the same module Minimig.sv instantiates
+// The freeze and the replay tick, from the same module AmigaCD.sv instantiates
 // rather than a copy of its logic. That is the point of the module: the
 // sampling phase decides whether a replay's ticks move the beam, and a bench
 // carrying its own copy of the rule would agree with itself while the hardware
@@ -134,7 +134,7 @@ assign clk = clk_r;
 
 // ------------------------------------------------------------- the shadow
 //
-// Same instantiation as Minimig.sv: master clk7_en, tap in, replay out.
+// Same instantiation as AmigaCD.sv: master clk7_en, tap in, replay out.
 
 reg        sh_ld_we    = 1'b0;
 reg  [7:0] sh_ld_addr  = 8'd0;
@@ -163,7 +163,7 @@ ss_regshadow shadow
 	.ld_addr        (sh_ld_addr       ),
 	.ld_data        (sh_ld_data       ),
 	.replay_start   (sh_start         ),
-	// The RESTORED INTREQ, as Minimig.sv now wires it -- ss_state_fanout's
+	// The RESTORED INTREQ, as AmigaCD.sv now wires it -- ss_state_fanout's
 	// unpacked field, not Paula's live output. Driven by the test so the two
 	// can be told apart.
 	.intreq_in      (restored_intreq  ),
@@ -415,7 +415,7 @@ initial begin
 	// INTREQ, the one chipset register carried by VALUE rather than rebuilt
 	// from bus writes: Paula raises its bits in hardware as well as by write,
 	// so an accumulator drifts within a frame. The replay writes it back with
-	// the set/clear dance from ss_regshadow's intreq_in, which Minimig.sv now
+	// the set/clear dance from ss_regshadow's intreq_in, which AmigaCD.sv now
 	// drives from the RESTORED vector rather than from Paula's live output --
 	// wired live, a restore reinstalled the pending interrupts of the machine
 	// it was replacing.
