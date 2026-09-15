@@ -691,6 +691,26 @@ found this week with no `MiSTer-devel/Main_MiSTer` row at all and a Minimig-AGA
 pin two syncs out of date. Both fixed. Worth a habit of checking it at the top
 of every sync rather than the bottom.
 
+**`README.md` joins that list as of 2026-09-15**, when it stopped being upstream
+Minimig-AGA's file and became this fork's. It carries a feature list with a
+status mark per row — hardware-tested, simulation only, or written but not run —
+and an attribution table for everything taken from another project. Both go
+stale in the same silent way: a status mark that is no longer true is worse than
+no mark, because a reader has no way to tell it has rotted.
+
+Two rules, stated in the README itself so they travel with it:
+
+- a status mark moves in the same commit as the evidence that moves it, not
+  afterwards;
+- anything taken from another project gets a row when it arrives, naming the
+  commit. Cherry-picks keep their authorship in git; the table is what makes
+  that visible to someone reading the repository rather than its history.
+
+Everything currently marked as not-yet-hardware-tested is the same list as the
+hardware queue: a fit and seed check, a Z2 8M cold boot with a CD mounted, a save
+state restore round trip, Hybris for the sprite ordering fix, and the save state
+UI.
+
 ---
 
 ## T21 — CI has no syntax gate, so a parse error costs a 35-minute fit  [SIM] — [DONE 2026-08-31]
