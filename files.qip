@@ -39,5 +39,5 @@ set_global_assignment -name VERILOG_FILE rtl/ss_freeze_phase.v
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ss_state_fanout.sv
 set_global_assignment -name VERILOG_FILE rtl/cdda.v
 set_global_assignment -name VERILOG_FILE hps_ext.v
-set_global_assignment -name SYSTEMVERILOG_FILE Minimig.sv
-set_global_assignment -name SDC_FILE Minimig.sdc
+set_global_assignment -name SYSTEMVERILOG_FILE AmigaCD.sv
+set_global_assignment -name SDC_FILE AmigaCD.sdc

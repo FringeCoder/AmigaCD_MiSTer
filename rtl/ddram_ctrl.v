@@ -87,7 +87,7 @@ module ddram_ctrl
 	// whole payload -- with the Amiga still running, because a rejected
 	// restore must be a no-op. Those reads are master-0 traffic issued while
 	// ss_freeze is still low, so the takeover condition here is ss_load_busy
-	// OR ss_freeze, not ss_freeze alone. Minimig.sv parks the CPU on the same
+	// OR ss_freeze, not ss_freeze alone. AmigaCD.sv parks the CPU on the same
 	// ss_load_busy, so the port is not being fought over -- it is idle by the
 	// time the grant below fires.
 	//
@@ -368,7 +368,7 @@ end
 // a cycle, and a single unpinned cycle at the freeze instant is enough for the
 // state machine below to arm a bridge DMA write -- exactly the write this pin
 // exists to keep out of a snapshot. (At the freeze instant ss_ram_idle is
-// already true, because Minimig.sv puts it in cpu_boundary, so the grant
+// already true, because AmigaCD.sv puts it in cpu_boundary, so the grant
 // follows on the very next edge.) During a restore ss_freeze is low until the
 // payload has been checked, so the pin is driven by ss_port_own alone up to
 // that point, which is what lets the port go idle in the first place.
@@ -389,7 +389,7 @@ assign ss_readdatavalid = ss_port_own & ram_dout_ready;
 // or an Akiko/CDTV bridge read, which the quiesce's blitter/disk/audio
 // conditions say nothing about) would wait for it forever. Rather than
 // change the state machine, the freeze simply waits for the port to be
-// quiet: ss_ram_idle joins cpu_boundary in Minimig.sv, the same way
+// quiet: ss_ram_idle joins cpu_boundary in AmigaCD.sv, the same way
 // blit_busy does.
 reg ss_rd_outstanding;
 always @(posedge sysclk) begin

@@ -22,19 +22,19 @@ while tasklist 2>/dev/null | grep -qiE "quartus_(map|fit|asm|sta)"; do
     sleep 30
 done
 
-"$Q/quartus_fit" --seed="$SEED" Minimig > "$OUT/one_fit_$SEED.log" 2>&1 || {
+"$Q/quartus_fit" --seed="$SEED" AmigaCD > "$OUT/one_fit_$SEED.log" 2>&1 || {
     echo "seed $SEED: FIT FAILED, see $OUT/one_fit_$SEED.log"; exit 1; }
-"$Q/quartus_sta" Minimig > "$OUT/one_sta_$SEED.log" 2>&1
+"$Q/quartus_sta" AmigaCD > "$OUT/one_sta_$SEED.log" 2>&1
 
 # Read both from THIS run's report.
-su=$(grep -oE "Worst-case setup slack is [-0-9.]+" output_files/Minimig.sta.rpt | tail -1 | grep -oE "[-0-9.]+$")
-ho=$(grep -oE "Worst-case hold slack is [-0-9.]+"  output_files/Minimig.sta.rpt | tail -1 | grep -oE "[-0-9.]+$")
+su=$(grep -oE "Worst-case setup slack is [-0-9.]+" output_files/AmigaCD.sta.rpt | tail -1 | grep -oE "[-0-9.]+$")
+ho=$(grep -oE "Worst-case hold slack is [-0-9.]+"  output_files/AmigaCD.sta.rpt | tail -1 | grep -oE "[-0-9.]+$")
 su=${su:-0}; ho=${ho:-0}
 
-"$Q/quartus_asm" Minimig > "$OUT/one_asm_$SEED.log" 2>&1
-cp output_files/Minimig.rbf "$OUT/Minimig_final_seed$SEED.rbf"
+"$Q/quartus_asm" AmigaCD > "$OUT/one_asm_$SEED.log" 2>&1
+cp output_files/AmigaCD.rbf "$OUT/AmigaCD_final_seed$SEED.rbf"
 
-printf "seed %s  setup %s  hold %s  -- rbf saved to %s/Minimig_final_seed%s.rbf\n" \
+printf "seed %s  setup %s  hold %s  -- rbf saved to %s/AmigaCD_final_seed%s.rbf\n" \
        "$SEED" "$su" "$ho" "$OUT" "$SEED"
 
 bad=$(awk -v a="$su" -v b="$ho" 'BEGIN{print (a<=0 || b<=0) ? 1 : 0}')

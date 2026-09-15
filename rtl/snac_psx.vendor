@@ -1,0 +1,28 @@
+# Provenance of rtl/snac_psx.v, which is copied from the repo below.
+#
+# This module is NOT canonical here. It is copied from FringeCoder/AmigaCD, the
+# userspace repo, which owns it -- see rtl/README.md there, and the module's own
+# header. Do not fix a bug in the copy: fix it there, then re-vendor, or the
+# copies silently diverge and the next sync quietly reverts you.
+#
+# Three repositories carry this file: FringeCoder/AmigaCD (canonical),
+# FringeCoder/Menu_MiSTer and this one. The two core copies are checked against
+# this stamp rather than against each other, because a check between the cores
+# would pass while both drifted away from the file they were taken from.
+#
+# CI checks the local file against the sha256 below. If that step fails, either
+# the copy was edited in place (don't) or a re-vendor updated the file and not
+# this stamp. Procedure: rtl/README.md in the FringeCoder/AmigaCD repo.
+#
+# There is no bench for this module in this repository -- it lives in
+# FringeCoder/Menu_MiSTer (rtl/sim/snac_psx/), which is where the reader was
+# brought up because the Menu core fits in a quarter of the time. Run it there
+# after a re-vendor; this stamp only proves the bytes match, not that they work.
+#
+# Refresh with: ./snac_vendor_check.sh --stamp /path/to/amigacd-checkout
+
+repo   = FringeCoder/AmigaCD
+commit = 0787441170963838f44368fb91bcaeede2f620be
+path   = rtl/snac_psx.v
+sha256 = adbfcbec41aa899289cf43196084874745b63e74870336b11b698a029827f47e
+vendored = 2026-09-15

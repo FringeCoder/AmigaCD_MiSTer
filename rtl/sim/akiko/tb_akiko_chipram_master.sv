@@ -72,7 +72,7 @@ wire         akiko_dma_ack;
 
 // -----------------------------------------------------------------------
 // Minimig-side stimulus signals (we play the role of the chipset DMA)
-// Active-low convention matches Minimig.sv wiring (_ram_oe, _ram_we,
+// Active-low convention matches AmigaCD.sv wiring (_ram_oe, _ram_we,
 // _ram_bhe, _ram_ble): 0 = active, 1 = idle.
 // -----------------------------------------------------------------------
 logic [24:1] chip_in_addr = 0;

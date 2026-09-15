@@ -59,7 +59,7 @@ module memory_router
 	output            sel_rtg,
 
 	// Physical RAM index after remap. zram_sel chooses which controller
-	// the address belongs to (Minimig.sv:596-598 mux pattern).
+	// the address belongs to (AmigaCD.sv:596-598 mux pattern).
 	output     [28:1] ramaddr,
 	output            zram_sel        // 1 = ram2 (DDR3), 0 = ram1 (SDRAM)
 );
@@ -116,7 +116,7 @@ assign ramaddr[18]    =    sel_dd   | (sel_kicklower & bootrom) | cpu_addr[18];
 assign ramaddr[17:16] = {2{sel_dd}} | cpu_addr[17:16];
 assign ramaddr[15:1]  = cpu_addr[15:1];
 
-// Same selector Minimig.sv:598 uses to mux ram1 vs ram2 outputs.
+// Same selector AmigaCD.sv:598 uses to mux ram1 vs ram2 outputs.
 assign zram_sel = |ramaddr[28:26];
 
 endmodule

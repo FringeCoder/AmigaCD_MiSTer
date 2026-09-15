@@ -285,7 +285,7 @@ module minimig
 	input         cdtv_sbcp_pulse,
 
 	// CDTV chip-RAM master DMA. Routed to chipdma_arb's cdtv master port
-	// in Minimig.sv. The bridge drives req/we/baddr/wbyte; the arbiter
+	// in AmigaCD.sv. The bridge drives req/we/baddr/wbyte; the arbiter
 	// pulses ack once the byte has been written to chip RAM.
 	output        cdtv_dma_req,
 	output        cdtv_dma_we,
@@ -370,7 +370,7 @@ module minimig
 
 	// Save state: the custom chipset register bus, tapped and overridable.
 	// Every chipset register write in the machine is ss_rga_data on ss_rga_addr
-	// at a clk7_en tick; ss_regshadow (instantiated up in Minimig.sv, next to
+	// at a clk7_en tick; ss_regshadow (instantiated up in AmigaCD.sv, next to
 	// ss_ctrl) records them and drives the replay inputs to write them back.
 	output  [8:1] ss_rga_addr,
 	output [15:0] ss_rga_data,
@@ -385,7 +385,7 @@ module minimig
 	// rtl/sim/ssmux/tb_ss_regbus_mux.sv, which failed on all three sampled
 	// registers before it existed.
 	//
-	// Minimig.sv drives it from the MASTER generator's clk7_en, gated by
+	// AmigaCD.sv drives it from the MASTER generator's clk7_en, gated by
 	// ss_replay_we, so exactly the cycles carrying a replay write get a tick
 	// and nothing else does.
 	input         ss_replay_tick,
@@ -396,7 +396,7 @@ module minimig
 	// are written next to each other here and nowhere else so they cannot be
 	// numbered differently. ss_map_we is a one-clk_sys-cycle pulse; both the
 	// ovl register below and gary's rom_readonly run on this clock, so no
-	// widening is needed (Minimig.sv's fan-out sequencer runs on clk_sys for
+	// widening is needed (AmigaCD.sv's fan-out sequencer runs on clk_sys for
 	// exactly that reason).
 	//
 	// Only bits [3] (ovl) and [2] (rom_readonly) have a target. Bits [1:0]

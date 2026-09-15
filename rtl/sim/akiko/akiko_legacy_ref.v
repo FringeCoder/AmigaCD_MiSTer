@@ -1,7 +1,7 @@
 // Frozen snapshot of rtl/akiko.v at SHA 3ab91cd9 (CD32 native-mode work pre-M1).
 // Sim-only golden reference for differential C2P/ID checks against the new
 // edit-in-place akiko.v. Module renamed to avoid name collision in the bench.
-// Do not add this file to Minimig.qsf.
+// Do not add this file to AmigaCD.qsf.
 
 module akiko_legacy_ref
 (

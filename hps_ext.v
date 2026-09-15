@@ -71,7 +71,7 @@ module hps_ext
 	//
 	// NVRAM LOAD (disk → BRAM) does NOT come through this UIO path. It uses
 	// the canonical hps_io.ioctl_download mechanism wired directly from
-	// Minimig.sv into akiko_nvram's load port (NVR_LOAD_INDEX). This bridge
+	// AmigaCD.sv into akiko_nvram's load port (NVR_LOAD_INDEX). This bridge
 	// only handles the save-dump (BRAM → disk) read direction.
 	input      [15:0] akiko_din,
 	output reg [15:0] akiko_dout,
@@ -113,7 +113,7 @@ module hps_ext
 	// Save state diagnostics -- UIO class 0xF600 = io_din[15:9] == 7'b1111011.
 	//
 	// A read-only status window, eight 16-bit words wide, assembled in
-	// Minimig.sv from ss_ctrl's diagnostic ports and its own outcome
+	// AmigaCD.sv from ss_ctrl's diagnostic ports and its own outcome
 	// synchronisers. support/minimig/minimig_ssdiag.cpp polls it and logs
 	// every change to /tmp/ss_dbg.log.
 	//
@@ -157,7 +157,7 @@ module hps_ext
 	// capture is wrong, or it is zero and the running machine never takes
 	// level 3. One reading decides which.
 
-	// Beam diagnostics. See the latches in Minimig.sv for what each answers.
+	// Beam diagnostics. See the latches in AmigaCD.sv for what each answers.
 	input      [10:0] ss_vpos,
 	input      [10:0] ss_vpos_max,
 	input       [8:0] ss_hpos_max,

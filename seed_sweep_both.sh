@@ -33,13 +33,13 @@ echo "== baseline for this netlist: seed 10  setup -0.134  hold -0.350 ==" | tee
 best_seed=""; best_min=-99
 
 for SEED in 16 1 4 18 7 2 11 15 5 13 17 6 12 3; do
-    "$Q/quartus_fit" --seed=$SEED Minimig > "$OUT/both_fit_$SEED.log" 2>&1 \
+    "$Q/quartus_fit" --seed=$SEED AmigaCD > "$OUT/both_fit_$SEED.log" 2>&1 \
         || { echo "seed $SEED  FIT FAILED" | tee -a "$R"; continue; }
-    "$Q/quartus_sta" Minimig > "$OUT/both_sta_$SEED.log" 2>&1
+    "$Q/quartus_sta" AmigaCD > "$OUT/both_sta_$SEED.log" 2>&1
 
     # Read both slacks from THIS run's report.
-    su=$(grep -oE "Worst-case setup slack is [-0-9.]+" output_files/Minimig.sta.rpt | tail -1 | grep -oE "[-0-9.]+$")
-    ho=$(grep -oE "Worst-case hold slack is [-0-9.]+"  output_files/Minimig.sta.rpt | tail -1 | grep -oE "[-0-9.]+$")
+    su=$(grep -oE "Worst-case setup slack is [-0-9.]+" output_files/AmigaCD.sta.rpt | tail -1 | grep -oE "[-0-9.]+$")
+    ho=$(grep -oE "Worst-case hold slack is [-0-9.]+"  output_files/AmigaCD.sta.rpt | tail -1 | grep -oE "[-0-9.]+$")
     su=${su:-0}; ho=${ho:-0}
     mn=$(awk -v a="$su" -v b="$ho" 'BEGIN{print (a<b)?a:b}')
 
@@ -49,8 +49,8 @@ for SEED in 16 1 4 18 7 2 11 15 5 13 17 6 12 3; do
     if [ "$both_pos" = "1" ]; then
         # Keep every build where both are positive: refitting a placement
         # already computed costs another quarter hour for nothing.
-        "$Q/quartus_asm" Minimig > "$OUT/both_asm_$SEED.log" 2>&1
-        cp output_files/Minimig.rbf "$OUT/Minimig_both_seed$SEED.rbf"
+        "$Q/quartus_asm" AmigaCD > "$OUT/both_asm_$SEED.log" 2>&1
+        cp output_files/AmigaCD.rbf "$OUT/AmigaCD_both_seed$SEED.rbf"
         better=$(awk -v a="$mn" -v b="$best_min" 'BEGIN{print (a>b)?1:0}')
         [ "$better" = "1" ] && { best_min=$mn; best_seed=$SEED; }
 
