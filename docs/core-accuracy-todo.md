@@ -975,12 +975,8 @@ off: nothing below is ordered by how much timing slack it buys any more.
    if a HOT item later needs some, but no longer a prerequisite for anything.
 8. **T5, T8** — steady cold-path accuracy work.
 9. **T9, T10, T11, T12** — each needs its own fit, and T7 in hand first.
-10. **T25** — not effort, a decision: which repository owns the `ss_*` family.
-   Ranked last only because nothing is currently blocked on it, but it moves to
-   the top the moment a change touches the save state path, because that is
-   when picking the wrong copy costs a silent revert.
 
-## T25 — Eleven files are shared with FringeCoder/AmigaCD and one is stamped  [no code]
+## T25 — Eleven files are shared with FringeCoder/AmigaCD and one was stamped  [no code] — [DONE 2026-09-15]
 
 `rtl/snac_psx.v` now carries `rtl/snac_psx.vendor` and a CI step, matching
 `FringeCoder/Menu_MiSTer`. That leaves ten more files that also exist in
@@ -1014,8 +1010,46 @@ obviously the home.
 
 Worth settling before the next feature touches the save state path, because a
 fix applied to the wrong copy is reverted by the next sync and is invisible
-until then. The mechanism costs nothing once the direction is chosen:
-`snac_vendor_check.sh` is already generic apart from two filenames.
+until then.
+
+**Done.** The direction is settled by the evidence rather than by preference:
+
+- **This repository owns the `ss_*` family and `snac_cd32.v`.** They are
+  synthesised only here, they reference `AmigaCD.sv`'s wiring, and every recent
+  change to them originated here — including the two that caused the drift,
+  which came out of `report_timing` on the seed 10 netlist, an artifact that
+  exists nowhere else. A rule that sends timing fixes through the userspace repo
+  first is a rule that gets skipped.
+- **`FringeCoder/AmigaCD` keeps `snac_psx.v`.** A device protocol shared by two
+  cores, belonging to neither.
+
+The drift was one-directional and is closed: nothing in the AmigaCD copies was
+missing here. `ss_state.vh` differed only by a comment block; `ss_ctrl.v` by
+`8cc3660` and `fb47b76`. Both copies were fast-forwarded to this repository's
+version and all 22 of that repository's benches pass against them — checked
+before and after, so "they pass" is not being confused with "they already
+passed".
+
+`rtl/tb/ss_ctrl_tb.v` over there is now running against the module this
+repository actually builds, which it had not been for two commits. Its
+`scan_unfrozen` observer — cited at `rtl/ss_ctrl.v:112` as the proof that the
+`rom_scan` term is redundant — was falsified rather than trusted: raising
+`rom_scan` one state before the freeze fails it by name. The citation now holds
+against a compiled file.
+
+Mechanism: `rtl/core-rtl.vendor` and `core_rtl_vendor_check.sh` in the userspace
+repo, run first in its CI, falsified four ways (a copy edited in place, a listed
+file missing, a stale stamp, a checkout of the wrong repository).
+`rtl/vendored-out.md` here is the same table from this side, because the thing
+that will actually go wrong next is someone changing `ss_ctrl.v` here and not
+knowing a copy exists.
+
+**What this does not fix.** The stamp fails in the *userspace* repo, on the next
+push there. Nothing fails here, so nothing stops a change to these files going
+in without the copy being refreshed — `rtl/vendored-out.md` is a note, not a
+gate. A cross-repo check needs a token neither repository has, and a check that
+degrades to "skipped" when a secret is missing is worse than none. The honest
+statement is that the window is now narrow and visible rather than closed.
 
 ---
 

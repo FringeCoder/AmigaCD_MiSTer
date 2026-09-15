@@ -321,6 +321,13 @@ repository copies to the card as `amigacd.rbf`. It was called `Minimig` until
 still carry that name, and `releases/` in particular holds upstream's builds
 rather than ours, so those were left alone.
 
+Some files here are shared with the userspace repository and go in both
+directions: `rtl/snac_psx.v` is a copy of one it owns, checked by
+`./snac_vendor_check.sh` in CI, and ten files here are copied *into* it so its
+testbenches can compile against them. `rtl/vendored-out.md` lists which, and
+what to run after changing one. Both lists exist because the second kind drifted
+for two commits with both repositories' CI green.
+
 Timing is closed with `seed_sweep_both.sh`, which requires both slacks positive.
 The open accuracy and timing backlog, ranked and each item citing a file and
 line, is [`docs/core-accuracy-todo.md`](docs/core-accuracy-todo.md).
