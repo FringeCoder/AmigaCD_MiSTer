@@ -227,6 +227,33 @@ jobs:
           vvp tb_hh | tee out_hh.log
           grep -q "RUN: PASS" out_hh.log
 
+      # The beam readback against an independently written implementation.
+      # rtl/sim/beamcounter/beam-reference.tsv is generated from Copperline (a
+      # cycle-driven Amiga emulator in Rust) by tools/copperline-beamtable.sh.
+      # CI never needs Copperline -- only regenerating the table does, and the
+      # table is committed.
+      #
+      # This exists because docs/core-accuracy-todo.md opens by saying we cannot
+      # measure against real hardware, which is what left T7 at [SUITE]: needing
+      # a MiSTer, a screen and a person reading it. A second implementation is
+      # not silicon, but it is a second opinion, and it is one a machine can
+      # read.
+      #
+      # What it would catch: the two halves of the vertical readback coming from
+      # different instants, and the horizontal readback offset moving. Both were
+      # confirmed by mutation -- reading VPOSR from the live counter while VHPOSR
+      # reads vpos_rb reproduces the reference implementation's own frame-wrap
+      # split, and the bench names it.
+      #
+      # Runs from the bench directory: the table is opened by relative path.
+      - name: Beam readback vs the Copperline reference table
+        run: |
+          set -euo pipefail
+          cd rtl/sim/beamcounter
+          iverilog -g2012 -o tb_ref ../../agnus_beamcounter.v tb_beamcounter_reference.sv
+          vvp tb_ref | tee out_ref.log
+          grep -q "RUN: PASS" out_ref.log
+
       # NTSC lines are 227.5 colour clocks, produced by alternating 227 and 228.
       # long_line toggled for years with nothing consuming it. Also guards the
       # cases that must NOT alternate -- PAL, BEAMCON0 PAL and LOLDIS.
