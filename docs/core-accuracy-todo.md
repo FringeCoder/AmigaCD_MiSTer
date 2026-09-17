@@ -422,7 +422,7 @@ photographs, after which a bench can hold this RTL to them with no suite, no
 photo and no machine. Two of nineteen probes are transcribed. That file is what
 would finally let this item be scored.
 
-## T8 — Audit address decodes for over-breadth  [SIM]
+## T8 — Audit address decodes for over-breadth  [SIM] — [DONE 2026-08-31]
 
 `74d6ce0` narrowed Gary's custom-register decode from all of `$C0-$DF` to
 `$DFxxxx`. That is a class: a decode that is too wide silently claims addresses
@@ -570,7 +570,7 @@ stands as the record of what was checked; nothing in it is load-bearing now.
 `strhor_paula`'s hand-tuned constant remains underived either way, and with the
 grid back where it was it is exactly as it was before `7ce2980`.
 
-## T11 — Bitplane pointer write delay  [SIM] — HOT — [SCOPED 2026-08-31, NOT ATTEMPTED]
+## T11 — Bitplane pointer write delay  [SIM] — HOT — [WONTFIX 2026-08-31: needs a chipset-wide RGA pipeline]
 
 `agnus_bitplanedma.v:223`: "TODO high bitplane pointer probably needs a delay
 (writing to pointer doesn't seem to take effect next cycle ...)".
@@ -661,7 +661,7 @@ called the `-1` arm a "placeholder until Phase 33". The teardown is `cmd_stop()`
 clearing `cd_cdda_lba_next/end` and `cd_cdda_drv`; the `-1` to `-2` advance
 those comments wrapped was always correct.
 
-## T17 — Trim the save state diagnostic scaffolding  [SIM + FIT] — [INVESTIGATED 2026-08-31, NOT TRIMMED]
+## T17 — Trim the save state diagnostic scaffolding  [SIM + FIT] — [CLOSED 2026-08-31: nothing to trim]
 
 `ss_ctrl.v` is 2,530 lines, and the save state notes already flag the peek
 window, fault and interrupt latches and free-running counters as large and
@@ -778,6 +778,19 @@ Everything currently marked as not-yet-hardware-tested is the same list as the
 hardware queue: a fit and seed check, a Z2 8M cold boot with a CD mounted, a save
 state restore round trip, Hybris for the sprite ordering fix, and the save state
 UI.
+
+**This file was itself the next instance, found 2026-09-17.** Its `## Order`
+section still ranked nine items, all but two of which had been resolved in their
+own bodies, and three headings read as open work -- T8 with no marker at all,
+T17 as "NOT TRIMMED", T11 as "NOT ATTEMPTED" -- when each body states a
+conclusion. A reader following the ranking went to T17 first and read seventy
+lines to learn it was closed.
+
+The same rule the README carries applies here and is now stated: **a heading's
+marker and the ranking move in the same commit as the body that resolves the
+item.** An item closed in its body and open in its heading is worse than an open
+item, because the ranking is what a reader acts on before they have read
+anything.
 
 ---
 
@@ -1009,33 +1022,48 @@ see that repo's `343c75c`.
 
 ## Order
 
-**Re-ranked 2026-08-31 (second pass).** T1, T16, T18, T21 and T21a are done. T0
-turned out not to be a gate, which is what most of the original ranking hung
-off: nothing below is ordered by how much timing slack it buys any more.
+**Re-audited 2026-09-17, against what the items below actually say.** The
+previous ranking listed nine entries. Every one of them was resolved in its own
+body -- several on the same day it was written -- and the list was never brought
+back into step. That is not a small thing in this file: `CLAUDE.md` sends a
+reader here first, so the ranking is the first thing anyone acts on, and it sent
+them at T17, whose body concludes its own premise is wrong.
 
-1. **T17** — promoted, on evidence gathered after the first re-rank. Seven of
-   the ten worst setup paths now end inside `ss_ctrl`, so trimming the
-   diagnostic scaffolding is no longer generic slack-hunting: it is work on the
-   logic that is actually binding. It still cannot change behaviour, which makes
-   it the only timing item on this list with no accuracy risk.
-2. **T3, T19** — the remaining little-or-no-code items. T3 is a decision rather
-   than a task: port `rtl/sim/chipset` to Icarus and add it to the workflow —
-   which is cheaper now that a parse gate runs ahead of the benches — or delete
-   it. Leaving it is how the last two rotted.
-3. **T2, T4, T6** — cold path, evidenced, simulation-verifiable. T4 is the best
-   value here.
-4. **T22** — before the next upstream sync rather than after. Its value is
-   catching the merge that quietly removes the save state park, and that is only
-   useful if it exists beforehand. It also overlaps T17: both are about
-   `ss_ctrl`, and a bench that freezes and resumes is what makes trimming it
-   safe to believe.
-5. **T7** — measurement only; it justifies or kills T9 and the other HOT work.
-6. **T13, T14, T15** — our own loose ends, all TITLE-verifiable.
-7. **T17** — previously ranked as "the cheapest move against T0". With T0 not a
-   blocker this is ordinary cleanup: still worth doing, still the cheapest slack
-   if a HOT item later needs some, but no longer a prerequisite for anything.
-8. **T5, T8** — steady cold-path accuracy work.
-9. **T9, T10, T11, T12** — each needs its own fit, and T7 in hand first.
+What the old list said, and what was already true:
+
+| ranked | said | actually |
+|---|---|---|
+| 1. T17 | promoted, the cheapest slack | nothing to trim; the premise is wrong |
+| 2. T3 | port it or delete it | deleted, and the premise was wrong too |
+| 2. T19 | remaining little-or-no-code item | a standing habit, not a task |
+| 3. T2, T4, T6 | cold path, do T4 first | T4 and T6 done, T2 WONTFIX |
+| 4. T22 | before the next upstream sync | done |
+| 5. T7 | measurement only | **still open** |
+| 6. T13, T14, T15 | our own loose ends | all done |
+| 7. T17 again | ordinary cleanup | as above |
+| 8. T5, T8 | steady cold-path work | both done |
+| 9. T9, T10, T11, T12 | each needs its own fit | T10 done, T9 reverted on hardware, T11 WONTFIX, **T12 blocked** |
+
+### What is actually open
+
+1. **T7** — [SUITE]. Partly instrumented 2026-09-15 without hardware; 36 of 304
+   vAmigaTS rows still fail and `ersy1` is correct on only 14 of 16. Needs a
+   MiSTer to run the suite against. This is the one open item with work in it.
+2. **T12** — [SIM] HOT, blocked on a display. Not startable here.
+
+### Standing, not tasks
+
+- **T0** — [FIT]. Timing is thin and is not a blocker; the reading it was written
+  on was corrected and its two actions are done. What remains is the habit: any
+  RTL change in the hot path wants a re-fit, and `seed_sweep_both.sh` checks both
+  edges.
+- **T19** — doc staleness. The audit above is an instance of it, which is the
+  argument for the habit rather than against the item.
+
+Everything else is DONE, WONTFIX, or deliberately not attempted with the reason
+recorded at the site. Where an item was closed by finding its own premise wrong
+-- T3, T8, T11, T17 -- the reasoning is kept in full, because the value of those
+four is stopping someone starting there again.
 
 ## T25 — Eleven files are shared with FringeCoder/AmigaCD and one was stamped  [no code] — [DONE 2026-09-15]
 
@@ -1111,6 +1139,26 @@ in without the copy being refreshed — `rtl/vendored-out.md` is a note, not a
 gate. A cross-repo check needs a token neither repository has, and a check that
 degrades to "skipped" when a secret is missing is worse than none. The honest
 statement is that the window is now narrow and visible rather than closed.
+
+**The window was checked shut on 2026-09-17**, the first time all three
+repositories were on one disk together, which is the only way this can be
+verified at all:
+
+    AmigaCD$    ./core_rtl_vendor_check.sh /path/to/this/repo
+                OK  10 vendored files match rtl/core-rtl.vendor
+                OK  identical to the canonical copies
+
+    Menu$       ./snac_vendor_check.sh /path/to/AmigaCD
+    this repo$  ./snac_vendor_check.sh /path/to/AmigaCD
+                OK  identical to the canonical copy
+
+No drift, in any of the three directions, including the two files that had
+drifted in 2026-09-15. `snac_psx.v` is byte-identical across all three copies.
+
+This is a measurement with a date on it, not a gate: it says the window was shut
+at that moment and says nothing about any moment since. Run the same three
+commands the next time the repositories are together, which is the cheapest
+check available and the only one that can see the canonical side move.
 
 ---
 
