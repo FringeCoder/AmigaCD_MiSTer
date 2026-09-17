@@ -1051,6 +1051,14 @@ What the old list said, and what was already true:
    MiSTer to run the suite against. This is the one open item with work in it.
 2. **T12** — [SIM] HOT, blocked on a display. Not startable here.
 
+### Closed by comparison, worth knowing
+
+- **T26** — Minimig-AGA upstream merged its own MiSTer Floppy support
+  (`c1134ac`, 2026-09-17). Compared file by file and **not taken**: we lack
+  nothing it adds, we are ahead in six ways, and its `misterfloppy.qip`
+  references a Verilog file it does not ship. Reread before anyone proposes
+  syncing the Minimig-AGA pin past `da7632e`.
+
 ### Standing, not tasks
 
 - **T0** — [FIT]. Timing is thin and is not a blocker; the reading it was written
@@ -1159,6 +1167,62 @@ This is a measurement with a date on it, not a gate: it says the window was shut
 at that moment and says nothing about any moment since. Run the same three
 commands the next time the repositories are together, which is the cheapest
 check available and the only one that can see the canonical side move.
+
+---
+
+## T26 — Minimig-AGA upstream merged MiSTer Floppy, and we are ahead of it  [no code] — [COMPARED 2026-09-17, NOT TAKEN]
+
+`MiSTer-devel/Minimig-AGA_MiSTer` `c1134ac` "Add real floppy drive support
+(#245)" landed on 2026-09-17, after the `da7632e` pin. This core has carried
+MiSTer Floppy since `62d7fee` from a different source, so the question is not
+"do we want it" but "which copy is better". Compared file by file rather than
+merged, because a merge would either duplicate the modules or silently replace
+the version the fork has been testing against, and the symptom is a floppy that
+does not read on hardware nobody has to hand.
+
+**We lack nothing.** Every port, wire and connection #245 adds is present here:
+`floppy_ext_drive`, `floppy_speed_allowed`, `floppy_speed`,
+`enable_mister_floppy`, `floppy_frd`, `precomp`, `USER_IN`/`USER_OUT`,
+`mister_floppy_status`, the `status_menumask` packing, the `USER_OUT` tenancy
+mux, and the `userport_change_reset` edge that resets MT32-pi when the port
+changes hands. Checked by extracting every identifier #245 introduces and
+grepping the tree for each; the only two with no match are the words `MT32Pi`
+and `xxxxxxxm`, both of which appear solely in upstream comment text.
+
+The six MiSTer Floppy modules are byte-identical, so both trees took the same
+snapshot of the upstream MiSTerFloppy project. `MiSTerFloppyVirtualFluxDrive.v`
+differs in two lines only: ours writes `bit_pos - 3'h1` and `bit_counter - 8'h1`
+where upstream writes `- 1`. Same logic.
+
+**Where we are ahead:**
+
+| | |
+|---|---|
+| `rtl/MiSTerFloppyIBM.v` | IBM/PC drive mode. **Upstream's `misterfloppy.qip` lists this file and upstream does not ship it** — see the defect below |
+| user port tenancy | `user_port_mode` is `[1:0]` here for three tenants (MT32-pi, MiSTer Floppy, PSX SNAC) against upstream's 1 bit for two, and config command 12 carries `snac_mode` in bits [13:8] of the same write |
+| `flux_inuse` / `virtualFloppyMode` | retimed 2026-08-03. Upstream indexes `disk_fluxmode[sel]`, putting a priority encoder and a 4:1 mux in front of `sdram_ctrl|sd_addr` — 1.47 ns on `pf1|sel[0]~0 -> pf1|Mux0~0`. Ours asks the same question as one AND-OR, matching the idiom its three neighbours already use |
+| `_ready_adf` | folds motor-running, disk-present and the drive ID bit into the readiness term. Upstream asserts `_ready` on drive selection alone, so a spinning empty drive reports ready and software waiting for a disk is told it has one |
+| `rtl/sim/floppy/tb_floppy_ready.sv` | a bench for that `_READY` rule, cited against WinUAE `disk.cpp DISK_status()`. Upstream has no `rtl/sim` at all |
+| userspace | `FringeCoder/AmigaCD` has the whole menu side — `extDrives`, `minimig_ConfigFloppyExt`, the tenancy row, the per-drive assignment. **Upstream `Main_MiSTer` has none of it**: no `extDrives`, no `floppy_ext`, no `user_port_mode`. The mainline core-side feature has nothing to drive it |
+
+**Two defects in #245, recorded because they are the reason not to take it:**
+
+1. `rtl/misterfloppy.qip` carries
+   `set_global_assignment -name VERILOG_FILE ... MiSTerFloppyIBM.v`, and that
+   file is absent from `c1134ac` and from upstream's history entirely. Quartus
+   resolves qip `VERILOG_FILE` entries at analysis, so #245 as merged either
+   fails or carries a dangling reference. Our qip is byte-identical to theirs —
+   which is precisely why ours builds and theirs should not: we ship the file.
+2. `rtl/userio.v` writes `user_port_mode = IO_DIN[0];` — a blocking assignment
+   inside `always @(posedge clk)`, where every neighbouring config write uses
+   `<=`. Survivable here because the signal is not read in that block, but it is
+   a simulation/synthesis hazard and it is inconsistent with its own
+   neighbours. Ours uses `<=`.
+
+**Revisit when** upstream adds `MiSTerFloppyIBM.v`, or when the MiSTerFloppy
+project itself moves and upstream picks up a newer snapshot than the one both
+trees share. Neither is true today, and until one is, taking `c1134ac` is a
+downgrade rather than a sync.
 
 ---
 
