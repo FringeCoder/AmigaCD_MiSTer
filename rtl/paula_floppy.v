@@ -170,7 +170,17 @@ reg  [15:0] wr_fifo_status;
 
 reg   [3:0] disk_present;	//disk present status
 reg   [3:0] disk_writable;	//disk write access status
-reg   [3:0] disk_fluxmode; // disk data isn't MFM, its raw flux, encoded at 50ns resolution. 0=INDEX, 255=12.7uS/254, 2 Flux per WORD. 
+// Raw flux rather than MFM. Each byte is the delay until the next flux
+// transition in clk ticks, two per word, with 0 meaning INDEX.
+//
+// The tick is clk, NOT clk7_en: MiSTerFloppyVirtualFluxDrive decrements
+// ticksUntilNextFlux inside always@(posedge clk) and outside its clk7_en
+// block, so at clk_sys 28.6875 MHz the resolution is 34.9 ns and a full
+// 255-tick delay is 8.89 us. Upstream's comment here read "50ns resolution,
+// 255=12.7uS/254", which describes a 20 MHz tick -- an earlier version of this
+// format, not the module this feeds. Corrected because flux resolution is the
+// one number anyone comes to this line to read.
+reg   [3:0] disk_fluxmode;
 reg   [3:0] disk_fluxdensitymode; // disk data is MFM + speed for those 8 bits (similar to IPF format and a bit like how Winuae works)
 
 wire        _selx;			//active whenever any drive is selected
