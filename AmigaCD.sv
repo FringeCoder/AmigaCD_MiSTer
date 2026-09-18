@@ -2527,6 +2527,29 @@ wire [2:0] fx;
 wire       scandoubler = (fx || forced_scandoubler) & ~lace;
 wire [7:0] R,G,B;
 
+// Screen calibration test pattern. status[55] swaps it in for the Amiga's
+// picture; see rtl/video_testpattern.v for why it has to live here rather than
+// in the OSD or the HPS framebuffer.
+//
+// Muxed into the mixer's INPUT, not onto VGA_R/G/B after it, so the pattern
+// goes through the same scandoubler, hq2x and gamma path the real picture does.
+// Aligning to a geometry the picture does not have would be worse than no
+// pattern at all.
+wire [7:0] tp_r, tp_g, tp_b;
+wire       tp_en = status[55];
+
+video_testpattern video_testpattern
+(
+	.clk    (CLK_VIDEO),
+	.ce_pix (ce_out),
+	.hde    (hde),
+	.vde    (vde),
+
+	.r      (tp_r),
+	.g      (tp_g),
+	.b      (tp_b)
+);
+
 video_mixer #(.LINE_LENGTH(2000), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 (
 	.*,
@@ -2534,9 +2557,9 @@ video_mixer #(.LINE_LENGTH(2000), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 	.ce_pix(ce_out),
 	.freeze_sync(),
 
-	.R(r),
-	.G(g),
-	.B(b),
+	.R(tp_en ? tp_r : r),
+	.G(tp_en ? tp_g : g),
+	.B(tp_en ? tp_b : b),
 	.HSync(~hs),
 	.VSync(~vs),
 	.HBlank(~hde),
