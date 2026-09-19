@@ -1046,10 +1046,13 @@ What the old list said, and what was already true:
 
 ### What is actually open
 
-1. **T7** — [SUITE]. Partly instrumented 2026-09-15 without hardware; 36 of 304
+1. **T27** — [FIT]. The video test pattern's Quartus fit, unverified, on the
+   video path in a design with 0.117 ns of margin. Cheapest to answer of the
+   three -- one fit -- and the one with a one-line revert if it goes wrong.
+2. **T7** — [SUITE]. Partly instrumented 2026-09-15 without hardware; 36 of 304
    vAmigaTS rows still fail and `ersy1` is correct on only 14 of 16. Needs a
-   MiSTer to run the suite against. This is the one open item with work in it.
-2. **T12** — [SIM] HOT, blocked on a display. Not startable here.
+   MiSTer to run the suite against. The one open item with real work in it.
+3. **T12** — [SIM] HOT, blocked on a display. Not startable here.
 
 ### Closed by comparison, worth knowing
 
@@ -1223,6 +1226,38 @@ where upstream writes `- 1`. Same logic.
 project itself moves and upstream picks up a newer snapshot than the one both
 trees share. Neither is true today, and until one is, taking `c1134ac` is a
 downgrade rather than a sync.
+
+---
+
+## T27 — The video test pattern's fit is unverified, and it is on the video path  [FIT] — [OPEN]
+
+`rtl/video_testpattern.v`, muxed into `video_mixer`'s input in `AmigaCD.sv` under
+`status[55]`. Added 2026-09-18 to give screen calibration something to align to:
+a border on the first and last active pixel and line, drawn from `hde`/`vde`.
+
+**What is verified:** the geometry, by `rtl/sim/testpattern/tb_video_testpattern.sv`
+-- thirteen checks over a known 60x30 geometry, falsified against five mutations.
+Two of those five survived the bench's first version and one of them was a real
+bug in the module (a three-pixel right border against a two-pixel left edge), so
+the coverage is now discriminating rather than merely green.
+
+**What is not verified, and why it is ranked as a FIT item:**
+
+1. **Timing.** It adds a 24-bit 2:1 mux on the mixer's input path. T0 put this
+   design at 0.117 ns of setup margin, and while the pattern is registered so its
+   comparison tree stays off that path, the mux itself is new logic between
+   `minimig`'s RGB and the mixer. **If the next fit regresses, this is the first
+   suspect, and reverting it is a one-line change** -- drop the mux and take `r`,
+   `g`, `b` directly.
+2. **Everything about how it looks.** Whether the grid is legible, whether white
+   on black suits a CRT, whether a 2-pixel border survives the scandoubler.
+   Simulation can say where the pattern is and nothing about what it looks like.
+
+`seed_sweep_both.sh` on the next fit answers (1). Both edges, as always.
+
+The userspace half is `FringeCoder/AmigaCD`; its
+`docs/hardware-test-plan.md` 1f carries the appearance checks and names the fit
+as the first thing to look at.
 
 ---
 
