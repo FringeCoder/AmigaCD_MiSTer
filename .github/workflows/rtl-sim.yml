@@ -284,6 +284,82 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # Every line of a frame reads back its own line number, PAL and NTSC. The
+      # other beamcounter benches each pin one feature and none of them sweeps a
+      # frame, so a vertical readback that reports the same line forever, or that
+      # drops the top three bits above line 255, would pass all of them. Both
+      # failures are silent -- every value returned is a plausible line number.
+      #
+      # Added while running the vAmigaTS VPOS suite for T7, where probe1, probe2
+      # and ersy1 on hardware all reported line 49 for lines 224-254. This bench
+      # passes, which is what makes it worth keeping: agnus_beamcounter is not
+      # where that comes from, and this holds that answer still.
+      - name: VPOSR/VHPOSR report every line of a frame
+        run: |
+          set -euo pipefail
+          cd rtl/sim/beamcounter
+          iverilog -g2012 -o tb_vp ../../agnus_beamcounter.v tb_beamcounter_vposr_sweep.sv
+          vvp tb_vp | tee out_vp.log
+          grep -q "RUN: PASS" out_vp.log
+
+      # The copper had no bench at all, which left the one part of Agnus that
+      # every Amiga program steers the display with uncovered: a WAIT firing on
+      # the wrong line, or once and then never again, passed CI in full.
+      #
+      # Drives the real beamcounter into the real copper, wired as agnus.v wires
+      # them, and runs probe1's actual list from the vAmigaTS VPOS suite --
+      # sixteen WAITs, one every second line from $E0 to $FE. On hardware that
+      # list lost fifteen of its sixteen writes. Here all sixteen release on
+      # their own line, so the copper's WAIT is not where that comes from.
+      #
+      # Runs that list three ways: with every slot granted, with the real
+      # agnus_bitplanedma competing as probe.i configures it, and once more
+      # writing INTREQ through paula_intcontroller so each of the sixteen
+      # becomes a level 1 request. All pass, so neither slot contention nor the
+      # interrupt controller accounts for what the hardware did.
+      #
+      # The contention case asserts a bitplane DMA cycle count before it will
+      # pass. It has already been vacuous twice -- once from a bus race in the
+      # harness and once from the timescale trap below -- and a vacuous run
+      # reads exactly like a real one.
+      - name: Copper WAIT fires on the line it names
+        run: |
+          set -euo pipefail
+          cd rtl/sim/copper
+          # The bench file MUST come first. agnus_bitplanedma.v has no
+          # `timescale of its own and writes every register with <= #1, so
+          # compiled after a file that sets one it inherits the default
+          # instead, its NBAs land outside the run, and every register write
+          # to it silently does nothing -- it sits with all registers at zero
+          # looking like configured hardware with nothing to do. Putting the
+          # bench first applies its 1ns/1ps to the RTL that follows.
+          iverilog -g2012 -o tb tb_copper_wait.sv             ../../agnus_beamcounter.v ../../agnus_copper.v             ../../agnus_bitplanedma.v ../../paula_intcontroller.v
+          vvp tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
+      # Whole-Agnus integration. The isolated benches above all pass, so this
+      # runs probe1's copper list against the real agnus.v, where refresh,
+      # disk, audio, sprite, bitplane, copper and blitter arbitrate through the
+      # actual priority chain and the CPU gets the bus only on cycles no channel
+      # claims. Refresh is the specific gap it closes -- it takes the first
+      # slots of every line ahead of everything and nothing else modelled it.
+      #
+      # Bus wiring is copied from the machine, not invented: gary.v:141 gives
+      # Agnus chip RAM on its own DMA slots and the CPU's data otherwise, and
+      # Paula sits on reg_address_out as minimig.v wires it.
+      #
+      # Asserts refresh and bitplane cycle counts before it will pass. A bench
+      # whose register writes silently went nowhere reads exactly like a
+      # working one -- that has happened twice here already.
+      - name: Agnus arbitration carries the copper's INTREQ writes
+        run: |
+          set -euo pipefail
+          cd rtl/sim/agnus
+          # Bench first: see the timescale note on the copper bench above.
+          iverilog -g2012 -o tb tb_agnus_copper_int.sv             ../../agnus*.v ../../paula_intcontroller.v
+          vvp tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # ADKCON attach: one audio channel modulating the next. Covers both
       # directions of the old failure -- the modulator being heard when it should
       # be silent, and the modulation not happening -- plus channel 3, which is
