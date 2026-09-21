@@ -636,9 +636,9 @@ wire        ss_shadow_setclear;
 // Driven by ss_ctrl: it reads the shadow out into the payload on a save, loads
 // it back on a restore, and starts the replay once chip RAM is in place.
 wire        ss_replay_start;
-wire  [7:0] ss_shadow_rd;
+wire  [8:0] ss_shadow_rd;
 wire        ss_shadow_ld_we;
-wire  [7:0] ss_shadow_ld_addr;
+wire  [8:0] ss_shadow_ld_addr;
 wire [15:0] ss_shadow_ld_data;
 
 ss_regshadow ss_regshadow_inst
