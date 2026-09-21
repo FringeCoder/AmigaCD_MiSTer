@@ -13,7 +13,7 @@
 // difference between those two lists is what this bench reproduces.
 //
 // It drives the real agnus_beamcounter into the real agnus_copper, wired as
-// agnus.v wires them -- hpos_slot included -- rather than modelling the beam
+// agnus.v wires them rather than modelling the beam
 // grid here, because the grid is the thing most likely to be modelled wrongly
 // and a bench that gets it wrong tests nothing.
 //
@@ -84,11 +84,10 @@ module tb_copper_wait;
 		.htotal_out(htotal), .harddis_out(), .varbeamen_out()
 	);
 
-	// agnus.v:483-484 verbatim. The copper's slot grid runs one colour clock
-	// ahead of hpos and wraps on htotal, and getting this wrong moves every
-	// WAIT by a cycle.
-	wire [7:0] hpos_slot_hi = (hpos[8:1] == htotal[8:1]) ? 8'd0 : hpos[8:1] + 8'd1;
-	wire [8:0] hpos_slot    = {hpos_slot_hi, hpos[0]};
+	// There used to be a slot grid here, hpos_slot, one colour clock ahead of
+	// hpos -- 7ce2980's advance. 0bf2182 reverted it outright after it
+	// regressed TEK Rampage's DMA scheduling, so every consumer is back on the
+	// raw counter and the bench wires hpos straight through as agnus.v does.
 
 	// Bitplane DMA, the copper's competition. agnus.v gives it priority over the
 	// copper outright -- ena_cop = ~dma_bpl, and the arbiter's if-else chain
@@ -102,7 +101,7 @@ module tb_copper_wait;
 		.clk(clk), .clk7_en(clk7_en), .reset(reset),
 		.harddis(1'b0), .aga(1'b1), .ecs(1'b1), .a1k(1'b0),
 		.sof(eof), .dmaena(bpl_dmaena),
-		.vpos(vpos), .hpos(hpos), .hpos_slot(hpos_slot),
+		.vpos(vpos), .hpos(hpos),
 		.hde(), .dma(dma_bpl),
 		.reg_address_in(reg_address_in), .reg_address_out(),
 		.data_in(data_in), .address_out()
@@ -119,7 +118,7 @@ module tb_copper_wait;
 		.clk(clk), .clk7_en(clk7_en), .reset(reset), .ecs(1'b1),
 		.reqdma(reqdma), .ackdma(ack_cop), .enadma(ena_cop),
 		.sof(eof), .blit_busy(1'b0),
-		.vpos(vpos[7:0]), .hpos(hpos), .hpos_slot(hpos_slot),
+		.vpos(vpos[7:0]), .hpos(hpos),
 		.data_in(data_in), .reg_address_in(reg_address_in),
 		.reg_address_out(reg_address_cop), .address_out(address_cop)
 	);
