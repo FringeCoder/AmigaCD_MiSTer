@@ -461,6 +461,17 @@ jobs:
           vvp tb_akiko_pbx | tee out_akiko_pbx.log
           grep -q "tb_akiko_pbx_dma PASS" out_akiko_pbx.log
 
+      # The command channel: what a host read burst does when no command is
+      # ready. A drain on a stale REQ used to consume a command the Amiga was
+      # still writing, leaving the next frame with a stray leading byte --
+      # which swallowed the BIOS's INFO command and stopped it talking.
+      - name: Akiko command phantom drain
+        run: |
+          set -euo pipefail
+          iverilog -g2012 -I. -o tb_akiko_cmd_phantom rtl/akiko.v rtl/akiko_nvram.v rtl/akiko_hps_bridge.v rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_cmd_phantom.sv
+          vvp tb_akiko_cmd_phantom | tee out_akiko_cmd_phantom.log
+          grep -q "tb_akiko_cmd_phantom PASS" out_akiko_cmd_phantom.log
+
       # The Akiko sector channel itself: 1176 words in, 2352 bytes out, at
       # three different strobe spacings. This is upstream's bench for the
       # word-wide ingest, run here against our akiko.v with the savestate
