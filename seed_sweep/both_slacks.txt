@@ -74,3 +74,7 @@ GOOD: seed 1  setup 0.212  hold 0.245  -- both clear 0.10, rbf saved
 seed 1   setup 0.000    hold 0.213    worst 0.000
 seed 16  setup 0.152    hold 0.174    worst 0.152
 GOOD: seed 16  setup 0.152  hold 0.174  -- both clear 0.10, rbf saved
+== fits for 5b943c1 (CLUT drain), continued 2026-09-26 ==
+seed 16  setup 0.152    hold 0.174    -- BLACK SCREEN on hardware, no Kickstart
+seed 4   setup -0.087   hold 0.168    -- fails timing
+seed 18  setup 0.386    hold 0.206    -- boots, save and restore verified
