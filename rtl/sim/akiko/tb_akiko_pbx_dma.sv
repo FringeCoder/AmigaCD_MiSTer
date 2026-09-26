@@ -155,6 +155,14 @@ always @(posedge clk) begin
 	end
 end
 
+function automatic [7:0] h_lo(input int i);
+	h_lo = (2*i) & 8'hff;
+endfunction
+
+function automatic [7:0] h_hi(input int i);
+	h_hi = (2*i + 1) & 8'hff;
+endfunction
+
 task automatic push_sector(input [7:0] seed);
 	@(posedge clk);
 	for (int i = 0; i < 1176; i++) begin
@@ -400,6 +408,94 @@ initial begin
 	check8("G.cmdlen_zero", 8'd0, {2'h0, u_dut.g_cd.cdrom_command_length});
 	check8("G.txinx_zero",  8'd0, u_dut.g_cd.cdcomtxinx);
 	check_slot("G.slot0", 'h10000, 8'hB0, 8'd0);
+
+	// ------------------------------------------------------------------
+	// Test H: a READ DATA arriving while the previous read's sector is
+	// still in the engine.
+	//
+	// The host has no way to cancel a sector once it has begun handing it
+	// over: it reads the counter, fetches from the CD image, waits out the
+	// pacing interval and only then writes 2352 bytes. The BIOS can issue
+	// PAUSE and the next PLAY DATA inside that window, and each PLAY DATA
+	// toggles CDFLAG_ENABLE, which resets the counter to zero. So the last
+	// sector of one read can arrive after the next read has started, and
+	// what must NOT happen is that it ships into the new read's slot 0:
+	// the data would be a perfectly correct sector of the PREVIOUS read,
+	// sitting where the BIOS expects the first sector of the file it is
+	// now loading, with nothing anywhere to say so.
+	//
+	// This is what the hardware symptom looks like -- Chuck Rock hangs on
+	// roughly two boots in three with its loader taking a garbage block
+	// index out of the file it just loaded, while a host-side trace shows
+	// every sector delivered byte-correct, in order, and tagged with a
+	// counter that never moves.
+	$display("--- Test H: ENABLE rising with a sector in flight ---");
+	do_reset();
+	bus_write_long(5'b00100, 32'hFF000000);
+	for (int i = 'h10000; i < 'h20000; i++) mem[i] = 8'h55;
+	set_addressdata(24'h010000);
+	set_config(CFG_ENABLE | CFG_PBX);
+
+	// H1: the ship has started and is part way through its DMA when the
+	// next READ DATA arrives. The host is not involved here -- it pushes
+	// only when the engine asks -- so wait the stale ship out and then
+	// look at what the BIOS has been told.
+	push_sector(8'hE0);
+	write_pbx(16'h0001);                 // the BIOS offers slot 0
+	repeat (80) @(posedge clk);          // mid-transfer
+	set_config(CFG_PBX);                 // ENABLE 1->0
+	set_config(CFG_ENABLE | CFG_PBX);    // ENABLE 0->1: the next READ DATA
+	while (u_dut.g_cd.pbx_busy) @(posedge clk);
+	@(posedge clk);
+
+	// Nothing has arrived for THIS read, so the BIOS must not have been
+	// told that anything did: no PBX interrupt, its slot offer still
+	// standing, and the counter still at the zero ENABLE reset it to.
+	check_bit("H1.no_intpbx",  1'b0, u_dut.g_cd.cdrom_intreq[26]);
+	check8   ("H1.offer_held", 8'h01, u_dut.g_cd.cdrom_pbx[7:0]);
+	check8   ("H1.counter_0",  8'd0,  u_dut.g_cd.cdrom_sector_counter);
+
+	// And the new read's own first sector lands in that slot.
+	push_sector(8'hF0);
+	wait_pbx_clear(40000, cyc);
+	$display("    H1: pbx clear in %0d cycles", cyc);
+	check_slot("H1.slot0", 'h10000, 8'hF0, 8'd0);
+	check8("H1.counter", 8'd1, u_dut.g_cd.cdrom_sector_counter);
+
+	// H2: the handover itself straddles the toggle -- the bytes go in
+	// before the new read starts and the completion lands after it. This
+	// is the host writing a sector it decided to send for the read that
+	// has just ended.
+	do_reset();
+	bus_write_long(5'b00100, 32'hFF000000);
+	for (int i = 'h10000; i < 'h20000; i++) mem[i] = 8'h55;
+	set_addressdata(24'h010000);
+	set_config(CFG_ENABLE | CFG_PBX);
+
+	@(posedge clk);
+	for (int i = 0; i < 1176; i++) begin
+		hps_sec_word <= {8'hA0 + h_hi(i), 8'hA0 + h_lo(i)};
+		hps_sec_push <= 1'b1;
+		@(posedge clk);
+	end
+	hps_sec_push <= 1'b0;
+	hps_sec_word <= 16'h0000;
+	@(posedge clk);
+
+	set_config(CFG_PBX);                 // the read ends
+	set_config(CFG_ENABLE | CFG_PBX);    // and the next one begins
+
+	hps_sec_done <= 1'b1;                // the late completion
+	@(posedge clk);
+	hps_sec_done <= 1'b0;
+	@(posedge clk);
+
+	push_sector(8'hB8);                  // the new read's first sector
+	write_pbx(16'h0001);
+	wait_pbx_clear(40000, cyc);
+	$display("    H2: pbx clear in %0d cycles", cyc);
+	check_slot("H2.slot0", 'h10000, 8'hB8, 8'd0);
+	check8("H2.counter", 8'd1, u_dut.g_cd.cdrom_sector_counter);
 
 	$display("------------------------------------");
 	$display("checks=%0d errors=%0d", checks, errs);
