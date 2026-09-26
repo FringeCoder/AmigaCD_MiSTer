@@ -137,7 +137,7 @@ assign clk = clk_r;
 // Same instantiation as AmigaCD.sv: master clk7_en, tap in, replay out.
 
 reg        sh_ld_we    = 1'b0;
-reg  [7:0] sh_ld_addr  = 8'd0;
+reg  [8:0] sh_ld_addr  = 9'd0;
 reg [15:0] sh_ld_data  = 16'd0;
 reg        sh_start    = 1'b0;
 reg [14:0] restored_intreq = 15'd0;
@@ -155,7 +155,7 @@ ss_regshadow shadow
 	.rst_n          (rst_n            ),
 	.reg_address_in (ss_rga_addr      ),
 	.data_in        (ss_rga_data      ),
-	.rd_addr        (8'd0             ),
+	.rd_addr        (9'd0             ),
 	.rd_data        (sh_rd_data       ),
 	.rd_writable    (sh_rd_writable   ),
 	.rd_setclear    (sh_rd_setclear   ),
@@ -240,14 +240,38 @@ localparam [7:0] IDX_INTENA  = 8'h4D;   // $09A >> 1, set/clear, paula
 localparam [7:0] IDX_VHPOSW  = 8'h16;   // $02C >> 1, plain, agnus beamcounter
 localparam [7:0] IDX_BLTSIZE = 8'h2C;   // $058 >> 1 -- see the check below
 
+// What a restore would have found in the file's WRITTEN mask: the entries
+// this test loaded. ss_regshadow's replay skips anything whose bit is clear,
+// so loading a value without its bit means the register is never driven --
+// which is the whole point of the mask, and exactly what a save of a machine
+// that never touched the register carries.
+reg [255:0] tb_written = 256'd0;
+
 task shadow_load(input [7:0] idx, input [15:0] val);
 begin
 	@(posedge clk_r);
 	sh_ld_we   <= 1'b1;
-	sh_ld_addr <= idx;
+	sh_ld_addr <= {1'b0, idx};
 	sh_ld_data <= val;
 	@(posedge clk_r);
 	sh_ld_we   <= 1'b0;
+	tb_written[idx] = 1'b1;
+end
+endtask
+
+// Stream the mask in through the 256-271 window, sixteen half-words, the way
+// ss_ctrl's restore walk does before it starts the replay.
+task shadow_load_mask;
+integer n;
+begin
+	for (n = 0; n < 16; n = n + 1) begin
+		@(posedge clk_r);
+		sh_ld_we   <= 1'b1;
+		sh_ld_addr <= {1'b1, 4'd0, n[3:0]};
+		sh_ld_data <= tb_written[n*16 +: 16];
+		@(posedge clk_r);
+		sh_ld_we   <= 1'b0;
+	end
 end
 endtask
 
@@ -379,6 +403,7 @@ initial begin
 	dut.AGNUS1.bc1.vpos = 11'd137;
 	beam_hpos_pre = dut.AGNUS1.bc1.hpos[8:1];
 	beam_vpos_pre = dut.AGNUS1.bc1.vpos;
+	shadow_load_mask();
 	run_replay();
 
 	// The beam must not move across a replay. There are ~400 replay ticks in
@@ -447,6 +472,7 @@ initial begin
 	shadow_load(IDX_DMACON,  16'h00C0);
 	shadow_load(IDX_INTENA,  16'h0014);
 
+	shadow_load_mask();
 	run_replay();
 	repeat (40) @(posedge clk_r);
 
