@@ -1176,14 +1176,35 @@ if (NATIVE_CD32) begin : g_cd
 			// `cmd_pending` gates TX so the buffer can't grow under us between
 			// pop and done.
 			// -----------------------------------------------------------------
-			if (hps_cmd_pop && (hps_cmd_rd_ptr != 6'd32))
+			// Only ever consume a command there is a whole one of.
+			//
+			// req is cmd_pending, and the host samples it into a status word
+			// it acts on later, so it can start a read burst for a command
+			// that has already been drained. That burst pulses pop and done
+			// just the same. Honouring them with cmd_pending low destroys a
+			// command the Amiga is in the middle of writing: the bytes
+			// already delivered are dropped, the rest land at offset 0, and
+			// the host's next read returns a frame beginning in the middle of
+			// the old one.
+			//
+			// That stray leading byte desynchronised the CD32 BIOS on
+			// hardware. Its INFO command arrived behind one and was swallowed
+			// by the frame in front of it, so it never got an answer and
+			// stopped talking; the game then ran on without ever loading its
+			// data file and hung in its own loader. Chuck Rock, two boots in
+			// three, 2026-09-26. tb_akiko_cmd_phantom is that sequence.
+			//
+			// A drain of a real command is unaffected: pops do not change
+			// cdrom_command_length, so cmd_pending stays high for the whole
+			// burst and only drops when done clears it here.
+			if (hps_cmd_pop && cmd_pending && (hps_cmd_rd_ptr != 6'd32))
 				hps_cmd_rd_ptr <= hps_cmd_rd_ptr + 6'd1;
-			if (hps_cmd_done) begin
+			if (hps_cmd_done && cmd_pending) begin
 				cdrom_command_length <= 6'd0;
 				hps_cmd_rd_ptr       <= 6'd0;
 			end
 
-			if (hps_cmd_done && cmd_zero_result && !hps_result_done)
+			if (hps_cmd_done && cmd_pending && cmd_zero_result && !hps_result_done)
 				cdrom_intreq <= cdrom_intreq | CDINT_DRIVEXMIT;
 
 			// -----------------------------------------------------------------
