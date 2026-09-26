@@ -1025,19 +1025,38 @@ if (NATIVE_CD32) begin : g_cd
 					end
 				end
 				PBX_FIN: begin
-					cdrom_pbx[pbx_seccnt] <= 1'b0;
-					cdrom_intreq          <= cdrom_intreq | CDINT_PBX;
-					// Advance the counter ONLY for a ship not invalidated by an
-					// intervening READ DATA. Two cases are suppressed:
+					// A ship belonging to a read that has ended must leave NO
+					// trace in the read that replaced it. Two cases are stale:
 					//   pbx_ship_invalid: a prior-cycle enable_rising marked this
-					//     ship stale (it began under the previous read; ENABLE 0->1
+					//     ship (it began under the previous read; ENABLE 0->1
 					//     already reset the counter to 0) — bumping now would make
 					//     the new read's first fetch base+1 (off-by-one recurrence).
 					//   enable_rising: a new read starts THIS same cycle; its
 					//     cfg_high counter<=0 (textually earlier) would otherwise
 					//     lose the NBA race to this +1. !enable_rising lets it stand.
-					if (!pbx_ship_invalid && !enable_rising)
-						cdrom_sector_counter <= cdrom_sector_counter + 8'd1;
+					//
+					// Suppressing only the counter was not enough. The slot clear
+					// and CDINT_PBX below tell the BIOS "the sector you offered a
+					// slot for has arrived", and for a stale ship that is a lie in
+					// the worst possible shape: the bytes in the slot are a real,
+					// correct sector -- of the PREVIOUS read. The BIOS parses the
+					// head of the file it is now loading out of someone else's
+					// data, and nothing on the host side can see it: the sector it
+					// delivered was right, in order, and tagged with a counter
+					// that never moved. tb_akiko_pbx_dma's Test H reproduces it,
+					// and it is the Chuck Rock boot hang -- two boots in three,
+					// its loader taking a garbage block index out of the file and
+					// running a copy loop over its own code.
+					//
+					// Leaving the offer standing and staying silent is what makes
+					// the new read's own first sector land in that slot instead.
+					// sector_ready is cleared either way: the staged sector has
+					// been consumed by this ship whatever we do with it.
+					if (!pbx_ship_invalid && !enable_rising) begin
+						cdrom_pbx[pbx_seccnt] <= 1'b0;
+						cdrom_intreq          <= cdrom_intreq | CDINT_PBX;
+						cdrom_sector_counter  <= cdrom_sector_counter + 8'd1;
+					end
 					sector_ready          <= 1'b0;
 					pbx_busy              <= 1'b0;
 					pbx_state             <= PBX_IDLE;

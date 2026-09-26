@@ -448,6 +448,19 @@ jobs:
           vvp tb_akiko_ss | tee out_akiko_ss.log
           grep -q "RUN: PASS" out_akiko_ss.log
 
+      # The PBX engine: where each delivered sector lands in chip RAM, and
+      # what happens to a ship that is still running when the BIOS starts
+      # the next READ DATA. Test H is the Chuck Rock boot hang -- a stale
+      # ship used to clear the BIOS's slot offer and raise CDINT_PBX, so the
+      # BIOS read the previous read's sector as the head of the file it was
+      # loading, with every byte the host delivered correct and in order.
+      - name: Akiko PBX DMA
+        run: |
+          set -euo pipefail
+          iverilog -g2012 -I. -o tb_akiko_pbx rtl/akiko.v rtl/akiko_nvram.v rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_pbx_dma.sv
+          vvp tb_akiko_pbx | tee out_akiko_pbx.log
+          grep -q "tb_akiko_pbx_dma PASS" out_akiko_pbx.log
+
       # The Akiko sector channel itself: 1176 words in, 2352 bytes out, at
       # three different strobe spacings. This is upstream's bench for the
       # word-wide ingest, run here against our akiko.v with the savestate
