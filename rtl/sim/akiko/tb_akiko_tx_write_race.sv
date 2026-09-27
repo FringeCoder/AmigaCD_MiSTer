@@ -144,6 +144,29 @@ always @(posedge clk) begin
 	end
 end
 
+// When the TX engine first goes looking for the command stream. The inhibit
+// is a wall-clock wait, so the thing to assert is its scale: a cycle-scale
+// inhibit fetches within a few clocks of the announcement, a scanline-scale
+// one takes thousands.
+int  gcyc          = 0;
+int  announce_cyc  = -1;
+int  first_req_cyc = -1;
+
+always @(posedge clk) begin
+	gcyc <= gcyc + 1;
+	if (announce_cyc >= 0 && dma_req_w && first_req_cyc < 0) first_req_cyc <= gcyc;
+end
+
+task automatic check_ge(string name, int floor, int actual);
+begin
+	checks++;
+	if (actual < floor) begin
+		errs++;
+		$display("FAIL %s: expected >= %0d got %0d", name, floor, actual);
+	end else $display("ok   %s = %0d (>= %0d)", name, actual, floor);
+end
+endtask
+
 task automatic bus_write_word(input [5:1] a, input [15:0] data);
 	@(posedge clk);
 	cs <= 1; wr <= 1; rd <= 0; addr <= a; din <= data; lds <= 1; uds <= 1;
@@ -221,11 +244,14 @@ initial begin
 
 	set_config(CFG_TXD);
 	write_txcmp(8'd3);                        // "a three-byte command is ready"
+	announce_cyc = gcyc;
 
-	// ... which is not true yet. The bytes land 600 cycles later, about 21 us
-	// of clk_sys: comfortably inside what a 68020 takes over a command, and
-	// far past the 105 ns the inhibit used to be.
-	repeat (600) @(posedge clk);
+	// ... which is not true yet. The bytes land 3000 cycles later, 106 us of
+	// clk_sys. That is inside the inhibit WinUAE has -- three scanlines is
+	// 128 us at the earliest -- and it is the point of the fix: the drive
+	// must still be waiting. The old 105 ns inhibit fetched the zeros that
+	// were there, and two zeros are a complete opcode-0 frame.
+	repeat (3000) @(posedge clk);
 	mem[16'h0200] = 8'h15;                    // LED, tag 1
 	mem[16'h0201] = 8'h00;
 	mem[16'h0202] = 8'hEA;                    // 15 + 00 + ea = ff
@@ -236,6 +262,11 @@ initial begin
 	end
 
 	check_bit("pending", 1'b1, cmd_pending_w);
+
+	// The discriminating check. Two whole scanlines is 3632 cycles; allow for
+	// the engine needing a few clocks to get its first request out, but a
+	// cycle-scale inhibit lands three orders of magnitude below this.
+	check_ge("first fetch cycle", 2000, first_req_cyc - announce_cyc);
 	check8   ("len",     8'd3, {2'h0, u_dut.g_cd.cdrom_command_length});
 
 	// What the BIOS actually wrote, not the zeros that were there when it
