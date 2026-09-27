@@ -131,6 +131,7 @@ chipdma_arb u_dut (
 	.chip_out_dma    (chip_out_dma    ),
 	.chip_out_wr     (chip_out_wr     ),
 	.chip_in_rd      (chip_in_rd      ),
+	.sdram_ready     (1'b1            ),  // this bench models a controller already up
 
 	.z2ram_ena       (1'b0            ),
 	.z3ram_base0     (5'h00           ),

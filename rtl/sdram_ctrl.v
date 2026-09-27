@@ -65,6 +65,10 @@ module sdram_ctrl
 	output reg [15:0] chipRD,
 	output reg [15:0] chipRD_dma,
 	output     [47:0] chip48,
+	// High once the power-up sequence is over and slots are being served.
+	// A master that is not gated on this gets an ack for a read the
+	// controller never performed -- see chipdma_arb.
+	output            sdram_ready,
 	// cpu
 	input      [24:1] cpuAddr,
 	input             cpuCS,
@@ -244,6 +248,12 @@ assign chip48 = {chip48_1, chip48_2, chip48_3};
 
 
 //// init counter ////
+//
+// Exported so chipdma_arb can hold its bridge masters off until the controller
+// is actually serving slots. Declared here rather than in the port list because
+// rtl/sim/sdram/make_sim_sdram.py hoists this declaration by exact text.
+assign sdram_ready = init_done;
+
 reg [3:0] initstate;
 reg       init_done;
 always @ (posedge sysclk) begin

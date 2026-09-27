@@ -88,6 +88,7 @@ wire        arb_chip_dma_slot;
 
 wire [15:0] chipRD;
 wire [15:0] chipRD_dma;
+wire        sdram_ready;
 wire [47:0] chip48;
 
 // --------------------------------------------------------------- sdram bus
@@ -121,6 +122,7 @@ sdram_ctrl dut (
 	.chipRW(arb_chip_rw), .chipDMA(arb_chip_dma),
 	.chip_dma_slot(arb_chip_dma_slot), .chipWR(arb_chip_wr),
 	.chipRD(chipRD), .chipRD_dma(chipRD_dma), .chip48(chip48),
+	.sdram_ready(sdram_ready),
 	.cpuAddr(24'd0), .cpuCS(1'b0), .cpustate(2'b01),
 	.cpuL(1'b1), .cpuU(1'b1), .cpuWR(16'h0), .cpuRD(), .ramready()
 );
@@ -139,7 +141,8 @@ chipdma_arb arb (
 	.chip_out_u(arb_chip_u), .chip_out_rw(arb_chip_rw),
 	.chip_out_dma(arb_chip_dma), .chip_out_wr(arb_chip_wr),
 	.chip_in_rd(chipRD), .chip_dma_slot(arb_chip_dma_slot),
-	.chip_in_rd_dma(chipRD_dma), .cpu_chip_slot_req(1'b0),
+	.chip_in_rd_dma(chipRD_dma), .sdram_ready(sdram_ready),
+	.cpu_chip_slot_req(1'b0),
 	// No Zorro RAM, so memory_router always sends the slot to chip_out_*.
 	.z2ram_ena(1'b0), .z3ram_base0(5'd0), .z3ram_ena0(1'b0),
 	.z3ram_base1(4'd0), .z3ram_ena1(1'b0),
@@ -200,6 +203,21 @@ begin
 end
 endtask
 
+// Wait up to `cycles` clk_sys for an ack without treating its absence as an
+// error -- test E wants to assert that the ack does NOT come.
+task automatic wait_ack(input int cycles, output logic acked);
+	integer g;
+begin
+	acked = 1'b0;
+	for (g = 0; g < cycles; g = g + 1) begin
+		if (ak_ack) begin
+			acked = 1'b1;
+			g = cycles;
+		end else @(posedge clk_sys);
+	end
+end
+endtask
+
 function [7:0] expect_byte(input [23:0] a, input [7:0] id);
 	// The arb takes the low byte for an odd address, the high byte for an even
 	// one: ak_baddr0 ? chip_in_rd_dma[7:0] : chip_in_rd_dma[15:8].
@@ -213,6 +231,7 @@ endfunction
 
 // ------------------------------------------------------------------- tests
 reg [7:0]  b, f, b2, f2;
+logic      acked;
 reg [23:0] ca;
 integer   i;
 integer   before_seen;
@@ -292,27 +311,59 @@ initial begin
 	akiko_read(24'h007000, b2, f2);
 	check8("D.after_minimig", b2, expect_byte(24'h007000, f2));
 
-	// --- E: before init_done --------------------------------------------
+	// --- E: a read issued before init_done ------------------------------
 	//
-	// Not a pass/fail, a measurement. Nothing gates the arb on
-	// sdram_ctrl.init_done, so a DMA read issued during the power-up
-	// sequence is acked with whatever chipRD_dma happens to hold. This
-	// records what comes back so the hole is on the record rather than
-	// inferred; it is only reachable before a disc can be mounted, which is
-	// why it has never mattered in practice.
-	$display("--- E: a read before init_done (measurement, not a check)");
+	// sdram_ctrl serves no slots at all until its power-up sequence
+	// finishes, so chipRD_dma is never written and a read armed in that
+	// window used to be acked with whatever the register happened to hold --
+	// with no slot served at all. Measured here before the fix: it returned
+	// the previous test's byte.
+	//
+	// Two things to hold: no ack while the controller is not ready, and the
+	// read still completes correctly once it is. The second half is the
+	// point -- the master holds req until ack, so the transfer must be
+	// deferred, not dropped.
+	$display("--- E: a read issued before init_done");
 	reset_n = 0;
 	repeat (8) @(posedge sysclk);
 	reset_n = 1;
-	repeat (8) @(posedge sysclk);
-	if (!dut.init_done) begin
+	repeat (4) @(posedge sysclk);
+
+	if (dut.init_done) begin
+		errs = errs + 1;
+		$display("FAIL E.setup: init_done already high, nothing to test");
+	end else begin
 		before_seen = dma_frame_seen;
-		akiko_read(24'h008000, b, f);
-		$display("     pre-init read returned %02h; DMA slots served since: %0d",
-		         b, dma_frame_seen - before_seen);
-		if (dma_frame_seen == before_seen)
-			$display("     -> acked with no slot served at all");
-	end else $display("     (init_done already high, skipped)");
+		@(posedge clk_sys);
+		ak_baddr <= 24'h008001;
+		ak_we    <= 1'b0;
+		ak_req   <= 1'b1;
+
+		// Long enough to have armed several c_7m slots had it been willing.
+		wait_ack(40, acked);
+		checks = checks + 1;
+		if (acked) begin
+			errs = errs + 1;
+			$display("FAIL E.no_early_ack: acked after %0d DMA slots served",
+			         dma_frame_seen - before_seen);
+		end else $display("ok   E.no_early_ack (still waiting, as it should)");
+
+		// Now let the controller come up. The request is still asserted.
+		wait (dut.init_done);
+		repeat (4) @(posedge sysclk);
+		wait_ack(400, acked);
+		checks = checks + 1;
+		if (!acked) begin
+			errs = errs + 1;
+			$display("FAIL E.deferred_ack: never acked after init_done");
+		end else begin
+			$display("ok   E.deferred_ack");
+			check8("E.deferred_byte", ak_rbyte,
+			       expect_byte(24'h008001, dma_frame));
+		end
+		ak_req <= 1'b0;
+		@(posedge clk_sys);
+	end
 
 	$display("------------------------------------");
 	$display("checks=%0d errors=%0d", checks, errs);
