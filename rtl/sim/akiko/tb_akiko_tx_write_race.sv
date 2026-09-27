@@ -24,7 +24,7 @@
 module tb_akiko_tx_write_race;
 
 initial begin
-	#5000000 $fatal(1, "tb_akiko_tx_write_race: watchdog timeout");
+	#20000000 $fatal(1, "tb_akiko_tx_write_race: watchdog timeout");
 end
 
 logic clk = 0;
@@ -222,15 +222,16 @@ initial begin
 	set_config(CFG_TXD);
 	write_txcmp(8'd3);                        // "a three-byte command is ready"
 
-	// ... which is not true yet. The bytes land 120 cycles later, about 4 us
-	// of clk_sys, well inside what a 68020 can take over three writes.
-	repeat (120) @(posedge clk);
+	// ... which is not true yet. The bytes land 600 cycles later, about 21 us
+	// of clk_sys: comfortably inside what a 68020 takes over a command, and
+	// far past the 105 ns the inhibit used to be.
+	repeat (600) @(posedge clk);
 	mem[16'h0200] = 8'h15;                    // LED, tag 1
 	mem[16'h0201] = 8'h00;
 	mem[16'h0202] = 8'hEA;                    // 15 + 00 + ea = ff
 
 	cyc = 0;
-	while (!cmd_pending_w && cyc < 4000) begin
+	while (!cmd_pending_w && cyc < 12000) begin
 		@(posedge clk); cyc = cyc + 1;
 	end
 
