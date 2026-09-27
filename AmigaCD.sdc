@@ -106,3 +106,72 @@ set_multicycle_path -to {*Hq2x*} -setup 2
 set_multicycle_path -to {*Hq2x*} -hold 1
 set_multicycle_path -from [get_clocks { *|pll|pll_inst|altera_pll_i|*[0].*|divclk}] -to {ascal|*} -setup 2
 set_multicycle_path -from [get_clocks { *|pll|pll_inst|altera_pll_i|*[0].*|divclk}] -to {ascal|*} -hold 1
+
+# ---------------------------------------------------------------------------
+# The external SDRAM interface.
+#
+# Until this was written nothing timed it: report_ucp on the seed 1 netlist of
+# 2026-09-27 counted 92 unconstrained output ports over 258 paths and 26
+# unconstrained input ports over 171, and all 39 SDRAM_* pins were in there.
+# The fitter was free to route the thirteen address lines however it liked and
+# STA had no opinion, so skew across them was a property of the placement seed.
+#
+# That is not theoretical. Seed 16 of the CLUT netlist fit with all five
+# worst-case slacks positive and zero critical warnings, and produced a machine
+# that never reached Kickstart; seed 18 of the same netlist booted. The 68020
+# fetches its reset vectors through this bus. See
+# ../../docs/sdram-timing-headroom.md.
+#
+# SDRAM_CLK is sd_clk (sdram_ctrl.v:338), which toggles on every sysclk, so the
+# bus runs at half the 113.5 MHz core clock: 56.75 MHz, 17.616 ns.
+#
+# The module fitted to this board (a Retro Remake SuperStation) has not been
+# identified, so each figure below is the worst across the three parts these
+# boards are built with -- Alliance AS4C32M16SB-6, Winbond W9825G6KH-6, ISSI
+# IS42S16320F-6. If the part is ever read off the chip, only these four numbers
+# change.
+set sdram_tIS   1.5     ;# input setup at the SDRAM, worst of the three
+set sdram_tIH   0.8     ;# input hold
+set sdram_tAC   6.0     ;# access time from clock, worst of the three
+set sdram_tOH   2.0     ;# output data hold, worst (smallest) of the three
+set sdram_trace_max 0.4 ;# PCB flight time, 30-50 mm
+set sdram_trace_min 0.2
+
+create_generated_clock -name SDRAM_CLK_out -divide_by 2 \
+    -source [get_pins {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] \
+    [get_ports {SDRAM_CLK}]
+
+set sdram_out_ports [get_ports {SDRAM_A[*] SDRAM_BA[*] SDRAM_DQ[*] \
+                                SDRAM_nCS SDRAM_nRAS SDRAM_nCAS SDRAM_nWE \
+                                SDRAM_CKE SDRAM_DQML SDRAM_DQMH}]
+
+set_output_delay -clock SDRAM_CLK_out -max [expr {$sdram_tIS + $sdram_trace_max}] $sdram_out_ports
+set_output_delay -clock SDRAM_CLK_out -min [expr {-$sdram_tIH - $sdram_trace_min}] $sdram_out_ports
+
+set_input_delay  -clock SDRAM_CLK_out -max [expr {$sdram_tAC + $sdram_trace_max}] [get_ports {SDRAM_DQ[*]}]
+set_input_delay  -clock SDRAM_CLK_out -min [expr {$sdram_tOH + $sdram_trace_min}] [get_ports {SDRAM_DQ[*]}]
+
+# The address and command are set up a whole SDRAM cycle before the edge that
+# samples them: sysclk runs at twice SDRAM_CLK, and sdram_ctrl advances its
+# state machine on sysclk while the SDRAM only ever looks on its own rising
+# edge. Without this, TimeQuest pairs the launch with the nearest SDRAM_CLK
+# edge -- 8.809 ns instead of 17.616 -- and reports a violation the design
+# never had.
+set sdram_launch [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}]
+set_multicycle_path -setup 2 -from $sdram_launch -to [get_clocks SDRAM_CLK_out]
+set_multicycle_path -hold  1 -from $sdram_launch -to [get_clocks SDRAM_CLK_out]
+
+# Read data comes back a cycle after the SDRAM launches it. sdram_ctrl captures
+# SDRAM_DQ into sdata_reg on the sysclk edges where sdram_state[0] is high
+# (sdram_ctrl.v:348), while SDRAM_CLK is the REGISTERED version of that same bit
+# (sdram_ctrl.v:338) -- so the clock the SDRAM sees, and everything it launches
+# in reply, sits one sysclk behind the internal state that captures it. Both
+# directions of this interface carry that offset, which is what the 2 encodes.
+#
+# Found empirically first -- 1 gives -5.9 ns and 0 gives -14.7 -- and only then
+# traced back to the registered clock output. Anyone changing how SDRAM_CLK is
+# generated has to revisit these. The cleaner statement of the same thing would
+# be to derive the generated clock through sd_clk|q so TimeQuest computes the
+# offset itself; that has not been tried.
+set_multicycle_path -setup 2 -from [get_clocks SDRAM_CLK_out] -to $sdram_launch
+set_multicycle_path -hold  2 -from [get_clocks SDRAM_CLK_out] -to $sdram_launch
