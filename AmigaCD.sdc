@@ -158,8 +158,6 @@ set_input_delay  -clock SDRAM_CLK_out -min [expr {$sdram_tOH + $sdram_trace_min}
 # edge -- 8.809 ns instead of 17.616 -- and reports a violation the design
 # never had.
 set sdram_launch [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}]
-set_multicycle_path -setup 2 -from $sdram_launch -to [get_clocks SDRAM_CLK_out]
-set_multicycle_path -hold  1 -from $sdram_launch -to [get_clocks SDRAM_CLK_out]
 
 # Read data comes back a cycle after the SDRAM launches it. sdram_ctrl captures
 # SDRAM_DQ into sdata_reg on the sysclk edges where sdram_state[0] is high
@@ -173,5 +171,25 @@ set_multicycle_path -hold  1 -from $sdram_launch -to [get_clocks SDRAM_CLK_out]
 # generated has to revisit these. The cleaner statement of the same thing would
 # be to derive the generated clock through sd_clk|q so TimeQuest computes the
 # offset itself; that has not been tried.
+
+# Both directions carry a two-cycle relationship. sysclk runs at twice
+# SDRAM_CLK, and SDRAM_CLK is a REGISTERED output of sdram_state[0]
+# (sdram_ctrl.v:338) while the state that drives the address and captures read
+# data is the internal one -- so the external side sits one sysclk behind.
+#
+# Measured on the seed 1 netlist, which is how each piece earned its place:
+#
+#   clock from the PLL pin, no multicycle     setup -17.273  hold -5.922
+#   clock from the PLL pin, 2/1               setup  +0.344  hold -5.922
+#   clock through sd_clk|q, no multicycle     setup -11.983  hold -1.756
+#   clock through sd_clk|q, 2/1               setup  +0.337  hold -1.756
+#   clock through sd_clk|q, 2/2               setup  +0.337  hold +0.243
+#
+# Deriving the clock through the register is what models its clock-to-out --
+# that is the -5.9 to -1.8 step on hold. The multicycles are the rate and the
+# offset, and they are still needed after it: a suggestion that the canonical
+# derivation makes them unnecessary was tested and leaves setup at -11.983.
+set_multicycle_path -setup 2 -from $sdram_launch -to [get_clocks SDRAM_CLK_out]
+set_multicycle_path -hold  2 -from $sdram_launch -to [get_clocks SDRAM_CLK_out]
 set_multicycle_path -setup 2 -from [get_clocks SDRAM_CLK_out] -to $sdram_launch
 set_multicycle_path -hold  2 -from [get_clocks SDRAM_CLK_out] -to $sdram_launch
