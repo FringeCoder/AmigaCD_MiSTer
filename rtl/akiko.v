@@ -341,7 +341,24 @@ if (NATIVE_CD32) begin : g_cd
 	reg  [7:0] cdrom_result_buffer  [32];
 	reg  [5:0] cdrom_receive_length;        // 0..32 (0 = no result pending)
 	reg  [5:0] cdrom_receive_offset;        // bytes already DMA'd to chip RAM
-	reg  [1:0] tx_dma_delay;                // 3-tick post-write inhibit
+	// Post-write inhibit on the command fetch.
+	//
+	// The BIOS writes its command bytes into chip RAM and the compare index
+	// at $1D; the drive is not supposed to go looking until the write has
+	// landed. WinUAE reloads three of its own ticks here, which are whole
+	// emulated CPU slices -- microseconds of machine time. Three ticks of
+	// clk_sys is 105 ns, far less than a 68020 needs to put a few bytes in
+	// chip RAM, so we could fetch the region before it was written and take
+	// the zeros that were there.
+	//
+	// That is where a phantom command comes from: two zero bytes look like a
+	// complete opcode-0 frame (expected_total_len(0) is 2) and the framer
+	// announces one. On hardware the host then drains a command the BIOS
+	// never sent, and the real command behind it is read misaligned.
+	//
+	// 400 cycles of clk_sys is about 14 us, comfortably longer than the
+	// write it is waiting on and far shorter than the gap between commands.
+	reg  [9:0] tx_dma_delay;                // post-write fetch inhibit
 	reg  [1:0] rx_dma_delay;
 	reg        tx_busy;                     // engine waiting for dma_ack (TX read)
 	reg        rx_busy;                     // engine waiting for dma_ack (RX write)
@@ -487,7 +504,7 @@ if (NATIVE_CD32) begin : g_cd
 	wire tx_can_start =  cdrom_flags[CDFLAG_TXD_BIT]
 	                  && !cdrom_flags[CDFLAG_ENABLE_BIT]
 	                  && (cdcomtxinx != cdcomtxcmp)
-	                  && (tx_dma_delay == 2'd0)
+	                  && (tx_dma_delay == 10'd0)
 	                  && (cdrom_receive_length == 6'd0)
 	                  && (cdrom_command_length != 6'd32)
 	                  && !cmd_pending;       // hold while bridge has work to do
@@ -664,7 +681,7 @@ if (NATIVE_CD32) begin : g_cd
 			cdrom_command_length <= 6'h0;
 			cdrom_receive_length <= 6'h0;
 			cdrom_receive_offset <= 6'h0;
-			tx_dma_delay         <= 2'h0;
+			tx_dma_delay         <= 10'h0;
 			rx_dma_delay         <= 2'h0;
 			tx_busy              <= 1'b0;
 			rx_busy              <= 1'b0;
@@ -690,7 +707,7 @@ if (NATIVE_CD32) begin : g_cd
 			pbx_ship_invalid     <= 1'b0;
 		end else begin
 			// 3-tick post-write delay decay (akiko.cpp:1949,1954)
-			if (tx_dma_delay != 2'd0) tx_dma_delay <= tx_dma_delay - 2'd1;
+			if (tx_dma_delay != 10'd0) tx_dma_delay <= tx_dma_delay - 10'd1;
 			if (rx_dma_delay != 2'd0) rx_dma_delay <= rx_dma_delay - 2'd1;
 
 			pio_wr_d <= pio_wr_sel;
@@ -779,7 +796,7 @@ if (NATIVE_CD32) begin : g_cd
 					if (lds) begin
 						cdcomtxcmp   <= din[7:0];
 						cdrom_intreq <= cdrom_intreq & ~CDINT_TXDMADONE;
-						tx_dma_delay <= 2'd3;
+						tx_dma_delay <= 10'd400;
 					end
 				end
 				// $1F byte write = RX compare; clears RXDMADONE IRQ; reloads
@@ -1260,7 +1277,7 @@ if (NATIVE_CD32) begin : g_cd
 				end
 
 				// Transients, forced idle. See above.
-				tx_dma_delay         <= 2'h0;
+				tx_dma_delay         <= 10'h0;
 				rx_dma_delay         <= 2'h0;
 				tx_busy              <= 1'b0;
 				rx_busy              <= 1'b0;
@@ -1391,7 +1408,7 @@ if (NATIVE_CD32) begin : g_cd
 	// partly filled sector and for a subcode block, which is one 96-byte
 	// subchannel frame out of seventy-five a second during CDDA.
 	//
-	// tx_dma_delay and rx_dma_delay are the 3-tick post-write inhibit:
+	// tx_dma_delay and rx_dma_delay are the post-write inhibit:
 	// nonzero means a transfer has been asked for and has not started yet,
 	// which is no more restorable than one already running.
 	//
@@ -1403,7 +1420,7 @@ if (NATIVE_CD32) begin : g_cd
 	         ~pbx_busy & ~subcode_busy & ~tx_busy & ~rx_busy
 	       & ~rx_inflight & ~dma_owned
 	       & (pbx_state == PBX_IDLE) & (subcode_state == SUB_IDLE)
-	       & (tx_dma_delay == 2'd0) & (rx_dma_delay == 2'd0);
+	       & (tx_dma_delay == 10'd0) & (rx_dma_delay == 2'd0);
 
 	// The two 32-byte command buffers, out to the vector. Generate loops for
 	// the same reason the C2P buffer uses one: these are arrays everywhere
