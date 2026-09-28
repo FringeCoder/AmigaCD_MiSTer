@@ -79,9 +79,14 @@ seed 16  setup 0.152    hold 0.174    -- BLACK SCREEN on hardware, no Kickstart
 seed 4   setup -0.087   hold 0.168    -- fails timing
 seed 18  setup 0.386    hold 0.206    -- boots, save and restore verified
 == fit for 3c9f726 (arb waits for sdram_ready) ==
-seed 18  setup 0.039    hold 0.173    -- passes, but too thin to ship. Mainline
-         at the same seed is +0.386, so this netlist lost 0.347 ns. NOT to this
-         change: the worst path is emu|savestate|ddr_read -> ddram_ctrl arbiter
-         -> HPS f2sdram wr_data[51], and sdram_ready appears nowhere in the
-         three worst paths. Fitter placement noise on the save-state DDR write
-         port at this seed. Needs a seed sweep before it ships.
+seed 18  setup 0.039    hold 0.173    -- passes, but too thin to ship.
+         The worst path is emu|savestate|ddr_read -> ddram_ctrl arbiter -> HPS
+         f2sdram wr_data[51], and sdram_ready appears nowhere in the three worst
+         paths, so the thinness is not this change. Needs a seed sweep before it
+         ships.
+         Correction: an earlier version of this entry said the netlist "lost
+         0.347 ns" against mainline's +0.386 at the same seed. That comparison
+         was invalid -- rtl/akiko.v differs between 6e69ae2, where +0.386 was
+         measured, and this branch's base, so the two were never the same
+         source. The path evidence above stands on its own; only the magnitude
+         claim is withdrawn.
