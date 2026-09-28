@@ -461,6 +461,44 @@ jobs:
           vvp tb_akiko_pbx | tee out_akiko_pbx.log
           grep -q "tb_akiko_pbx_dma PASS" out_akiko_pbx.log
 
+      # chipdma_arb's read return, against the real sdram_ctrl. The arb samples
+      # chipRD_dma four clk_sys cycles after its arming edge with no handshake
+      # from sdram_ctrl, which only latches chipRD_dma when the slot it served
+      # was a DMA slot. If the two ever disagree the arb acks a byte from an
+      # earlier slot -- read-path only, so sector data would stay correct and
+      # the one read Akiko does, the command fetch, would be wrong. Every frame
+      # carries a different value on sd_data here, so a returned byte names the
+      # frame it came from.
+      - name: chipdma_arb read return
+        run: |
+          set -euo pipefail
+          python3 rtl/sim/sdram/make_sim_sdram.py
+          iverilog -g2012 -o tb_cdma_read             rtl/sim/sdram/sdram_ctrl_sim.v rtl/cpu_cache_new.v             rtl/sim/cache/dpram_sim.v rtl/chipdma_arb.v rtl/memory_router.v             rtl/sim/chipdma/tb_chipdma_read_stale.sv
+          vvp tb_cdma_read | tee out_cdma_read.log
+          grep -q "tb_chipdma_read_stale PASS" out_cdma_read.log
+      # The command channel: what a host read burst does when no command is
+      # ready. A drain on a stale REQ used to consume a command the Amiga was
+      # still writing, leaving the next frame with a stray leading byte --
+      # which swallowed the BIOS's INFO command and stopped it talking.
+      - name: Akiko command phantom drain
+        run: |
+          set -euo pipefail
+          iverilog -g2012 -I. -o tb_akiko_cmd_phantom rtl/akiko.v rtl/akiko_nvram.v rtl/akiko_hps_bridge.v rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_cmd_phantom.sv
+          vvp tb_akiko_cmd_phantom | tee out_akiko_cmd_phantom.log
+          grep -q "tb_akiko_cmd_phantom PASS" out_akiko_cmd_phantom.log
+      # The TX and RX DMA engines: command bytes fetched out of chip RAM and
+      # response bytes written back, the ENABLE and receive_length gates that
+      # hold TX off, the post-write inhibit, and the 256-byte index wrap. This
+      # bench existed but was never wired in, and it had been red for months:
+      # its akiko instance predated dma_arm, so with that input floating no
+      # engine was ever claimed and every transfer stalled after one byte.
+      # Wired in here so that cannot happen again quietly.
+      - name: Akiko TX/RX DMA
+        run: |
+          set -euo pipefail
+          iverilog -g2012 -I. -o tb_akiko_txrx             rtl/akiko.v rtl/akiko_nvram.v             rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_txrx_dma.sv
+          vvp tb_akiko_txrx | tee out_akiko_txrx.log
+          grep -q "tb_akiko_txrx_dma PASS" out_akiko_txrx.log
       # The command fetch against the BIOS's write. The engine must not go
       # looking at the command stream until the write that announced it has
       # landed; fetching early reads the zeros still there and the framer

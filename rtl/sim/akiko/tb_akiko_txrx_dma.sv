@@ -5,7 +5,7 @@
 module tb_akiko_txrx_dma;
 
 initial begin
-	#500000 $fatal(1, "tb_akiko_txrx_dma: watchdog timeout");
+	#8000000 $fatal(1, "tb_akiko_txrx_dma: watchdog timeout");
 end
 
 logic clk = 0;
@@ -28,6 +28,13 @@ wire [23:0] dma_baddr;
 wire  [7:0] dma_wbyte;
 logic [7:0] dma_rbyte;
 logic       dma_ack;
+// The arbiter's owner-freeze pulse. akiko latches which sub-engine it is
+// servicing on this edge, so the matching dma_ack is credited to the right
+// one; with dma_arm left unconnected the input floats and no engine is ever
+// claimed, which is why every transfer in this bench stalled after at most
+// one byte. chipdma_arb raises it on the arming edge, >=4 clk_sys before the
+// ack, and the BFM below does the same.
+logic       dma_arm;
 
 akiko #(.NATIVE_CD32(1)) u_dut (
 	.clk(clk), .reset(reset),
@@ -37,7 +44,7 @@ akiko #(.NATIVE_CD32(1)) u_dut (
 	.akiko_irq(irq),
 	.dma_req(dma_req), .dma_we(dma_we),
 	.dma_baddr(dma_baddr), .dma_wbyte(dma_wbyte),
-	.dma_rbyte(dma_rbyte), .dma_ack(dma_ack),
+	.dma_rbyte(dma_rbyte), .dma_ack(dma_ack), .dma_arm(dma_arm),
 	.hps_cmd_pending(), .hps_cmd_byte(),
 	.hps_cmd_pop(1'b0), .hps_cmd_done(1'b0),
 	.hps_result_push(1'b0), .hps_result_byte(8'h00), .hps_result_done(1'b0),
@@ -47,9 +54,12 @@ akiko #(.NATIVE_CD32(1)) u_dut (
 	.hps_nvr_addr(10'd0),
 	.hps_nvr_dout(), .hps_nvr_clear_dirty(1'b0), .hps_nvr_dirty(),
 	.nvr_load_addr(10'd0), .nvr_load_din(8'h00), .nvr_load_we(1'b0),
+	// Subcode channel, tied off. Left unconnected these floated, and an
+	// x on hps_subcode_push reaches the subcode state machine.
+	.hps_subcode_push(1'b0), .hps_subcode_byte(8'h00), .hps_subcode_done(1'b0),
 	// Save state ports are ours, not upstream's. Tied off: these benches
 	// exercise the CD engine, not a restore.
-	.ss_state(), .ss_ld(1'b0), .ss_ld_data('0), .ss_idle()
+	.ss_state(), .ss_ld(1'b0), .ss_ld_data(1052'd0), .ss_idle()
 );
 
 localparam [31:0] CDINT_DRIVEXMIT = 32'h40000000;
@@ -115,12 +125,14 @@ logic  bfm_in_xfer     = 1'b0;
 
 initial begin
 	dma_ack   = 0;
+	dma_arm   = 0;
 	dma_rbyte = 8'h00;
 	for (int i = 0; i < 65536; i++) mem[i] = 8'h00;
 end
 
 always @(posedge clk) begin
 	dma_ack <= 0;
+	dma_arm <= 0;
 	if (bfm_in_xfer) begin
 		if (bfm_delay_cnt != 0) begin
 			bfm_delay_cnt <= bfm_delay_cnt - 1;
@@ -136,6 +148,7 @@ always @(posedge clk) begin
 	end else if (dma_req && !dma_ack) begin
 		bfm_in_xfer  <= 1'b1;
 		bfm_delay_cnt <= bfm_extra_delay;
+		dma_arm      <= 1'b1;   // the arming edge
 	end
 end
 
@@ -213,7 +226,7 @@ initial begin
 	u_dut.g_cd.cdcomtxinx           = 8'd0;
 	set_config(CFG_TXD);
 	write_txcmp(8'd4);
-	wait_tx_done(200, cyc);
+	wait_tx_done(8000, cyc);
 	check8 ("A.cmd[0]",  8'hAB, u_dut.g_cd.cdrom_command_buffer[0]);
 	check8 ("A.cmd[1]",  8'hB2, u_dut.g_cd.cdrom_command_buffer[1]);
 	check8 ("A.cmd[2]",  8'hC3, u_dut.g_cd.cdrom_command_buffer[2]);
@@ -237,7 +250,7 @@ initial begin
 	u_dut.g_cd.cdrom_intreq           = CDINT_DRIVERECV;
 	set_config(CFG_RXD);
 	write_rxcmp(8'd4);
-	wait_rx_done(200, cyc);
+	wait_rx_done(8000, cyc);
 	check8 ("B.mem[0]", 8'h11, mem[16'h0000]);
 	check8 ("B.mem[1]", 8'h22, mem[16'h0001]);
 	check8 ("B.mem[2]", 8'h33, mem[16'h0002]);
@@ -258,7 +271,16 @@ initial begin
 	u_dut.g_cd.cdrom_receive_offset = 6'd0;
 	set_config(CFG_RXD);
 	write_rxcmp(8'd4);
-	repeat (40) @(posedge clk);
+	begin
+		int n;
+		n = 0;
+		while (u_dut.g_cd.cdcomrxinx != 8'd4 && n < 8000) begin
+			@(posedge clk);
+			n = n + 1;
+		end
+		repeat (8) @(posedge clk);   // let the last write land in mem
+		$display("    C1.measured: 4 bytes delivered in %0d cycles", n);
+	end
 	check8 ("C1.mem[3]", 8'hA3, mem[16'h0003]);
 	check8 ("C1.mem[4]", 8'h00, mem[16'h0004]);
 	check8 ("C1.rxinx",  8'd4,  u_dut.g_cd.cdcomrxinx);
@@ -266,7 +288,7 @@ initial begin
 	check_bit("C1.drivexmit", 1'b0, u_dut.g_cd.cdrom_intreq[30]);
 	check8 ("C1.recvlen", 8'd8, {2'h0, u_dut.g_cd.cdrom_receive_length});
 	write_rxcmp(8'd8);
-	wait_rx_done(200, cyc);
+	wait_rx_done(8000, cyc);
 	check8 ("C2.mem[4]", 8'hA4, mem[16'h0004]);
 	check8 ("C2.mem[7]", 8'hA7, mem[16'h0007]);
 	check8 ("C2.rxinx",  8'd8,  u_dut.g_cd.cdcomrxinx);
@@ -286,17 +308,30 @@ initial begin
 	begin
 		int cycles_to_req;
 		cycles_to_req = 0;
-		while (!dma_req && cycles_to_req < 20) begin
+		// Generously capped: the inhibit is three ticks here, but it is a
+		// wall-clock wait whose unit has been wrong before, and a scanline-rate
+		// tick would put dma_req thousands of cycles out. Waiting longer than
+		// necessary costs nothing; a cap below the inhibit would turn this into
+		// a timeout rather than a measurement.
+		while (!dma_req && cycles_to_req < 8000) begin
 			@(posedge clk);
 			cycles_to_req = cycles_to_req + 1;
 		end
-		if (cycles_to_req < 2) begin
-			$display("FAIL D.tx_delay: dma_req fired in %0d cycles, expected >=2 (t=%0t)", cycles_to_req, $time);
+		$display("    D.measured: dma_req %0d cycles after the $1D write", cycles_to_req);
+		// The floor has to sit above the engine's own latency or the check
+		// asserts nothing. Measured on this netlist: 2 cycles with the inhibit
+		// removed, 5 with it. The old threshold was "under 2", which 2 does not
+		// trip, so deleting the inhibit outright left all 48 checks green --
+		// verified by mutation. 4 discriminates with a cycle of slack either
+		// side.
+		if (cycles_to_req < 4) begin
+			$display("FAIL D.tx_delay: dma_req fired in %0d cycles, expected >=4 -- the post-write inhibit is not holding (t=%0t)",
+			         cycles_to_req, $time);
 			errs++;
 		end
 		checks++;
 	end
-	wait_tx_done(200, cyc);
+	wait_tx_done(8000, cyc);
 	check8 ("D.cmd[0]", 8'hEE, u_dut.g_cd.cdrom_command_buffer[0]);
 
 	$display("--- Test E: TX gated by ENABLE ---");
@@ -308,12 +343,12 @@ initial begin
 	u_dut.g_cd.cdcomtxinx           = 8'd0;
 	set_config(CFG_TXD | CFG_ENA);
 	write_txcmp(8'd1);
-	repeat (60) @(posedge clk);
+	repeat (8000) @(posedge clk);   // must outlast the post-write inhibit
 	check8 ("E.cmdlen_stays_0", 8'd0, {2'h0, u_dut.g_cd.cdrom_command_length});
 	check8 ("E.txinx_stays_0",  8'd0, u_dut.g_cd.cdcomtxinx);
 	check_bit("E.txdone_clear", 1'b0, u_dut.g_cd.cdrom_intreq[27]);
 	set_config(CFG_TXD);
-	wait_tx_done(200, cyc);
+	wait_tx_done(8000, cyc);
 	check8 ("E.cmd[0]_after", 8'h99, u_dut.g_cd.cdrom_command_buffer[0]);
 	check8 ("E.txinx_after",  8'd1,  u_dut.g_cd.cdcomtxinx);
 
@@ -329,11 +364,11 @@ initial begin
 	u_dut.g_cd.cdrom_receive_offset   = 6'd0;
 	set_config(CFG_TXD);
 	write_txcmp(8'd1);
-	repeat (60) @(posedge clk);
+	repeat (8000) @(posedge clk);   // must outlast the post-write inhibit
 	check8 ("F.cmdlen_stays_0", 8'd0, {2'h0, u_dut.g_cd.cdrom_command_length});
 	check8 ("F.txinx_stays_0",  8'd0, u_dut.g_cd.cdcomtxinx);
 	u_dut.g_cd.cdrom_receive_length = 6'd0;
-	wait_tx_done(200, cyc);
+	wait_tx_done(8000, cyc);
 	check8 ("F.cmd[0]_after", 8'h77, u_dut.g_cd.cdrom_command_buffer[0]);
 
 	$display("--- Test G: TX index wrap ---");
@@ -348,7 +383,7 @@ initial begin
 	u_dut.g_cd.cdcomtxinx           = 8'hFE;
 	set_config(CFG_TXD);
 	write_txcmp(8'h02);
-	wait_tx_done(400, cyc);
+	wait_tx_done(8000, cyc);
 	check8 ("G.cmd[0]", 8'h0B, u_dut.g_cd.cdrom_command_buffer[0]);
 	check8 ("G.cmd[1]", 8'h02, u_dut.g_cd.cdrom_command_buffer[1]);
 	check8 ("G.cmd[2]", 8'h03, u_dut.g_cd.cdrom_command_buffer[2]);
@@ -367,7 +402,7 @@ initial begin
 	bfm_extra_delay = 5;
 	set_config(CFG_TXD);
 	write_txcmp(8'd2);
-	wait_tx_done(400, cyc);
+	wait_tx_done(8000, cyc);
 	check8 ("H.cmd[0]", 8'hF0, u_dut.g_cd.cdrom_command_buffer[0]);
 	check8 ("H.cmd[1]", 8'hF1, u_dut.g_cd.cdrom_command_buffer[1]);
 	check8 ("H.txinx",  8'd2,  u_dut.g_cd.cdcomtxinx);
@@ -375,7 +410,16 @@ initial begin
 	bfm_extra_delay = 0;
 
 	$display("tb_akiko_txrx_dma: %0d checks, %0d errors", checks, errs);
-	$finish;
+	// A PASS line, which this bench lacked, and which is what the CI step
+	// greps for. It has to be the grep: under Icarus the argument to $finish
+	// is a diagnostic verbosity level, not an exit status, so vvp returns 0
+	// whatever happens here -- verified by mutation, 1 error and still exit 0.
+	// The argument is passed anyway for simulators where it does mean an exit
+	// code. A PASS line also does not go stale when a check is added, which a
+	// grep for the check count would.
+	if (errs == 0) $display("tb_akiko_txrx_dma PASS");
+	else           $display("tb_akiko_txrx_dma FAIL");
+	$finish(errs == 0 ? 0 : 1);
 end
 
 endmodule
