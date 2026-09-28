@@ -461,6 +461,20 @@ jobs:
           vvp tb_akiko_pbx | tee out_akiko_pbx.log
           grep -q "tb_akiko_pbx_dma PASS" out_akiko_pbx.log
 
+      # The TX and RX DMA engines: command bytes fetched out of chip RAM and
+      # response bytes written back, the ENABLE and receive_length gates that
+      # hold TX off, the post-write inhibit, and the 256-byte index wrap. This
+      # bench existed but was never wired in, and it had been red for months:
+      # its akiko instance predated dma_arm, so with that input floating no
+      # engine was ever claimed and every transfer stalled after one byte.
+      # Wired in here so that cannot happen again quietly.
+      - name: Akiko TX/RX DMA
+        run: |
+          set -euo pipefail
+          iverilog -g2012 -I. -o tb_akiko_txrx             rtl/akiko.v rtl/akiko_nvram.v             rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_txrx_dma.sv
+          vvp tb_akiko_txrx | tee out_akiko_txrx.log
+          grep -q "tb_akiko_txrx_dma PASS" out_akiko_txrx.log
+
       # The Akiko sector channel itself: 1176 words in, 2352 bytes out, at
       # three different strobe spacings. This is upstream's bench for the
       # word-wide ingest, run here against our akiko.v with the savestate
