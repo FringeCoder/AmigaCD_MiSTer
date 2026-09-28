@@ -461,6 +461,22 @@ jobs:
           vvp tb_akiko_pbx | tee out_akiko_pbx.log
           grep -q "tb_akiko_pbx_dma PASS" out_akiko_pbx.log
 
+      # chipdma_arb's read return, against the real sdram_ctrl. The arb samples
+      # chipRD_dma four clk_sys cycles after its arming edge with no handshake
+      # from sdram_ctrl, which only latches chipRD_dma when the slot it served
+      # was a DMA slot. If the two ever disagree the arb acks a byte from an
+      # earlier slot -- read-path only, so sector data would stay correct and
+      # the one read Akiko does, the command fetch, would be wrong. Every frame
+      # carries a different value on sd_data here, so a returned byte names the
+      # frame it came from.
+      - name: chipdma_arb read return
+        run: |
+          set -euo pipefail
+          python3 rtl/sim/sdram/make_sim_sdram.py
+          iverilog -g2012 -o tb_cdma_read             rtl/sim/sdram/sdram_ctrl_sim.v rtl/cpu_cache_new.v             rtl/sim/cache/dpram_sim.v rtl/chipdma_arb.v rtl/memory_router.v             rtl/sim/chipdma/tb_chipdma_read_stale.sv
+          vvp tb_cdma_read | tee out_cdma_read.log
+          grep -q "tb_chipdma_read_stale PASS" out_cdma_read.log
+
       # The Akiko sector channel itself: 1176 words in, 2352 bytes out, at
       # three different strobe spacings. This is upstream's bench for the
       # word-wide ingest, run here against our akiko.v with the savestate
