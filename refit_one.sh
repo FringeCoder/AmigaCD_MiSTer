@@ -31,11 +31,42 @@ su=$(grep -oE "Worst-case setup slack is [-0-9.]+" output_files/AmigaCD.sta.rpt 
 ho=$(grep -oE "Worst-case hold slack is [-0-9.]+"  output_files/AmigaCD.sta.rpt | tail -1 | grep -oE "[-0-9.]+$")
 su=${su:-0}; ho=${ho:-0}
 
+# Dump the worst paths for BOTH corners while this build is still the one in
+# db/. Learnt the hard way: a pair of arms was fitted back to back, the second
+# overwrote the database, and the -0.495 ns hold path from the first was gone
+# before it was read -- so the question it would have answered (whether the
+# violation was the change or the placement) needed another twenty-five minute
+# fit to ask again.
+cat > "$OUT/paths_$SEED.tcl" <<'TCL'
+project_open AmigaCD
+create_timing_netlist
+read_sdc
+update_timing_netlist
+report_timing -setup -npaths 3 -detail path_only -stdout
+report_timing -hold  -npaths 3 -detail path_only -stdout
+TCL
+"$Q/quartus_sta" -t "$OUT/paths_$SEED.tcl" > "$OUT/paths_$SEED.log" 2>&1 || true
+
+# The hash of everything that was actually synthesised.
+#
+# A recorded slack is comparable only to one built from the same sources, and
+# assuming otherwise produced a retracted claim: +0.386 at seed 18 was compared
+# against +0.050 at seed 18 and the 0.336 ns difference attributed to database
+# state, when in fact rtl/akiko.v differed between the two commits. With this in
+# the record the comparison is checkable instead of assumed.
+# git ls-files gives the FILE LIST, respecting what is tracked; the hash is
+# over the working tree, not the index. Hashing the index would miss an
+# unstaged edit, which is precisely the case this is meant to catch.
+src_hash=$(git ls-files -- 'rtl/*.v' 'rtl/*.sv' 'AmigaCD.sv' 'AmigaCD.sdc' 'AmigaCD.qsf' 2>/dev/null \
+           | grep -vE 'rtl/sim/' | sort | xargs sha1sum 2>/dev/null \
+           | sha1sum | cut -c1-12)
+
 "$Q/quartus_asm" AmigaCD > "$OUT/one_asm_$SEED.log" 2>&1
 cp output_files/AmigaCD.rbf "$OUT/AmigaCD_final_seed$SEED.rbf"
 
-printf "seed %s  setup %s  hold %s  -- rbf saved to %s/AmigaCD_final_seed%s.rbf\n" \
-       "$SEED" "$su" "$ho" "$OUT" "$SEED"
+printf "seed %s  setup %s  hold %s  src %s  -- rbf saved to %s/AmigaCD_final_seed%s.rbf\n" \
+       "$SEED" "$su" "$ho" "${src_hash:-unknown}" "$OUT" "$SEED"
+echo "worst paths: $OUT/paths_$SEED.log"
 
 bad=$(awk -v a="$su" -v b="$ho" 'BEGIN{print (a<=0 || b<=0) ? 1 : 0}')
 if [ "$bad" = "1" ]; then
