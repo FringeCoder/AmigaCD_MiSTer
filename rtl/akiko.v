@@ -341,7 +341,46 @@ if (NATIVE_CD32) begin : g_cd
 	reg  [7:0] cdrom_result_buffer  [32];
 	reg  [5:0] cdrom_receive_length;        // 0..32 (0 = no result pending)
 	reg  [5:0] cdrom_receive_offset;        // bytes already DMA'd to chip RAM
-	reg  [1:0] tx_dma_delay;                // 3-tick post-write inhibit
+	// Post-write inhibit on the command fetch.
+	//
+	// The BIOS writes its command bytes into chip RAM and the compare index
+	// at $1D; the drive is not supposed to go looking until the write has
+	// landed. WinUAE reloads three of its own ticks here, which are whole
+	// emulated CPU slices -- microseconds of machine time. Three ticks of
+	// clk_sys is 105 ns, far less than a 68020 needs to put a few bytes in
+	// chip RAM, so we could fetch the region before it was written and take
+	// the zeros that were there.
+	//
+	// That is where a phantom command comes from: two zero bytes look like a
+	// complete opcode-0 frame (expected_total_len(0) is 2) and the framer
+	// announces one. On hardware the host then drains a command the BIOS
+	// never sent, and the real command behind it is read misaligned.
+	//
+	// The unit matters and we had it wrong. WinUAE decrements both counters in
+	// AKIKO_hsync_handler (akiko.cpp:1481-1484), once per scanline -- not per
+	// CPU cycle. Its "3" is therefore three PAL lines: 128 to 192 us
+	// depending on where in the line the write landed, about 1800 to 2700
+	// cycles of a 14.18 MHz 68020. We decremented per clk_sys, so our "3"
+	// meant 105 ns: roughly eighteen hundred times too short, and shorter
+	// than the write it exists to wait for. The comment used to cite the
+	// lines where WinUAE *sets* the value (1949, 1954) as though they were
+	// the lines that decrement it.
+	//
+	// So keep the tick count at 3 and fix the tick instead: a prescaler
+	// divides clk_sys down to the scanline rate, which reproduces WinUAE's
+	// timing rather than approximating it with a cycle count picked by hand.
+	// A short PAL line is 227 colour clocks and clk_sys is eight times the
+	// colour clock, so a line is 227*8 = 1816 cycles = 64.0 us. NTSC lines
+	// average 227.5 colour clocks, 1820 cycles; 0.2% across a three-line
+	// wait is not worth a mode input here.
+	//
+	// rx_dma_delay had the same bug and is the same fix. It holds the RX
+	// engine off after the Amiga moves its receive index, so Akiko does not
+	// overwrite bytes the CPU has not read yet; at 105 ns it held off nothing.
+	localparam [10:0] LINE_CYCLES = 11'd1815;   // 1816 cycles, counted 1815..0
+	reg [10:0] line_div;                    // clk_sys -> scanline prescaler
+	wire       line_tick = (line_div == 11'd0);
+	reg  [1:0] tx_dma_delay;                // post-write fetch inhibit, in lines
 	reg  [1:0] rx_dma_delay;
 	reg        tx_busy;                     // engine waiting for dma_ack (TX read)
 	reg        rx_busy;                     // engine waiting for dma_ack (RX write)
@@ -664,6 +703,7 @@ if (NATIVE_CD32) begin : g_cd
 			cdrom_command_length <= 6'h0;
 			cdrom_receive_length <= 6'h0;
 			cdrom_receive_offset <= 6'h0;
+			line_div             <= LINE_CYCLES;
 			tx_dma_delay         <= 2'h0;
 			rx_dma_delay         <= 2'h0;
 			tx_busy              <= 1'b0;
@@ -689,9 +729,16 @@ if (NATIVE_CD32) begin : g_cd
 			pbx_byte_idx         <= 12'h0;
 			pbx_ship_invalid     <= 1'b0;
 		end else begin
-			// 3-tick post-write delay decay (akiko.cpp:1949,1954)
-			if (tx_dma_delay != 2'd0) tx_dma_delay <= tx_dma_delay - 2'd1;
-			if (rx_dma_delay != 2'd0) rx_dma_delay <= rx_dma_delay - 2'd1;
+			// Post-write delay decay, one tick per scanline, as WinUAE does
+			// it in AKIKO_hsync_handler (akiko.cpp:1481-1484). The prescaler
+			// runs free, so a delay loaded mid-line expires after two whole
+			// lines plus the remainder of the one it started in -- the same
+			// 128-to-192 us spread WinUAE has, for the same reason.
+			line_div <= line_tick ? LINE_CYCLES : line_div - 11'd1;
+			if (line_tick) begin
+				if (tx_dma_delay != 2'd0) tx_dma_delay <= tx_dma_delay - 2'd1;
+				if (rx_dma_delay != 2'd0) rx_dma_delay <= rx_dma_delay - 2'd1;
+			end
 
 			pio_wr_d <= pio_wr_sel;
 			pio_rd_d <= pio_rd_sel;
@@ -1412,7 +1459,7 @@ if (NATIVE_CD32) begin : g_cd
 	// partly filled sector and for a subcode block, which is one 96-byte
 	// subchannel frame out of seventy-five a second during CDDA.
 	//
-	// tx_dma_delay and rx_dma_delay are the 3-tick post-write inhibit:
+	// tx_dma_delay and rx_dma_delay are the post-write inhibit:
 	// nonzero means a transfer has been asked for and has not started yet,
 	// which is no more restorable than one already running.
 	//

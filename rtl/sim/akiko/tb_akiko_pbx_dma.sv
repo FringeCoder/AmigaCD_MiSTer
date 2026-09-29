@@ -380,7 +380,10 @@ initial begin
 	$display("    F.post-rxcmp: reclen=%0d rxcmp=%0d delay=%0d",
 	         u_dut.g_cd.cdrom_receive_length, u_dut.g_cd.cdcomrxcmp,
 	         u_dut.g_cd.rx_dma_delay);
-	wait_rx_done(2000, cyc);
+	// The RX engine waits out rx_dma_delay first: three scanlines, up to 5448
+	// cycles of clk_sys, exactly as WinUAE waits three of its hsyncs. The old
+	// 2000-cycle window predated that and only fitted a 105 ns inhibit.
+	wait_rx_done(8000, cyc);
 	$display("    F: RX done in %0d cycles  rxinx=%0d reclen=%0d mem2000=%02h",
 	         cyc, u_dut.g_cd.cdcomrxinx, u_dut.g_cd.cdrom_receive_length, mem['h02000]);
 	check8("F.mem_rx0", 8'hCA, mem['h02000]);
