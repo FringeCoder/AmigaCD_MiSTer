@@ -84,7 +84,7 @@ akiko #(.NATIVE_CD32(1)) u_dut (
 	.nvr_load_addr(10'd0), .nvr_load_din(8'h00), .nvr_load_we(1'b0),
 	// Save state ports are ours, not upstream's. Tied off: these benches
 	// exercise the CD engine, not a restore.
-	.ss_state(), .ss_ld(1'b0), .ss_ld_data('0), .ss_idle()
+	.ss_state(), .ss_ld(1'b0), .ss_ld_data(1052'd0), .ss_idle()
 );
 
 akiko_hps_bridge u_bridge (
