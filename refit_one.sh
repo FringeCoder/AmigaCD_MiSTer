@@ -15,12 +15,42 @@ OUT=seed_sweep
 SEED=${1:?usage: refit_one.sh <seed>}
 mkdir -p "$OUT"
 
-# Never two fits at once: they share db/ and output_files/ and interleave
+# Never two fits in THIS tree: they share db/ and output_files/ and interleave
 # silently, and nothing from such a window can be trusted.
-while tasklist 2>/dev/null | grep -qiE "quartus_(map|fit|asm|sta)"; do
-    echo "waiting for an in-flight Quartus run..."
-    sleep 30
+#
+# Scoped to the tree, which the earlier version was not. It waited on any
+# quartus_* process anywhere on the machine, so a fit in a separate git
+# worktree -- with its own db/ and its own output_files/ -- was blocked for no
+# reason. That cost real time: a nineteen-fit search for a matched A/B pair ran
+# strictly serially at about twenty-five minutes a fit.
+#
+# There is headroom to use. The project sets NUM_PARALLEL_PROCESSORS ALL, and a
+# fit measured 30:55 elapsed against 2:13:50 of CPU -- 4.3x parallel on a
+# sixteen-core machine. Resident peak is around 2.7 GB against 15.6 GB of RAM,
+# so two or three concurrent fits in separate worktrees fit comfortably and
+# nearly multiply throughput.
+#
+# A lock file rather than a process scan, because a process scan cannot tell
+# which database a quartus_fit has open.
+LOCK="$OUT/.fit.lock"
+mkdir -p "$OUT"
+while true; do
+    if [ -f "$LOCK" ]; then
+        other=$(cat "$LOCK" 2>/dev/null)
+        # A lock left behind by a killed run must not block forever.
+        if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
+            echo "waiting for the fit already running in this tree (pid $other)..."
+            sleep 30
+            continue
+        fi
+        echo "clearing a stale lock from pid ${other:-unknown}"
+        rm -f "$LOCK"
+    fi
+    echo $$ > "$LOCK"
+    # Re-read: if two invocations raced, the loser sees the winner's pid here.
+    [ "$(cat "$LOCK" 2>/dev/null)" = "$$" ] && break
 done
+trap 'rm -f "$LOCK"' EXIT INT TERM
 
 "$Q/quartus_fit" --seed="$SEED" AmigaCD > "$OUT/one_fit_$SEED.log" 2>&1 || {
     echo "seed $SEED: FIT FAILED, see $OUT/one_fit_$SEED.log"; exit 1; }

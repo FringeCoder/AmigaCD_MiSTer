@@ -63,3 +63,4 @@ tb*
 !tb*.sv
 !tb*.vh
 out*.log
+seed_sweep/.fit.lock
