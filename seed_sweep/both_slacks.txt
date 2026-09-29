@@ -122,3 +122,30 @@ Why no pair qualified: AmigaCD.sdc at 284e785 has no SDRAM interface
 constraints at all, so the fitter places that whole group freely and the
 scatter swamps the effect being measured. #30 fixed that. These twelve fits are
 kept as the reason for rebasing onto mainline rather than sweeping more seeds.
+== A/B arms for the scanline inhibit, REBASED onto mainline ==
+
+Criterion: both slacks positive, |delta setup| <= 0.15. The floor of 0.15 used
+on the old branch point was dropped to the project's own ship criterion once
+the SDRAM interface was constrained -- the earlier floor came from seed 16
+fitting at +0.152 and black-screening, which was an unconstrained build where
+that interface's timing was unknown and plausibly the cause.
+
+  seed   fix setup/hold      base setup/hold     verdict
+    18   +0.164 / +0.243     -0.038 / +0.243    base fails setup, delta 0.202
+     7   -0.069 / -0.468     (not fitted)       fix fails both
+     4   +0.104 / +0.243     +0.236 / +0.195    ACCEPT, delta 0.132
+
+SEED 4 IS THE PAIR. Both arms from one worktree at one seed, differing only in
+rtl/akiko.v; the baseline arm is mainline's akiko.v, so it is what this branch
+would merge into.
+
+  fix   setup +0.104  hold +0.243   scratchpad/pos_fix_seed4.rbf
+  base  setup +0.236  hold +0.195   scratchpad/pos_base_seed4.rbf
+
+Note which arm is tighter: the fix has 0.132 ns LESS setup margin than the
+baseline. If marginality influences the boot rate at all it therefore works
+against the fix, so a result showing the fix booting more often is conservative.
+The reverse would have needed caveating.
+
+Still to do: the interleaved A/B on hardware, via scripts/boot-ab.py with
+--core. Nothing about these numbers is a boot-rate claim.
