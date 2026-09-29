@@ -26,6 +26,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # An upload-artifact step with no retention-days keeps the repository
+      # default and never expires. 493 such artifacts filled the 500 MB quota
+      # on 2026-09-28, and a full quota fails the upload step -- so every
+      # build fails, including on a docs-only PR that touches no code. That
+      # looks like a broken build and sends you looking in the wrong place.
+      # Cheaper to refuse the step than to diagnose it again.
+      # A bench nobody runs is worse than no bench: it reads as coverage.
+      # tb_akiko_txrx_dma failed 36 of its 48 checks for months because its
+      # akiko instance predated dma_arm and nothing ran it; tb_ss_regbus_mux was
+      # red across four PRs for a narrow-port bug Icarus only warns about.
+      - name: Every bench is run by something
+        run: |
+          set -euo pipefail
+          python3 rtl/sim/check-benches-wired.py
+
+      - name: Artifact uploads must set retention-days
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pyyaml
+          python3 .github/check-artifact-retention.py
+
       - name: Install Icarus Verilog and GHDL
         run: sudo apt-get update && sudo apt-get install -y iverilog ghdl
 
@@ -54,6 +75,20 @@ jobs:
       #
       # If this fails, do NOT delete it as stale or restamp to make it green.
       # See rtl/snac_psx.vendor.
+      # Break one thing each bench claims to catch and require it to go red, BY
+      # THE CHECK THAT CLAIMS IT. tb_akiko_txrx_dma test D asserted nothing for
+      # months -- its floor sat below the engine's own latency, so deleting the
+      # inhibit left all 48 checks green. Widening a window is routine and every
+      # such edit is a chance to make a check vacuous, so this runs on every push.
+      #
+      # Must come AFTER the Icarus install: it compiles. It was first placed
+      # before it, so every mutation reported a compile error and the step failed
+      # for a reason that had nothing to do with the benches.
+      - name: The benches can still fail
+        run: |
+          set -euo pipefail
+          python3 rtl/sim/run-mutations.py
+
       - name: snac_psx.v matches its vendor stamp
         run: |
           set -euo pipefail
@@ -444,7 +479,7 @@ jobs:
       - name: Akiko save state
         run: |
           set -euo pipefail
-          iverilog -g2012 -I. -o tb_akiko_ss             rtl/akiko.v rtl/akiko_nvram.v             rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_savestate.sv
+          bash rtl/sim/check-icarus-warnings.sh -g2012 -I. -o tb_akiko_ss             rtl/akiko.v rtl/akiko_nvram.v             rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_savestate.sv
           vvp tb_akiko_ss | tee out_akiko_ss.log
           grep -q "RUN: PASS" out_akiko_ss.log
 
@@ -457,9 +492,20 @@ jobs:
       - name: Akiko PBX DMA
         run: |
           set -euo pipefail
-          iverilog -g2012 -I. -o tb_akiko_pbx rtl/akiko.v rtl/akiko_nvram.v rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_pbx_dma.sv
+          bash rtl/sim/check-icarus-warnings.sh -g2012 -I. -o tb_akiko_pbx rtl/akiko.v rtl/akiko_nvram.v rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_pbx_dma.sv
           vvp tb_akiko_pbx | tee out_akiko_pbx.log
           grep -q "tb_akiko_pbx_dma PASS" out_akiko_pbx.log
+
+      # The video test pattern's geometry: crosshairs, the grid pitch, and the
+      # dark border two pixels in. Generated from the data enables rather than a
+      # frame buffer, so an off-by-one in the decode is invisible on a scope and
+      # obvious here. This bench existed unreferenced until 2026-09-29.
+      - name: Video test pattern geometry
+        run: |
+          set -euo pipefail
+          iverilog -g2012 -o tb_testpattern             rtl/video_testpattern.v rtl/sim/testpattern/tb_video_testpattern.sv
+          vvp tb_testpattern | tee out_testpattern.log
+          grep -q "RUN: PASS" out_testpattern.log
 
       # chipdma_arb's read return, against the real sdram_ctrl. The arb samples
       # chipRD_dma four clk_sys cycles after its arming edge with no handshake
@@ -483,7 +529,7 @@ jobs:
       - name: Akiko command phantom drain
         run: |
           set -euo pipefail
-          iverilog -g2012 -I. -o tb_akiko_cmd_phantom rtl/akiko.v rtl/akiko_nvram.v rtl/akiko_hps_bridge.v rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_cmd_phantom.sv
+          bash rtl/sim/check-icarus-warnings.sh -g2012 -I. -o tb_akiko_cmd_phantom rtl/akiko.v rtl/akiko_nvram.v rtl/akiko_hps_bridge.v rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_cmd_phantom.sv
           vvp tb_akiko_cmd_phantom | tee out_akiko_cmd_phantom.log
           grep -q "tb_akiko_cmd_phantom PASS" out_akiko_cmd_phantom.log
       # The TX and RX DMA engines: command bytes fetched out of chip RAM and
@@ -496,7 +542,7 @@ jobs:
       - name: Akiko TX/RX DMA
         run: |
           set -euo pipefail
-          iverilog -g2012 -I. -o tb_akiko_txrx             rtl/akiko.v rtl/akiko_nvram.v             rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_txrx_dma.sv
+          bash rtl/sim/check-icarus-warnings.sh -g2012 -I. -o tb_akiko_txrx             rtl/akiko.v rtl/akiko_nvram.v             rtl/sim/cache/dpram_sim.v rtl/sim/akiko/tb_akiko_txrx_dma.sv
           vvp tb_akiko_txrx | tee out_akiko_txrx.log
           grep -q "tb_akiko_txrx_dma PASS" out_akiko_txrx.log
       # The command fetch against the BIOS's write. The engine must not go
