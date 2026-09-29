@@ -61,7 +61,7 @@ akiko #(.NATIVE_CD32(1)) u_dut (
 	.hps_subcode_push(1'b0), .hps_subcode_byte(8'h00), .hps_subcode_done(1'b0),
 	// Save state ports are ours, not upstream's. Tied off: these benches
 	// exercise the CD engine, not a restore.
-	.ss_state(), .ss_ld(1'b0), .ss_ld_data('0), .ss_idle()
+	.ss_state(), .ss_ld(1'b0), .ss_ld_data(1052'd0), .ss_idle()
 );
 
 localparam [31:0] CDINT_PBX       = 32'h04000000;
