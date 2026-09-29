@@ -26,6 +26,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # An upload-artifact step with no retention-days keeps the repository
+      # default and never expires. 493 such artifacts filled the 500 MB quota
+      # on 2026-09-28, and a full quota fails the upload step -- so every
+      # build fails, including on a docs-only PR that touches no code. That
+      # looks like a broken build and sends you looking in the wrong place.
+      # Cheaper to refuse the step than to diagnose it again.
+      - name: Artifact uploads must set retention-days
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pyyaml
+          python3 .github/check-artifact-retention.py
+
       - name: Install Icarus Verilog and GHDL
         run: sudo apt-get update && sudo apt-get install -y iverilog ghdl
 
