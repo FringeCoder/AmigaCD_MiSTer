@@ -96,6 +96,18 @@ def main():
         print('run this from the repository root')
         return 1
 
+    # A missing toolchain is not a bench problem, and must not be reported as
+    # one. The first version of this in CI ran before iverilog was installed:
+    # every mutation printed a compile error and the baseline printed 'cannot
+    # mutate against a bench that is not green', which sent the diagnosis
+    # straight at the benches.
+    for tool in ('iverilog', 'vvp'):
+        if shutil.which(tool) is None:
+            print('%s is not on PATH. This harness compiles and runs the'
+                  ' benches, so it needs Icarus -- in CI it must come after the'
+                  ' install step.' % tool)
+            return 2
+
     tmp = tempfile.mkdtemp(prefix='mut')
     rc = 0
 

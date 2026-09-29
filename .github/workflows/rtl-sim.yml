@@ -36,16 +36,6 @@ jobs:
       # tb_akiko_txrx_dma failed 36 of its 48 checks for months because its
       # akiko instance predated dma_arm and nothing ran it; tb_ss_regbus_mux was
       # red across four PRs for a narrow-port bug Icarus only warns about.
-      # Break one thing each bench claims to catch and require it to go red, BY
-      # THE CHECK THAT CLAIMS IT. tb_akiko_txrx_dma test D asserted nothing for
-      # months -- its floor sat below the engine's own latency, so deleting the
-      # inhibit left all 48 checks green. Widening a window is routine and every
-      # such edit is a chance to make a check vacuous, so this runs on every push.
-      - name: The benches can still fail
-        run: |
-          set -euo pipefail
-          python3 rtl/sim/run-mutations.py
-
       - name: Every bench is run by something
         run: |
           set -euo pipefail
@@ -85,6 +75,20 @@ jobs:
       #
       # If this fails, do NOT delete it as stale or restamp to make it green.
       # See rtl/snac_psx.vendor.
+      # Break one thing each bench claims to catch and require it to go red, BY
+      # THE CHECK THAT CLAIMS IT. tb_akiko_txrx_dma test D asserted nothing for
+      # months -- its floor sat below the engine's own latency, so deleting the
+      # inhibit left all 48 checks green. Widening a window is routine and every
+      # such edit is a chance to make a check vacuous, so this runs on every push.
+      #
+      # Must come AFTER the Icarus install: it compiles. It was first placed
+      # before it, so every mutation reported a compile error and the step failed
+      # for a reason that had nothing to do with the benches.
+      - name: The benches can still fail
+        run: |
+          set -euo pipefail
+          python3 rtl/sim/run-mutations.py
+
       - name: snac_psx.v matches its vendor stamp
         run: |
           set -euo pipefail
