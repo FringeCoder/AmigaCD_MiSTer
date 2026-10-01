@@ -1062,6 +1062,19 @@ What the old list said, and what was already true:
   references a Verilog file it does not ship. Reread before anyone proposes
   syncing the Minimig-AGA pin past `da7632e`.
 
+  **Surveyed again 2026-10-01.** Five commits since `da7632e`. Three are that
+  same floppy line -- `c1134ac`, `e6d9262` "paula: add a zero-floppy-drives
+  mode" and `a527fbb` "paula: preserve legacy DSKBYTR without flux media" --
+  and the fourth is their merge, so the paragraph above still decides all four.
+  The fifth, `5fea457` "chipdma_arb: take minimig_idle off the address and
+  drive-select cones", **is taken**, by hand: upstream's `arm_now` lacks our
+  `~cpu_chip_slot_req`, `~dma_hold` and `chip_slot_window` terms, so it folds
+  them into `start_candidate` rather than applying as a patch. Note what it
+  says about upstream's own timing -- the zero-floppy mode cost it 1.0 ns of
+  setup on the chipset clock, all 20 worst paths beam counter ->
+  `chip_out_addr` -> `sd_addr`. If the floppy question is ever revisited, that
+  cone is where it lands, and it is the same cone T0 measures.
+
 ### Standing, not tasks
 
 - **T0** — [FIT]. Timing is thin and is not a blocker; the reading it was written
