@@ -320,31 +320,45 @@ always @(posedge clk) begin
 	end
 end
 
-// sdram_ready_sync is in here for the same reason dma_hold is: it stops a NEW
-// slot being claimed without dropping anything. Both bridge masters hold req
-// until ack, so a transfer refused during the power-up sequence is deferred,
-// not lost. Without it the arb arms, sdram_ctrl serves nothing, and the sample
-// at slot_cnt==3 returns whatever chipRD_dma held -- acked, and wrong.
-// tb_chipdma_read_stale test E is that read.
-wire arm_now = (state == S_IDLE) & c_7m_rise & minimig_idle & ~cpu_chip_slot_req & any_req & ~dma_hold & sdram_ready_sync;
+// --- The claim, split in two so the late signal is not in the address cone.
+//
+//     minimig_idle is deliberately NOT in start_candidate. It arrives late --
+//     it comes off the Agnus beam counter -- and everything the address mux
+//     below needs is ready much earlier, so chaining it in front of that mux
+//     put it in the cone that ends at sdram sd_addr. Upstream hit the same wall
+//     after the zero-floppy mode (Minimig-AGA 5fea457, setup -1.0 ns with all 20
+//     worst paths running beam counter -> chip_out_addr -> sd_addr) and split it
+//     the same way. start_candidate only reaches an output while minimig_idle is
+//     asserted, where it equals arm_now, so the outputs are unchanged.
+//
+//     sdram_ready_sync is in HERE rather than in arm_now, which is where it
+//     landed when it was written against the unsplit version. It stops a new
+//     slot being claimed without dropping anything -- both bridge masters hold
+//     req until ack, so a transfer refused during the power-up sequence is
+//     deferred, not lost -- and putting it in start_candidate also keeps a
+//     pre-init address off the chip bus, not just the claim. Without it the arb
+//     arms, sdram_ctrl serves nothing, and the sample at slot_cnt==3 returns
+//     whatever chipRD_dma held: acked, and wrong. tb_chipdma_read_stale test E
+//     is that read.
+wire start_candidate = (state == S_IDLE) & c_7m_rise & ~cpu_chip_slot_req & any_req & ~dma_hold & sdram_ready_sync;
+
+// --- arm_now: the qualified claim. Everything SEQUENTIAL still uses this, and
+//     so do dma_busy and akiko_arm: the slot is only really taken when minimig
+//     is idle, and akiko must freeze its engine on exactly the cycle we latch.
+wire arm_now = start_candidate & minimig_idle;
 
 assign dma_busy = (state != S_IDLE) | arm_now;
 
-// --- arb_request: we want to be on the bus this cycle. Either we
-//     just armed combinationally, or we are mid-slot (S_DRIVE).
-wire arb_request = arm_now | (state == S_DRIVE);
 
 // --- owner-freeze: tell akiko the exact cycle we latch its byte so it can
 //     freeze the serving engine (arm_now picks akiko when ~arming_is_cdtv).
 assign akiko_arm = arm_now & ~arming_is_cdtv;
 
-// --- arb_drive: the actual override. Masked by minimig_idle on EVERY
-//     cycle so a slot minimig grabs (e.g. across a c_7m boundary into
-//     the next slot) wins immediately. arb_request is registered for
-//     subsequent cycles, so we keep driving as long as minimig stays
-//     idle; if minimig becomes busy we yield without disturbing the
-//     in-progress sdram_ctrl access (it snapshotted at slot start).
-wire arb_drive = arb_request & minimig_idle;
+// --- The override is masked by minimig_idle on EVERY cycle (see arb_drive_chip
+//     below) so a slot minimig grabs -- across a c_7m boundary into the next
+//     slot, say -- wins immediately. If minimig becomes busy mid-slot we yield
+//     without disturbing the in-progress sdram_ctrl access, which snapshotted at
+//     slot start.
 
 // --- When arming, the latched ak_* registers are stale (they hold the
 //     PREVIOUS request). Use the live (akiko or cdtv) inputs combinationally
@@ -353,11 +367,15 @@ wire arb_drive = arb_request & minimig_idle;
 //     the arming edge, state==S_DRIVE and arm_now==0, so the registered
 //     ak_* values take over -- they were latched by the always block
 //     using the same NBA at the arming edge.
-wire [24:1] ak_addr_w    = arm_now ? {1'b0, live_baddr[23:1]}            : ak_addr;
-wire        ak_l_w       = arm_now ? ~live_baddr[0]                       : ak_l;
-wire        ak_u_w       = arm_now ?  live_baddr[0]                       : ak_u;
-wire        ak_rw_w      = arm_now ? ~live_we                             : ak_rw;
-wire [15:0] ak_wr_data_w = arm_now ? {live_wbyte, live_wbyte}             : ak_wr_data;
+//     Selected by start_candidate, not arm_now: these five wires feed nothing
+//     but the chip_out_* muxes below, and those are gated by minimig_idle
+//     themselves. Presenting live values in a cycle minimig is busy therefore
+//     reaches no output, and it keeps minimig_idle out of this cone.
+wire [24:1] ak_addr_w    = start_candidate ? {1'b0, live_baddr[23:1]} : ak_addr;
+wire        ak_l_w       = start_candidate ? ~live_baddr[0]           : ak_l;
+wire        ak_u_w       = start_candidate ?  live_baddr[0]           : ak_u;
+wire        ak_rw_w      = start_candidate ? ~live_we                 : ak_rw;
+wire [15:0] ak_wr_data_w = start_candidate ? {live_wbyte, live_wbyte} : ak_wr_data;
 
 // --- ram1-vs-ram2 routing decision via shared memory_router.
 //     cchip / ckick / wr tied to 0 — the bridge always reaches chip RAM
@@ -392,18 +410,18 @@ memory_router u_router
 	.zram_sel      (router_zram_sel)
 );
 
-// During arm_now use the live router output; after that, use registered.
-// is_ddr_now still needs the live path so the chip-vs-DDR mux below
-// switches in time for the SDRAM same-edge sample. arb_drive_ddr is
-// supplied by the registered dma_ddr_cs_r below (no clk_sys → SDRAM
-// timing dependency, so combinational is unnecessary).
-wire        is_ddr_now   = arm_now ? router_zram_sel : ak_is_ddr;
+// The claiming cycle uses the live router output and the rest of the slot uses
+// the registered copy; the live path is needed because sdram_ctrl samples on the
+// same clk_sys edge. The two cases are now two separate wires (start_chip,
+// held_chip below) instead of one arm_now-selected mux, which is what takes
+// minimig_idle out of the select. arb_drive_ddr is supplied by the registered
+// dma_ddr_cs_r below -- no clk_sys -> SDRAM dependency, so combinational is
+// unnecessary there.
 
 // Anything above the 24-bit chip window that the router did not claim for
 // fast RAM decodes to nothing. Driving it onto the chip bus aliases it back
 // into chip RAM, which is how a Z3 write reached the vector table.
 wire        addr_unmapped   = |live_baddr[31:24] & ~router_zram_sel;
-wire        is_unmapped_now = arm_now ? addr_unmapped : ak_unmapped;
 
 // SDRAM (ram1) override only fires when the slot routes to ram1. This
 // path keeps the original combinational shape because sdram_ctrl samples
@@ -411,7 +429,14 @@ wire        is_unmapped_now = arm_now ? addr_unmapped : ak_unmapped;
 // chip_slot_window is 114ab43's: release the chip mux for the cycle the DMA's
 // data comes back on, so the slot does not hold the bus through its own capture.
 wire chip_slot_window = ~((state == S_DRIVE) & (slot_cnt == 3'd3));
-wire arb_drive_chip = arb_drive & ~is_ddr_now & ~is_unmapped_now & chip_slot_window;
+// start_chip is the claiming cycle, decided from the live router output;
+// held_chip is the rest of the slot, decided from the registered copy. Each one
+// is true in cycles the other cannot be (state == S_IDLE vs S_DRIVE), so the OR
+// is a mux by another name -- and minimig_idle now qualifies the result once
+// instead of appearing inside the select.
+wire start_chip = start_candidate & ~router_zram_sel & ~addr_unmapped;
+wire held_chip  = (state == S_DRIVE) & ~ak_is_ddr & ~ak_unmapped;
+wire arb_drive_chip = minimig_idle & (start_chip | held_chip) & chip_slot_window;
 
 assign chip_out_addr = arb_drive_chip ? ak_addr_w    : chip_in_addr;
 assign chip_out_l    = arb_drive_chip ? ak_l_w       : chip_in_l;
