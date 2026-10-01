@@ -94,6 +94,61 @@ seed 1   setup -1.625   hold 0.245    -- FAILS. FAST_OUTPUT_REGISTER did take
          segment, emu|ram1|sd_addr~28|combout -> emu|ram1|sd_addr[8]|d, and the
          core cannot pay that inside an 8.8 ns clk_114 cycle. Approach abandoned;
          see docs/sdram-timing-headroom.md.
+== A/B arms for the scanline inhibit, on the OLD branch point (284e785) ==
+
+Twelve fits, six seeds, both arms each time from one worktree at one seed
+differing only in rtl/akiko.v. Criterion for an A/B pair: both setups >= 0.15,
+both holds > 0, |delta setup| <= 0.15.
+
+  seed   fix setup/hold      base setup/hold     delta
+    18   +0.053 / -0.495     +0.050 / +0.218    +0.003
+     1   +0.021 / +0.219     +0.005 / -0.348    +0.016
+     7   +0.128 / +0.209     +0.336 / +0.245    -0.208
+    16   -0.017 / +0.242     -0.279 / +0.198    +0.262
+     4   +0.385 / +0.244     +0.053 / -0.360    +0.332
+    10   +0.060 / -0.245     +0.066 / +0.243    -0.006
+
+NO seed qualified. Two things this does establish:
+
+1. The hold violations are not this change. They land symmetrically -- fix at
+   seeds 18 and 10, base at 1 and 4 -- and the base arm contains none of this
+   branch's logic. The -0.495 at seed 18 was never evidence against the
+   prescaler.
+2. The setup deltas are noise: the fix is ahead in four of six, mean +0.067,
+   spread -0.208 to +0.332. An early reading of seed 7 alone suggested the
+   prescaler cost 0.208 ns; six seeds say otherwise.
+
+Why no pair qualified: AmigaCD.sdc at 284e785 has no SDRAM interface
+constraints at all, so the fitter places that whole group freely and the
+scatter swamps the effect being measured. #30 fixed that. These twelve fits are
+kept as the reason for rebasing onto mainline rather than sweeping more seeds.
+== A/B arms for the scanline inhibit, REBASED onto mainline ==
+
+Criterion: both slacks positive, |delta setup| <= 0.15. The floor of 0.15 used
+on the old branch point was dropped to the project's own ship criterion once
+the SDRAM interface was constrained -- the earlier floor came from seed 16
+fitting at +0.152 and black-screening, which was an unconstrained build where
+that interface's timing was unknown and plausibly the cause.
+
+  seed   fix setup/hold      base setup/hold     verdict
+    18   +0.164 / +0.243     -0.038 / +0.243    base fails setup, delta 0.202
+     7   -0.069 / -0.468     (not fitted)       fix fails both
+     4   +0.104 / +0.243     +0.236 / +0.195    ACCEPT, delta 0.132
+
+SEED 4 IS THE PAIR. Both arms from one worktree at one seed, differing only in
+rtl/akiko.v; the baseline arm is mainline's akiko.v, so it is what this branch
+would merge into.
+
+  fix   setup +0.104  hold +0.243   scratchpad/pos_fix_seed4.rbf
+  base  setup +0.236  hold +0.195   scratchpad/pos_base_seed4.rbf
+
+Note which arm is tighter: the fix has 0.132 ns LESS setup margin than the
+baseline. If marginality influences the boot rate at all it therefore works
+against the fix, so a result showing the fix booting more often is conservative.
+The reverse would have needed caveating.
+
+Still to do: the interleaved A/B on hardware, via scripts/boot-ab.py with
+--core. Nothing about these numbers is a boot-rate claim.
 == fit for 3c9f726 (arb waits for sdram_ready) ==
 seed 18  setup 0.039    hold 0.173    -- passes, but too thin to ship.
          The worst path is emu|savestate|ddr_read -> ddram_ctrl arbiter -> HPS

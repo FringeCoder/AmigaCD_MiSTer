@@ -21,10 +21,10 @@
 
 `timescale 1ns / 1ps
 
-module tb_akiko_cmd_phantom;
+module tb_akiko_tx_write_race;
 
 initial begin
-	#5000000 $fatal(1, "tb_akiko_cmd_phantom: watchdog timeout");
+	#20000000 $fatal(1, "tb_akiko_tx_write_race: watchdog timeout");
 end
 
 logic clk = 0;
@@ -144,6 +144,29 @@ always @(posedge clk) begin
 	end
 end
 
+// When the TX engine first goes looking for the command stream. The inhibit
+// is a wall-clock wait, so the thing to assert is its scale: a cycle-scale
+// inhibit fetches within a few clocks of the announcement, a scanline-scale
+// one takes thousands.
+int  gcyc          = 0;
+int  announce_cyc  = -1;
+int  first_req_cyc = -1;
+
+always @(posedge clk) begin
+	gcyc <= gcyc + 1;
+	if (announce_cyc >= 0 && dma_req_w && first_req_cyc < 0) first_req_cyc <= gcyc;
+end
+
+task automatic check_ge(string name, int floor, int actual);
+begin
+	checks++;
+	if (actual < floor) begin
+		errs++;
+		$display("FAIL %s: expected >= %0d got %0d", name, floor, actual);
+	end else $display("ok   %s = %0d (>= %0d)", name, actual, floor);
+end
+endtask
+
 task automatic bus_write_word(input [5:1] a, input [15:0] data);
 	@(posedge clk);
 	cs <= 1; wr <= 1; rd <= 0; addr <= a; din <= data; lds <= 1; uds <= 1;
@@ -198,7 +221,7 @@ localparam [31:0] CFG_TXD = 32'h40000000;
 int cyc;
 
 initial begin
-	$display("tb_akiko_cmd_phantom starting");
+	$display("tb_akiko_tx_write_race starting");
 	repeat (4) @(posedge clk);
 	reset = 0;
 	repeat (4) @(posedge clk);
@@ -206,49 +229,62 @@ initial begin
 	bus_write_long(5'b00100, 32'hFF000000);   // interrupt enables
 	set_misc_base(24'h030000);                // stream at base|0x200
 
-	// A thirteen-byte MULTI, the longest command the BIOS sends.
-	mem[16'h0200] = 8'h04;
-	for (int i = 1; i <= 11; i++) mem[16'h0200 + i] = 8'hC0 + i[7:0];
-	mem[16'h020C] = 8'hAA;
+	// The race. The BIOS advances the compare index at $1D and then puts its
+	// command bytes in chip RAM; a 68020 takes a while over that, and the
+	// region still reads as zeros in the meantime. The drive must not go
+	// looking until the write has landed.
+	//
+	// Without a long enough post-write inhibit the engine fetches the zeros,
+	// and two of them are a complete opcode-0 frame as far as the framer is
+	// concerned (expected_total_len(0) is 2). That is a phantom command: the
+	// host drains one the BIOS never sent, and the real command behind it is
+	// read misaligned -- on hardware, a stray byte in front of the BIOS's
+	// INFO, which then never gets answered.
+	for (int i = 0; i < 16; i++) mem[16'h0200 + i] = 8'h00;
 
 	set_config(CFG_TXD);
+	write_txcmp(8'd3);                        // "a three-byte command is ready"
+	announce_cyc = gcyc;
 
-	// Six bytes in. Not a whole command, so nothing is pending.
-	write_txcmp(8'd6);
+	// ... which is not true yet. The bytes land 3000 cycles later, 106 us of
+	// clk_sys. That is inside the inhibit WinUAE has -- three scanlines is
+	// 128 us at the earliest -- and it is the point of the fix: the drive
+	// must still be waiting. The old 105 ns inhibit fetched the zeros that
+	// were there, and two zeros are a complete opcode-0 frame.
+	repeat (3000) @(posedge clk);
+	mem[16'h0200] = 8'h15;                    // LED, tag 1
+	mem[16'h0201] = 8'h00;
+	mem[16'h0202] = 8'hEA;                    // 15 + 00 + ea = ff
+
 	cyc = 0;
-	while (u_dut.g_cd.cdrom_command_length != 6'd6 && cyc < 8000) begin
+	while (!cmd_pending_w && cyc < 12000) begin
 		@(posedge clk); cyc = cyc + 1;
 	end
-	check8   ("partial_len", 8'd6, {2'h0, u_dut.g_cd.cdrom_command_length});
-	check_bit("not_pending", 1'b0, cmd_pending_w);
-	check_bit("req_low",     1'b0, req_w);
 
-	// The host drains anyway, on a REQ that is no longer true.
-	host_read_burst(2);
+	check_bit("pending", 1'b1, cmd_pending_w);
 
-	// Nothing may have been consumed.
-	check8("len_survives_phantom", 8'd6, {2'h0, u_dut.g_cd.cdrom_command_length});
+	// The discriminating check. Two whole scanlines is 3632 cycles; allow for
+	// the engine needing a few clocks to get its first request out, but a
+	// cycle-scale inhibit lands three orders of magnitude below this.
+	check_ge("first fetch cycle", 2000, first_req_cyc - announce_cyc);
+	check8   ("len",     8'd3, {2'h0, u_dut.g_cd.cdrom_command_length});
 
-	// The rest arrives.
-	write_txcmp(8'd13);
-	cyc = 0;
-	while (!cmd_pending_w && cyc < 8000) begin
-		@(posedge clk); cyc = cyc + 1;
-	end
-	check_bit("pending_after_rest", 1'b1, cmd_pending_w);
-	check8   ("full_len", 8'd13, {2'h0, u_dut.g_cd.cdrom_command_length});
+	// What the BIOS actually wrote, not the zeros that were there when it
+	// announced it.
+	check8("buf[0]", 8'h15, u_dut.g_cd.cdrom_command_buffer[0]);
+	check8("buf[1]", 8'h00, u_dut.g_cd.cdrom_command_buffer[1]);
+	check8("buf[2]", 8'hEA, u_dut.g_cd.cdrom_command_buffer[2]);
 
-	// Whole and in order, starting at its first byte -- not wherever the
-	// phantom left the write pointer.
-	check8("buf[0]",  8'h04, u_dut.g_cd.cdrom_command_buffer[0]);
-	check8("buf[1]",  8'hC1, u_dut.g_cd.cdrom_command_buffer[1]);
-	check8("buf[6]",  8'hC6, u_dut.g_cd.cdrom_command_buffer[6]);
-	check8("buf[12]", 8'hAA, u_dut.g_cd.cdrom_command_buffer[12]);
+	// A real frame always sums to 0xff; a phantom never can.
+	check8("checksum", 8'hFF,
+	       u_dut.g_cd.cdrom_command_buffer[0] +
+	       u_dut.g_cd.cdrom_command_buffer[1] +
+	       u_dut.g_cd.cdrom_command_buffer[2]);
 
 	$display("------------------------------------");
 	$display("checks=%0d errors=%0d", checks, errs);
-	if (errs == 0) $display("tb_akiko_cmd_phantom PASS");
-	else           $display("tb_akiko_cmd_phantom FAIL");
+	if (errs == 0) $display("tb_akiko_tx_write_race PASS");
+	else           $display("tb_akiko_tx_write_race FAIL");
 	$finish(errs == 0 ? 0 : 1);
 end
 
