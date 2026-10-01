@@ -428,15 +428,50 @@ a2065_ddram_arbiter arbiter
 	.m1_write        (mem2_write),
 	.m1_waitrequest  (mem2_waitrequest),
 
-	.s_address       (DDRAM_ADDR),
-	.s_burstcount    (DDRAM_BURSTCNT),
-	.s_read          (DDRAM_RD),
+	// Through the command pipeline stage rather than straight at the pins.
+	// Read return is NOT staged: DDRAM_DOUT / DDRAM_DOUT_READY still come
+	// back directly, because that direction has never appeared in a
+	// worst-path report and a cycle there is a cycle of 68k cache-fill
+	// latency. See rtl/ddr_cmd_pipe.v for what the staged direction buys.
+	.s_address       (pipe_address),
+	.s_burstcount    (pipe_burstcount),
+	.s_read          (pipe_read),
 	.s_readdata      (DDRAM_DOUT),
 	.s_readdatavalid (DDRAM_DOUT_READY),
-	.s_writedata     (DDRAM_DIN),
-	.s_byteenable    (DDRAM_BE),
-	.s_write         (DDRAM_WE),
-	.s_waitrequest   (DDRAM_BUSY)
+	.s_writedata     (pipe_writedata),
+	.s_byteenable    (pipe_byteenable),
+	.s_write         (pipe_write),
+	.s_waitrequest   (pipe_waitrequest)
+);
+
+wire [28:0] pipe_address;
+wire  [7:0] pipe_burstcount;
+wire        pipe_read;
+wire [63:0] pipe_writedata;
+wire  [7:0] pipe_byteenable;
+wire        pipe_write;
+wire        pipe_waitrequest;
+
+ddr_cmd_pipe cmd_pipe
+(
+	.clk           (sysclk),
+	.rst           (~reset_n),
+
+	.u_address     (pipe_address),
+	.u_burstcount  (pipe_burstcount),
+	.u_read        (pipe_read),
+	.u_writedata   (pipe_writedata),
+	.u_byteenable  (pipe_byteenable),
+	.u_write       (pipe_write),
+	.u_waitrequest (pipe_waitrequest),
+
+	.d_address     (DDRAM_ADDR),
+	.d_burstcount  (DDRAM_BURSTCNT),
+	.d_read        (DDRAM_RD),
+	.d_writedata   (DDRAM_DIN),
+	.d_byteenable  (DDRAM_BE),
+	.d_write       (DDRAM_WE),
+	.d_waitrequest (DDRAM_BUSY)
 );
 
 assign mem2_readdata = DDRAM_DOUT;

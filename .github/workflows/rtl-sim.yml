@@ -157,11 +157,30 @@ jobs:
         run: |
           set -euo pipefail
           cd rtl/sim/ddram
-          iverilog -g2012 -o tb ../../ddram_ctrl.v ../../cpu_cache_new.v \
+          iverilog -g2012 -o tb ../../ddram_ctrl.v ../../ddr_cmd_pipe.v \
+            ../../cpu_cache_new.v \
             ../../A2065/a2065_ddram_arbiter.v ../cache/dpram_sim.v \
             tb_ddram_readreturn.sv
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
+
+      # ddr_cmd_pipe on its own. The module is there for timing -- it holds one
+      # Avalon command for a cycle on its way to the HPS bridge -- so what this
+      # proves is that it is invisible to the protocol: 203 commands issued
+      # under random back-pressure, each accepted exactly once, in order, with
+      # its payload intact.
+      #
+      # The step above is the integration half of the same check: with the
+      # stage in ddram_ctrl it drives real CPU cache fills and bridge DMA
+      # reads through it against a slave that asserts waitrequest on its own
+      # return cycles.
+      - name: DDR3 command pipeline stage
+        run: |
+          set -euo pipefail
+          cd rtl/sim/ddram
+          iverilog -g2012 -o tb_pipe ../../ddr_cmd_pipe.v tb_ddr_cmd_pipe.sv
+          vvp tb_pipe | tee out_pipe.log
+          grep -q "RUN: PASS" out_pipe.log
 
       # cpu_cache_new's fill-vs-snoop interlock. sdram_ctrl drives snoop_act from
       # chipWE, so a change to the chip write path shows up here.
