@@ -96,6 +96,11 @@ module chipdma_arb
 	input      [15:0] chip_in_rd,
 	output            chip_dma_slot,
 	input      [15:0] chip_in_rd_dma,
+	// sdram_ctrl's init_done. Until it is high the controller serves no
+	// slots at all, so chipRD_dma is never written and a read armed here
+	// would be acked with whatever it happens to hold. Crosses from
+	// sysclk to clk_sys, and is synchronised below.
+	input             sdram_ready,
 	input             cpu_chip_slot_req,
 
 	// AC-config state + DDR3 (ram2) DMA write port. When the
@@ -298,7 +303,30 @@ wire  [7:0] live_wbyte  = arming_is_cdtv ? cdtv_dma_wbyte : akiko_dma_wbyte;
 //     The cpu_chip_slot_req term is 114ab43's: the arbiter must not arm in a
 //     cycle the CPU is already asking for a chip slot. Both gates are load
 //     bearing and neither replaces the other.
-wire arm_now = (state == S_IDLE) & c_7m_rise & minimig_idle & ~cpu_chip_slot_req & any_req & ~dma_hold;
+// --- sdram_ctrl's init_done, into this clock domain.
+//
+// It is set once and never clears, so the only hazard is a single metastable
+// cycle on the edge where it rises; two flops settle that, and one clk_sys of
+// extra latency on a signal that rises once at power-up costs nothing. Same
+// treatment ddr_in_ack gets, for the same reason.
+reg sdram_ready_meta, sdram_ready_sync;
+always @(posedge clk) begin
+	if (reset) begin
+		sdram_ready_meta <= 1'b0;
+		sdram_ready_sync <= 1'b0;
+	end else begin
+		sdram_ready_meta <= sdram_ready;
+		sdram_ready_sync <= sdram_ready_meta;
+	end
+end
+
+// sdram_ready_sync is in here for the same reason dma_hold is: it stops a NEW
+// slot being claimed without dropping anything. Both bridge masters hold req
+// until ack, so a transfer refused during the power-up sequence is deferred,
+// not lost. Without it the arb arms, sdram_ctrl serves nothing, and the sample
+// at slot_cnt==3 returns whatever chipRD_dma held -- acked, and wrong.
+// tb_chipdma_read_stale test E is that read.
+wire arm_now = (state == S_IDLE) & c_7m_rise & minimig_idle & ~cpu_chip_slot_req & any_req & ~dma_hold & sdram_ready_sync;
 
 assign dma_busy = (state != S_IDLE) | arm_now;
 
