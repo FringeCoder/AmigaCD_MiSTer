@@ -531,10 +531,44 @@ if (NATIVE_CD32) begin : g_cd
 	                  && (cdrom_command_length != 6'd32)
 	                  && !cmd_pending;       // hold while bridge has work to do
 
+	// The !tx_busy term stops a host response push from destroying a command
+	// the Amiga is in the middle of delivering.
+	//
+	// TX already refuses to start while RX is busy -- here, and again at the
+	// arm in the always block -- but the reverse was missing, so a
+	// hps_result_done arriving mid-fetch raised rx_busy under an outstanding
+	// TX byte. RX then wins the DMA address mux and takes the ack that the
+	// fetch was waiting for: the command buffer stores RX's byte at the
+	// fetch's index, and one byte of the frame is never read at all.
+	//
+	// That is the same hazard this file already spells out for subcode --
+	// "chipdma_arb latches the live akiko DMA address at arm_now and acks ~5
+	// cycles later, so a higher-priority engine asserting inside that window
+	// would steal subcode's ack" -- and subcode is run strictly
+	// non-overlapping because of it. PBX does not need the same protection:
+	// it re-runs the displaced byte idempotently (see the rx_inflight
+	// handshake below). A command fetch cannot, because the byte it loses
+	// has already landed in the command buffer.
+	//
+	// On hardware this was the first boot after a core flash, failing
+	// deterministically: a frame that reads 84 00 ... 78 when it is intact
+	// arrived as 44 00 ... 00 right after a media-status push, and the
+	// checksum rejected it. tb_akiko_push_vs_tx test B is that collision.
+	//
+	// Userspace's rx_idle gate cannot cover this and never could:
+	// hps_rx_busy is (cdrom_receive_length != 0), which says a response is
+	// already queued, not that a command is in flight -- and a flag the host
+	// samples over SPI is not a lock either way. The interlock belongs here.
+	//
+	// Nothing is dropped. The push stays committed in cdrom_result_buffer
+	// with receive_length set; RX starts as soon as the fetch retires, one
+	// byte later at most. Starvation is not possible in the other direction
+	// either, because tx_can_start requires receive_length == 0.
 	wire rx_can_start =  cdrom_flags[CDFLAG_RXD_BIT]
 	                  && (cdrom_receive_length != 6'd0)
 	                  && (cdcomrxinx != cdcomrxcmp)
-	                  && (rx_dma_delay == 2'd0);
+	                  && (rx_dma_delay == 2'd0)
+	                  && !tx_busy;
 
 	wire       pio_tx_allowed  = !cdrom_flags[CDFLAG_TXD_BIT] && !tx_busy;
 	wire       pio_tx_can_send = (cdrom_receive_length == 6'd0)
