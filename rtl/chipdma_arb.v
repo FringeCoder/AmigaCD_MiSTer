@@ -96,6 +96,11 @@ module chipdma_arb
 	input      [15:0] chip_in_rd,
 	output            chip_dma_slot,
 	input      [15:0] chip_in_rd_dma,
+	// sdram_ctrl's init_done. Until it is high the controller serves no
+	// slots at all, so chipRD_dma is never written and a read armed here
+	// would be acked with whatever it happens to hold. Crosses from
+	// sysclk to clk_sys, and is synchronised below.
+	input             sdram_ready,
 	input             cpu_chip_slot_req,
 
 	// AC-config state + DDR3 (ram2) DMA write port. When the
@@ -298,6 +303,25 @@ wire  [7:0] live_wbyte  = arming_is_cdtv ? cdtv_dma_wbyte : akiko_dma_wbyte;
 //     The cpu_chip_slot_req term is 114ab43's: the arbiter must not arm in a
 //     cycle the CPU is already asking for a chip slot. Both gates are load
 //     bearing and neither replaces the other.
+// --- sdram_ctrl's init_done, into this clock domain.
+//
+// It is set once and never clears, so the only hazard is a single metastable
+// cycle on the edge where it rises; two flops settle that, and one clk_sys of
+// extra latency on a signal that rises once at power-up costs nothing. Same
+// treatment ddr_in_ack gets, for the same reason.
+reg sdram_ready_meta, sdram_ready_sync;
+always @(posedge clk) begin
+	if (reset) begin
+		sdram_ready_meta <= 1'b0;
+		sdram_ready_sync <= 1'b0;
+	end else begin
+		sdram_ready_meta <= sdram_ready;
+		sdram_ready_sync <= sdram_ready_meta;
+	end
+end
+
+// --- The claim, split in two so the late signal is not in the address cone.
+//
 //     minimig_idle is deliberately NOT in start_candidate. It arrives late --
 //     it comes off the Agnus beam counter -- and everything the address mux
 //     below needs is ready much earlier, so chaining it in front of that mux
@@ -306,7 +330,17 @@ wire  [7:0] live_wbyte  = arming_is_cdtv ? cdtv_dma_wbyte : akiko_dma_wbyte;
 //     worst paths running beam counter -> chip_out_addr -> sd_addr) and split it
 //     the same way. start_candidate only reaches an output while minimig_idle is
 //     asserted, where it equals arm_now, so the outputs are unchanged.
-wire start_candidate = (state == S_IDLE) & c_7m_rise & ~cpu_chip_slot_req & any_req & ~dma_hold;
+//
+//     sdram_ready_sync is in HERE rather than in arm_now, which is where it
+//     landed when it was written against the unsplit version. It stops a new
+//     slot being claimed without dropping anything -- both bridge masters hold
+//     req until ack, so a transfer refused during the power-up sequence is
+//     deferred, not lost -- and putting it in start_candidate also keeps a
+//     pre-init address off the chip bus, not just the claim. Without it the arb
+//     arms, sdram_ctrl serves nothing, and the sample at slot_cnt==3 returns
+//     whatever chipRD_dma held: acked, and wrong. tb_chipdma_read_stale test E
+//     is that read.
+wire start_candidate = (state == S_IDLE) & c_7m_rise & ~cpu_chip_slot_req & any_req & ~dma_hold & sdram_ready_sync;
 
 // --- arm_now: the qualified claim. Everything SEQUENTIAL still uses this, and
 //     so do dma_busy and akiko_arm: the slot is only really taken when minimig

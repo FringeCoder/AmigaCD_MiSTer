@@ -256,6 +256,7 @@ wire        arb_chip_dma;
 wire        arb_chip_dma_slot;
 wire [15:0] arb_chip_wr;
 wire [15:0] chipRD_dma;
+wire        sdram_ready;          // sdram_ctrl init_done -> chipdma_arb
 wire        cpu_chip_slot_req;
 
 wire [35:0] EXT_BUS;
@@ -1241,6 +1242,7 @@ sdram_ctrl ram1
 	.chip_dma_slot(arb_chip_dma_slot),
 	.chipRD       (ramdata_in      ),
 	.chipRD_dma   (chipRD_dma      ),
+	.sdram_ready  (sdram_ready     ),
 	.chip48       (chip48          )
 );
 
@@ -1290,6 +1292,7 @@ chipdma_arb chipdma_arb
 	.chip_in_rd      (ramdata_in           ),
 	.chip_dma_slot   (arb_chip_dma_slot    ),
 	.chip_in_rd_dma  (chipRD_dma           ),
+	.sdram_ready     (sdram_ready          ),
 	.cpu_chip_slot_req(cpu_chip_slot_req   ),
 
 	// AC-state inputs (memory_router decode) + DDR (ram2) write

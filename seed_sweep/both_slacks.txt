@@ -149,3 +149,45 @@ The reverse would have needed caveating.
 
 Still to do: the interleaved A/B on hardware, via scripts/boot-ab.py with
 --core. Nothing about these numbers is a boot-rate claim.
+== fit for 3c9f726 (arb waits for sdram_ready) ==
+seed 18  setup 0.039    hold 0.173    -- passes, but too thin to ship.
+         The worst path is emu|savestate|ddr_read -> ddram_ctrl arbiter -> HPS
+         f2sdram wr_data[51], and sdram_ready appears nowhere in the three worst
+         paths, so the thinness is not this change. Needs a seed sweep before it
+         ships.
+         Correction: an earlier version of this entry said the netlist "lost
+         0.347 ns" against mainline's +0.386 at the same seed. That comparison
+         was invalid -- rtl/akiko.v differs between 6e69ae2, where +0.386 was
+         measured, and this branch's base, so the two were never the same
+         source. The path evidence above stands on its own; only the magnitude
+         claim is withdrawn.
+== fit sweep for 9e45a89 (arb waits for sdram_ready, rebased onto mainline) ==
+
+Five seeds, ranked by the worse of the two slacks -- a build is only as good as
+its tightest edge:
+
+  seed 4    setup +0.168   hold -0.457   FAILS
+  seed 7    setup +0.110   hold -0.339   FAILS
+  seed 18   setup +0.136   hold -0.336   FAILS
+  seed 16   setup +0.069   hold +0.182   passes, thin
+  seed 1    setup +0.110   hold +0.197   PASSES -- best of the five
+
+Seed 1 is the one to ship. It clears the project's own criterion, both slacks
+positive, with roughly three times the margin of the +0.039 seed 18 build that
+prompted this sweep.
+
+Worth noting for the next person: three of five seeds fail on HOLD, not setup,
+and the setups are all comfortably positive. That matches what the #28 arms
+showed -- hold violations scattering across seeds and across both arms of a
+comparison, including arms carrying none of the change under test. Hold is the
+placement-sensitive edge on this design; a single failing seed says nothing about
+a change.
+
+Not a shipping decision on its own. +0.110 is a modest margin and the only thing
+that settles a build on this core is booting it. Compare the earlier seed 16
+datum -- +0.152 and a black screen with no Kickstart -- but note that was an
+UNCONSTRAINED build, where this interface's timing was unmodelled and plausibly
+the cause. Since #30 the SDRAM interface carries 5.7 ns of setup margin and the
+binding path is internal, so that datum does not transfer to a constrained one.
+
+rbf: scratchpad/initdone_seed1.rbf
