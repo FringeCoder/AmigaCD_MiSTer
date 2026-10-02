@@ -160,9 +160,83 @@ set_false_path -from {emu|minimig|CPU1|halt}
 
 # A2065: the card's 68k side (clk_sys) reaches its DDR3 mailbox (DDRAM_CLK,
 # clk_114) over 2-FF level-detect CDC handshakes inside a2065_regfile and
-# a2065_ddram. Those are self-timed and need no multicycle exception. If the
-# fitter reports real violations across that boundary, add a targeted
-# set_false_path/set_max_delay derived from report_timing — do not guess.
+# a2065_ddram. Those are self-timed and need no multicycle exception. This
+# comment used to end by saying that if the fitter reported real violations
+# across that boundary, add a targeted exception derived from report_timing and
+# do not guess. It did report them, so here they are.
+#
+#     -0.614  a2065_regfile|cmd_data[12] -> a2065_ddr3_mailbox|cmd_data_s[12]
+#     -0.505  a2065_regfile|cmd_rap[3]   -> a2065_ddr3_mailbox|cmd_rap_s[3]
+#
+# measured on the seed 2 netlist of 2026-10-01, where they were the two worst
+# hold paths in the design. They are hold failures, so they are not a
+# frequency problem and no seed or multicycle reaches them: the two clocks come
+# off one VCO at 4:1 and share an edge, and a payload bus that crosses in one
+# LUT is as fast as a path gets.
+#
+# DERIVED, NOT GUESSED, and deliberately wider than the two paths above.
+# Every crossing between these three modules was enumerated with
+# report_timing -from/-to and every one resolves to real registers; on the seed
+# 2 netlist of fix/ss-vector-retime they measured, in nanoseconds of hold slack:
+#
+#     cmd_data        16 bits   +0.618      bram_req_addr   14 bits   +0.703
+#     cmd_rap          7 bits   +0.688      bram_req_wdata  16 bits   +0.653
+#     cmd_pending      1 bit    +0.944      bram_req_rw      1 bit    +2.222
+#     cmd_clear (rev)  1 bit    +0.704      bram_req_be      2 bits   +1.678
+#     bram_resp_data  16 bits   +0.455      bram_req_valid   1 bit    +1.459
+#     bram_resp_valid  1 bit    +1.463
+#
+# Constraining only the two that happened to violate once would leave nine
+# identical paths to take their turn on the next placement, which is the
+# failure mode this file has been chasing all along.
+#
+# bram_req_ack is NOT in the list, and that is a finding rather than an
+# oversight. a2065_ddram declares ack_sync0 / ack_sync1 for it and never reads
+# either -- Quartus says so, "object ack_sync1 assigned a value but never
+# read" -- so the chain is synthesised away and the signal crosses to nothing.
+# An exception for it resolved to a collection of size zero, which an SDC
+# accepts in silence. The dead chain in a2065_ddram is worth deleting on its
+# own account; it is not a timing matter.
+#
+# WHY IT IS SAFE, checked on both sides rather than assumed:
+#
+#   the control bits   cmd_pending, bram_req_valid and the replies are LEVELS
+#                      held until the far side withdraws, each landing in a
+#                      2-FF synchroniser chain in the destination domain. That
+#                      chain is what handles metastability; timing its first
+#                      stage is meaningless. a2065_ddr3_mailbox's own comment
+#                      explains why they are levels: a one-cycle pulse at 9 ns
+#                      would be missed by a side sampling every 35 ns.
+#
+#   the payloads       are written in the same cycle as the control bit that
+#                      announces them and then frozen. a2065_regfile writes
+#                      cmd_rap / cmd_data only in W_IDLE and holds them through
+#                      W_WAIT until cmd_clear has round-tripped; a2065_ddram
+#                      writes the bram_req payload only when no request is
+#                      outstanding and withdraws it on the response. The
+#                      mailbox consumes each payload on the SECOND
+#                      synchroniser stage, by which point it has been stable
+#                      for at least two destination cycles.
+#
+# So these are the same case as the chipdma_arb handshake buses above: stable
+# by handshake, and false-pathed for that reason and no other. If either side
+# ever changes a payload while its request is still asserted, these exceptions
+# become wrong -- that is the property to re-check, not the slack.
+
+# clk_sys -> clk_ddr: the requesters into the mailbox's capture stage.
+set_false_path -from {*a2065_regfile*|cmd_pending}     -to {*a2065_ddr3_mailbox*|cmd_pending_s}
+set_false_path -from {*a2065_regfile*|cmd_rap[*]}      -to {*a2065_ddr3_mailbox*|cmd_rap_s[*]}
+set_false_path -from {*a2065_regfile*|cmd_data[*]}     -to {*a2065_ddr3_mailbox*|cmd_data_s[*]}
+set_false_path -from {*a2065_ddram*|bram_req_valid}    -to {*a2065_ddr3_mailbox*|bram_req_valid_s}
+set_false_path -from {*a2065_ddram*|bram_req_addr[*]}  -to {*a2065_ddr3_mailbox*|bram_req_addr_s[*]}
+set_false_path -from {*a2065_ddram*|bram_req_wdata[*]} -to {*a2065_ddr3_mailbox*|bram_req_wdata_s[*]}
+set_false_path -from {*a2065_ddram*|bram_req_rw}       -to {*a2065_ddr3_mailbox*|bram_req_rw_s}
+set_false_path -from {*a2065_ddram*|bram_req_be[*]}    -to {*a2065_ddr3_mailbox*|bram_req_be_s[*]}
+
+# clk_ddr -> clk_sys: the mailbox's held replies into their requesters' chains.
+set_false_path -from {*a2065_ddr3_mailbox*|cmd_clear}        -to {*a2065_regfile*|cmd_clear_s}
+set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_valid}  -to {*a2065_ddram*|rv_sync0}
+set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_data[*]} -to {*a2065_ddram*|rd_sync0[*]}
 
 # yc_out chroma LUT: multicycle retained from the old bridge, where boardram BRAM
 # placement congestion pushed this path to -0.471ns. The flat-DDR3 design removes
