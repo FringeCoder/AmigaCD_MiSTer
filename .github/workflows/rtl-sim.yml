@@ -182,6 +182,19 @@ jobs:
           vvp tb_pipe | tee out_pipe.log
           grep -q "RUN: PASS" out_pipe.log
 
+      # The clk_sys retiming bank AmigaCD.sv puts in front of ss_state_fanout.
+      # Three wirings of the same restores -- raw, retimed, and deliberately
+      # skewed by a cycle -- at all four clk_sys phases, all required to agree.
+      # The retiming is three lines in a file no bench compiles, and what it
+      # changes is which vector a restore acts on, which no timing report sees.
+      - name: Restore fan-out vector retiming
+        run: |
+          set -euo pipefail
+          cd rtl/sim/ssfanout
+          iverilog -g2012 -I../../.. -o tb ../../ss_state_fanout.sv tb_ss_fanout_retime.sv
+          vvp tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # cpu_cache_new's fill-vs-snoop interlock. sdram_ctrl drives snoop_act from
       # chipWE, so a change to the chip write path shows up here.
       - name: Cache fill/snoop interlock

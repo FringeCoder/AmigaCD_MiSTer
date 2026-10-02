@@ -2439,13 +2439,61 @@ assign ss_diag = {
 // ss_ctrl runs on clk_114; the CPU and minimig.v run on clk_sys, a quarter of
 // it. state_we is a single clk_114 pulse, which a clk_sys edge would miss
 // three times out of four, so it is turned into a level here and handed over
-// with a request/ack pair. The vector itself needs no latch: ss_serdes holds
-// state_out in a register until the next load.
+// with a request/ack pair.
 reg ss_fanout_req;
 always @(posedge clk_114) begin
 	if (reset_d)             ss_fanout_req <= 1'b0;
 	else if (ss_fanout_ack)  ss_fanout_req <= 1'b0;
 	else if (ss_state_we)    ss_fanout_req <= 1'b1;
+end
+
+// The vector, retimed into clk_sys.
+//
+// It used to go to the fan-out raw, on the argument that ss_serdes holds
+// state_out in a register until the next load and so needs no latch of its
+// own. That is true of the DATA and says nothing about the TIMING: every field
+// ss_state_fanout unpacks is a clk_114 launch into a clk_sys flop, and the two
+// clocks share an edge every fourth cycle, so STA hold-checks ~2000 crossings
+// against a coincident edge. They are checked as too FAST, not too slow, and
+// one LUT with 0.2 ns of routing is as fast as a path gets -- so whether they
+// pass is purely how close the fitter happened to put ss_serdes to ss_fanout.
+//
+// It has failed there four times in the record, in four different fields:
+//
+//     -0.567  CIAB1's timer counters      (fixed by the ss_cia_a/b capture regs)
+//     -0.318  state_out[324]  -> CIAA1's TOD read latch
+//     -0.470  ss_cpu_a7[4]    -> ss_serdes|shifter[1585]
+//     -0.221  state_out[1569] -> ss_fanout|cpu_wr_data[20]   seed 2, 2026-10-01
+//
+// The first two were treated where they surfaced, by registering the CIA words
+// on each side. This is the same remedy applied once at the source instead of
+// field by field, so the remaining fields -- the CPU register file, PC, SR,
+// USP, VBR, CACR, the memory map, INTREQ, Akiko -- cannot take their turn. The
+// CIA retimers either side of it are now redundant rather than wrong, and are
+// left alone so that this change can be measured on its own.
+//
+// req is retimed with it, by exactly one cycle, so that req_q and state_q stay
+// in step: state_out and ss_state_we go valid together, and a retimed vector
+// otherwise arrives a cycle after the request announcing it.
+//
+// That alignment is belt-and-braces, not load-bearing. ss_state_fanout spends
+// the cycle on which it accepts req entering `running` and clearing `step`,
+// and does not read `state` until the cycle after, so one cycle of skew is
+// absorbed either way. rtl/sim/ssfanout/tb_ss_fanout_retime.sv asserts that
+// -- it runs the same restores raw, aligned, and deliberately skewed by one
+// cycle, at all four clk_sys phases, and requires all three to agree. If the
+// sequencer ever reads the vector on its entry cycle, that bench fails and
+// this flop becomes the only thing keeping a back-to-back restore off the
+// previous vector.
+//
+// Cost is `SS_STATE_W` flops, 2093 of them, and one clk_sys cycle of extra
+// latency on a 23-cycle sequence that is followed by a million SDRAM word
+// writes (see the ORDERING NOTE below).
+reg [`SS_STATE_W-1:0] ss_state_out_q;
+reg                   ss_fanout_req_q;
+always @(posedge clk_sys) begin
+	ss_state_out_q  <= ss_state_out;
+	ss_fanout_req_q <= ss_fanout_req;
 end
 
 // ORDERING NOTE. ss_ctrl does not wait for this fan-out; it goes straight from
@@ -2460,9 +2508,9 @@ ss_state_fanout #(.STATE_W(`SS_STATE_W)) ss_fanout
 (
 	.clk          (clk_sys),
 	.rst_n        (~reset_d),
-	.req          (ss_fanout_req),
+	.req          (ss_fanout_req_q),
 	.ack          (ss_fanout_ack),
-	.state        (ss_state_out),
+	.state        (ss_state_out_q),
 
 	.cpu_wr_index (ss_fanout_wr_index),
 	.cpu_wr_data  (ss_fanout_wr_data),
