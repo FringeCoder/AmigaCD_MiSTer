@@ -73,6 +73,83 @@ set_false_path -from {*chipdma_arb*dma_ddr_u_r*}    -to {*ddram_ctrl*}
 set_false_path -from {*chipdma_arb*dma_ddr_cs_r*}   -to {*ddram_ctrl*dmaCS_sync*}
 set_false_path -from {*ddram_ctrl*dmaACK_r*}        -to {*chipdma_arb*ddr_in_ack_sync*}
 
+# ---------------------------------------------------------------------------
+# The save state vector's two crossings.
+#
+# ss_serdes shifts on clk_114. Everything it gathers and everything it hands
+# back lives on clk_sys -- the CPU shadows, minimig's registers, ss_regshadow,
+# ss_state_fanout. The two clocks are 4:1 out of one VCO and share a rising
+# edge every fourth cycle, so TimeQuest pairs a launch on one with a latch on
+# the other AT THE SAME INSTANT and HOLD-checks about two thousand bits against
+# that pairing. A path of one LUT and 0.2 ns of routing cannot pass such a
+# check, so whether it passes is how close the fitter happened to put the two
+# ends, and nothing else.
+#
+# Measured, on four different netlists and in four different fields:
+#
+#     -0.578  ss_cpu_a4[19]             -> ss_serdes|shifter[1696]
+#     -0.489  ss_cpu_a3[23]             -> ss_serdes|shifter[1732]
+#     -0.470  ss_cpu_a7[4]              -> ss_serdes|shifter[1585]
+#     -0.359  ss_serdes|state_out[1909] -> ss_state_out_q[1909]
+#     -0.354  ss_serdes|state_out[1941] -> ss_state_out_q[1941]
+#     -0.221  ss_serdes|state_out[1569] -> ss_fanout|cpu_wr_data[20]
+#     -0.318  ss_serdes|state_out[324]  -> CIAA1's TOD read latch
+#     -0.020  ss_ctrl|shadow_ld_data[10]-> ss_regshadow|written[138]
+#
+# A RETIMING FLOP DOES NOT FIX THIS, and the attempt is in the history: the
+# clk_sys bank in front of ss_state_fanout (AmigaCD.sv, ss_state_out_q) moved
+# where the violation is reported and removed nothing, because a new register
+# in the destination domain inherits the very same coincident-edge pairing as
+# the register it was added to protect. It measured +0.220 at seed 2 and -0.359
+# at seed 4 on identical sources. Anyone tempted to add another flop here
+# should read that as the experiment already having been run.
+#
+# WHY THESE CHECKS ARE MODELLING SOMETHING THAT CANNOT HAPPEN, which is the
+# only argument that justifies switching them off:
+#
+#   capture   ss_ctrl serialises the vector INSIDE the freeze. ss_quiesce and
+#             ss_freeze_phase stop the machine first, and a frozen Amiga has no
+#             clk7_en, so no chipset register can change while the capture
+#             runs. The CPU is parked on ss_arm, so its shadows cannot either.
+#             This is the same argument AmigaCD.sv already makes in the comment
+#             above its ss_cia_a / ss_cia_b capture registers.
+#
+#   restore   state_out is written once, when the serdes finishes loading a
+#             file, and then held until the next load. ss_state_fanout does not
+#             even look at it until the cycle after it accepts req, and then
+#             sequences for 24 clk_sys cycles. There is no edge at which
+#             state_out moves while a consumer is sampling it.
+#
+# So the data is static exactly when it is read, in both directions. That makes
+# these the same case as the chipdma_arb handshake buses false-pathed above --
+# "the data lines are stable by handshake" -- and the exceptions are scoped the
+# same way: narrowly, by the node that is actually crossing.
+#
+# Note what is NOT excepted. The shifter's own clk_114 shifting stays timed;
+# only arrivals from clk_sys are excused. state_out's clk_114 consumers stay
+# timed; only its clk_sys consumers are excused. The shifter has no clk_sys
+# input other than the state vector and state_out has no clk_sys consumer other
+# than the restore fan-out, so neither exception can reach anything else.
+#
+# If the vector ever stops being static during a transfer -- a capture that
+# runs with the machine live, or a fan-out that re-reads state_out while the
+# serdes is still loading it -- these exceptions become wrong and the hold
+# violations they hide become real. That is the property to re-check before
+# changing when ss_ctrl captures or restores, not the slack numbers.
+set ss_clk114 [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[0\].output_counter|divclk"]
+set ss_clksys [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[1\].output_counter|divclk"]
+
+# Capture: clk_sys state sources into the serdes shift register.
+set_false_path -from $ss_clksys -to {*ss_serdes*|shifter[*]}
+
+# Restore: the held vector out to its clk_sys consumers (ss_state_out_q, and
+# whatever else unpacks it).
+set_false_path -from {*ss_serdes*|state_out[*]} -to $ss_clksys
+
+# Restore: ss_ctrl's chipset-shadow replay bus into ss_regshadow, which is
+# clk_sys. Same vector, same freeze, carried on its own bus.
+set_false_path -from {*ss_ctrl*|shadow_ld_data[*]} -to $ss_clksys
+
 set_false_path -from {emu|cpu_wrapper|z3ram_*}
 set_false_path -from {emu|cpu_wrapper|z2ram_*}
 
