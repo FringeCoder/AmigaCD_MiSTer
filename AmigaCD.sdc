@@ -73,6 +73,83 @@ set_false_path -from {*chipdma_arb*dma_ddr_u_r*}    -to {*ddram_ctrl*}
 set_false_path -from {*chipdma_arb*dma_ddr_cs_r*}   -to {*ddram_ctrl*dmaCS_sync*}
 set_false_path -from {*ddram_ctrl*dmaACK_r*}        -to {*chipdma_arb*ddr_in_ack_sync*}
 
+# ---------------------------------------------------------------------------
+# The save state vector's two crossings.
+#
+# ss_serdes shifts on clk_114. Everything it gathers and everything it hands
+# back lives on clk_sys -- the CPU shadows, minimig's registers, ss_regshadow,
+# ss_state_fanout. The two clocks are 4:1 out of one VCO and share a rising
+# edge every fourth cycle, so TimeQuest pairs a launch on one with a latch on
+# the other AT THE SAME INSTANT and HOLD-checks about two thousand bits against
+# that pairing. A path of one LUT and 0.2 ns of routing cannot pass such a
+# check, so whether it passes is how close the fitter happened to put the two
+# ends, and nothing else.
+#
+# Measured, on four different netlists and in four different fields:
+#
+#     -0.578  ss_cpu_a4[19]             -> ss_serdes|shifter[1696]
+#     -0.489  ss_cpu_a3[23]             -> ss_serdes|shifter[1732]
+#     -0.470  ss_cpu_a7[4]              -> ss_serdes|shifter[1585]
+#     -0.359  ss_serdes|state_out[1909] -> ss_state_out_q[1909]
+#     -0.354  ss_serdes|state_out[1941] -> ss_state_out_q[1941]
+#     -0.221  ss_serdes|state_out[1569] -> ss_fanout|cpu_wr_data[20]
+#     -0.318  ss_serdes|state_out[324]  -> CIAA1's TOD read latch
+#     -0.020  ss_ctrl|shadow_ld_data[10]-> ss_regshadow|written[138]
+#
+# A RETIMING FLOP DOES NOT FIX THIS, and the attempt is in the history: the
+# clk_sys bank in front of ss_state_fanout (AmigaCD.sv, ss_state_out_q) moved
+# where the violation is reported and removed nothing, because a new register
+# in the destination domain inherits the very same coincident-edge pairing as
+# the register it was added to protect. It measured +0.220 at seed 2 and -0.359
+# at seed 4 on identical sources. Anyone tempted to add another flop here
+# should read that as the experiment already having been run.
+#
+# WHY THESE CHECKS ARE MODELLING SOMETHING THAT CANNOT HAPPEN, which is the
+# only argument that justifies switching them off:
+#
+#   capture   ss_ctrl serialises the vector INSIDE the freeze. ss_quiesce and
+#             ss_freeze_phase stop the machine first, and a frozen Amiga has no
+#             clk7_en, so no chipset register can change while the capture
+#             runs. The CPU is parked on ss_arm, so its shadows cannot either.
+#             This is the same argument AmigaCD.sv already makes in the comment
+#             above its ss_cia_a / ss_cia_b capture registers.
+#
+#   restore   state_out is written once, when the serdes finishes loading a
+#             file, and then held until the next load. ss_state_fanout does not
+#             even look at it until the cycle after it accepts req, and then
+#             sequences for 24 clk_sys cycles. There is no edge at which
+#             state_out moves while a consumer is sampling it.
+#
+# So the data is static exactly when it is read, in both directions. That makes
+# these the same case as the chipdma_arb handshake buses false-pathed above --
+# "the data lines are stable by handshake" -- and the exceptions are scoped the
+# same way: narrowly, by the node that is actually crossing.
+#
+# Note what is NOT excepted. The shifter's own clk_114 shifting stays timed;
+# only arrivals from clk_sys are excused. state_out's clk_114 consumers stay
+# timed; only its clk_sys consumers are excused. The shifter has no clk_sys
+# input other than the state vector and state_out has no clk_sys consumer other
+# than the restore fan-out, so neither exception can reach anything else.
+#
+# If the vector ever stops being static during a transfer -- a capture that
+# runs with the machine live, or a fan-out that re-reads state_out while the
+# serdes is still loading it -- these exceptions become wrong and the hold
+# violations they hide become real. That is the property to re-check before
+# changing when ss_ctrl captures or restores, not the slack numbers.
+set ss_clk114 [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[0\].output_counter|divclk"]
+set ss_clksys [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[1\].output_counter|divclk"]
+
+# Capture: clk_sys state sources into the serdes shift register.
+set_false_path -from $ss_clksys -to {*ss_serdes*|shifter[*]}
+
+# Restore: the held vector out to its clk_sys consumers (ss_state_out_q, and
+# whatever else unpacks it).
+set_false_path -from {*ss_serdes*|state_out[*]} -to $ss_clksys
+
+# Restore: ss_ctrl's chipset-shadow replay bus into ss_regshadow, which is
+# clk_sys. Same vector, same freeze, carried on its own bus.
+set_false_path -from {*ss_ctrl*|shadow_ld_data[*]} -to $ss_clksys
+
 set_false_path -from {emu|cpu_wrapper|z3ram_*}
 set_false_path -from {emu|cpu_wrapper|z2ram_*}
 
@@ -83,9 +160,83 @@ set_false_path -from {emu|minimig|CPU1|halt}
 
 # A2065: the card's 68k side (clk_sys) reaches its DDR3 mailbox (DDRAM_CLK,
 # clk_114) over 2-FF level-detect CDC handshakes inside a2065_regfile and
-# a2065_ddram. Those are self-timed and need no multicycle exception. If the
-# fitter reports real violations across that boundary, add a targeted
-# set_false_path/set_max_delay derived from report_timing — do not guess.
+# a2065_ddram. Those are self-timed and need no multicycle exception. This
+# comment used to end by saying that if the fitter reported real violations
+# across that boundary, add a targeted exception derived from report_timing and
+# do not guess. It did report them, so here they are.
+#
+#     -0.614  a2065_regfile|cmd_data[12] -> a2065_ddr3_mailbox|cmd_data_s[12]
+#     -0.505  a2065_regfile|cmd_rap[3]   -> a2065_ddr3_mailbox|cmd_rap_s[3]
+#
+# measured on the seed 2 netlist of 2026-10-01, where they were the two worst
+# hold paths in the design. They are hold failures, so they are not a
+# frequency problem and no seed or multicycle reaches them: the two clocks come
+# off one VCO at 4:1 and share an edge, and a payload bus that crosses in one
+# LUT is as fast as a path gets.
+#
+# DERIVED, NOT GUESSED, and deliberately wider than the two paths above.
+# Every crossing between these three modules was enumerated with
+# report_timing -from/-to and every one resolves to real registers; on the seed
+# 2 netlist of fix/ss-vector-retime they measured, in nanoseconds of hold slack:
+#
+#     cmd_data        16 bits   +0.618      bram_req_addr   14 bits   +0.703
+#     cmd_rap          7 bits   +0.688      bram_req_wdata  16 bits   +0.653
+#     cmd_pending      1 bit    +0.944      bram_req_rw      1 bit    +2.222
+#     cmd_clear (rev)  1 bit    +0.704      bram_req_be      2 bits   +1.678
+#     bram_resp_data  16 bits   +0.455      bram_req_valid   1 bit    +1.459
+#     bram_resp_valid  1 bit    +1.463
+#
+# Constraining only the two that happened to violate once would leave nine
+# identical paths to take their turn on the next placement, which is the
+# failure mode this file has been chasing all along.
+#
+# bram_req_ack is NOT in the list, and that is a finding rather than an
+# oversight. a2065_ddram declares ack_sync0 / ack_sync1 for it and never reads
+# either -- Quartus says so, "object ack_sync1 assigned a value but never
+# read" -- so the chain is synthesised away and the signal crosses to nothing.
+# An exception for it resolved to a collection of size zero, which an SDC
+# accepts in silence. The dead chain in a2065_ddram is worth deleting on its
+# own account; it is not a timing matter.
+#
+# WHY IT IS SAFE, checked on both sides rather than assumed:
+#
+#   the control bits   cmd_pending, bram_req_valid and the replies are LEVELS
+#                      held until the far side withdraws, each landing in a
+#                      2-FF synchroniser chain in the destination domain. That
+#                      chain is what handles metastability; timing its first
+#                      stage is meaningless. a2065_ddr3_mailbox's own comment
+#                      explains why they are levels: a one-cycle pulse at 9 ns
+#                      would be missed by a side sampling every 35 ns.
+#
+#   the payloads       are written in the same cycle as the control bit that
+#                      announces them and then frozen. a2065_regfile writes
+#                      cmd_rap / cmd_data only in W_IDLE and holds them through
+#                      W_WAIT until cmd_clear has round-tripped; a2065_ddram
+#                      writes the bram_req payload only when no request is
+#                      outstanding and withdraws it on the response. The
+#                      mailbox consumes each payload on the SECOND
+#                      synchroniser stage, by which point it has been stable
+#                      for at least two destination cycles.
+#
+# So these are the same case as the chipdma_arb handshake buses above: stable
+# by handshake, and false-pathed for that reason and no other. If either side
+# ever changes a payload while its request is still asserted, these exceptions
+# become wrong -- that is the property to re-check, not the slack.
+
+# clk_sys -> clk_ddr: the requesters into the mailbox's capture stage.
+set_false_path -from {*a2065_regfile*|cmd_pending}     -to {*a2065_ddr3_mailbox*|cmd_pending_s}
+set_false_path -from {*a2065_regfile*|cmd_rap[*]}      -to {*a2065_ddr3_mailbox*|cmd_rap_s[*]}
+set_false_path -from {*a2065_regfile*|cmd_data[*]}     -to {*a2065_ddr3_mailbox*|cmd_data_s[*]}
+set_false_path -from {*a2065_ddram*|bram_req_valid}    -to {*a2065_ddr3_mailbox*|bram_req_valid_s}
+set_false_path -from {*a2065_ddram*|bram_req_addr[*]}  -to {*a2065_ddr3_mailbox*|bram_req_addr_s[*]}
+set_false_path -from {*a2065_ddram*|bram_req_wdata[*]} -to {*a2065_ddr3_mailbox*|bram_req_wdata_s[*]}
+set_false_path -from {*a2065_ddram*|bram_req_rw}       -to {*a2065_ddr3_mailbox*|bram_req_rw_s}
+set_false_path -from {*a2065_ddram*|bram_req_be[*]}    -to {*a2065_ddr3_mailbox*|bram_req_be_s[*]}
+
+# clk_ddr -> clk_sys: the mailbox's held replies into their requesters' chains.
+set_false_path -from {*a2065_ddr3_mailbox*|cmd_clear}        -to {*a2065_regfile*|cmd_clear_s}
+set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_valid}  -to {*a2065_ddram*|rv_sync0}
+set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_data[*]} -to {*a2065_ddram*|rd_sync0[*]}
 
 # yc_out chroma LUT: multicycle retained from the old bridge, where boardram BRAM
 # placement congestion pushed this path to -0.471ns. The flat-DDR3 design removes
