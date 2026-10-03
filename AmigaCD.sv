@@ -2447,48 +2447,40 @@ always @(posedge clk_114) begin
 	else if (ss_state_we)    ss_fanout_req <= 1'b1;
 end
 
-// The vector, retimed into clk_sys.
+// The vector, registered into clk_sys before the fan-out unpacks it.
 //
-// It used to go to the fan-out raw, on the argument that ss_serdes holds
-// state_out in a register until the next load and so needs no latch of its
-// own. That is true of the DATA and says nothing about the TIMING: every field
-// ss_state_fanout unpacks is a clk_114 launch into a clk_sys flop, and the two
-// clocks share an edge every fourth cycle, so STA hold-checks ~2000 crossings
-// against a coincident edge. They are checked as too FAST, not too slow, and
-// one LUT with 0.2 ns of routing is as fast as a path gets -- so whether they
-// pass is purely how close the fitter happened to put ss_serdes to ss_fanout.
+// WHAT THIS IS FOR, corrected. It was added as a hold fix, on the theory that a
+// clk_sys bank would stop ss_state_fanout's fields being hold-checked against
+// the coincident clk_114 / clk_sys edge. It does not do that and cannot: a
+// register in the destination domain inherits the same coincident pairing as
+// the registers it was meant to protect, so the violation moves onto this
+// bank's own inputs. It measured +0.220 hold at seed 2, -0.359 at seed 4 and
+// -0.629 at seed 2 on another placement, all on identical sources. The hold
+// problem is handled in AmigaCD.sdc, by false-pathing the crossing on the
+// grounds that the vector is static exactly when it is read.
 //
-// It has failed there four times in the record, in four different fields:
+// It earns its place for a different reason, found by removing it and
+// measuring. ss_state_fanout unpacks every field of a 2093-bit vector
+// combinationally. With the crossing false-pathed and this bank gone, that
+// entire distribution has NO timing constraint -- report_timing -to
+// ss_state_fanout on the seed 2 netlist of the revert found no paths from
+// state_out, and nothing else feeding it closer than +4.291 ns -- and the
+// fitter has no reason to place 2093 nets well. Across seeds 2, 4 and 18 that
+// cost three shipping builds out of three and a mean worst-of-two slack of
+// +0.200 ns, against two of three and +0.090 ns:
 //
-//     -0.567  CIAB1's timer counters      (fixed by the ss_cia_a/b capture regs)
-//     -0.318  state_out[324]  -> CIAA1's TOD read latch
-//     -0.470  ss_cpu_a7[4]    -> ss_serdes|shifter[1585]
-//     -0.221  state_out[1569] -> ss_fanout|cpu_wr_data[20]   seed 2, 2026-10-01
+//     with this bank     +0.242 / +0.242   +0.362 / +0.241   +0.117 / +0.192
+//     without it         -0.055 / +0.185   +0.092 / +0.242   +0.234 / +0.244
 //
-// The first two were treated where they surfaced, by registering the CIA words
-// on each side. This is the same remedy applied once at the source instead of
-// field by field, so the remaining fields -- the CPU register file, PC, SR,
-// USP, VBR, CACR, the memory map, INTREQ, Akiko -- cannot take their turn. The
-// CIA retimers either side of it are now redundant rather than wrong, and are
-// left alone so that this change can be measured on its own.
+// So it converts a large unconstrained cloud into an ordinary timed clk_sys
+// path. Do not remove it on the grounds that it is not a hold fix; it is not,
+// and that is not what it is for.
 //
-// req is retimed with it, by exactly one cycle, so that req_q and state_q stay
-// in step: state_out and ss_state_we go valid together, and a retimed vector
-// otherwise arrives a cycle after the request announcing it.
-//
-// That alignment is belt-and-braces, not load-bearing. ss_state_fanout spends
-// the cycle on which it accepts req entering `running` and clearing `step`,
+// req is retimed by one cycle with the data so the two stay in step, since
+// state_out and state_we go valid together. That alignment is belt-and-braces:
+// ss_state_fanout spends the cycle on which it accepts req entering `running`
 // and does not read `state` until the cycle after, so one cycle of skew is
-// absorbed either way. rtl/sim/ssfanout/tb_ss_fanout_retime.sv asserts that
-// -- it runs the same restores raw, aligned, and deliberately skewed by one
-// cycle, at all four clk_sys phases, and requires all three to agree. If the
-// sequencer ever reads the vector on its entry cycle, that bench fails and
-// this flop becomes the only thing keeping a back-to-back restore off the
-// previous vector.
-//
-// Cost is `SS_STATE_W` flops, 2093 of them, and one clk_sys cycle of extra
-// latency on a 23-cycle sequence that is followed by a million SDRAM word
-// writes (see the ORDERING NOTE below).
+// absorbed either way. rtl/sim/ssfanout/tb_ss_fanout_retime.sv asserts that.
 reg [`SS_STATE_W-1:0] ss_state_out_q;
 reg                   ss_fanout_req_q;
 always @(posedge clk_sys) begin

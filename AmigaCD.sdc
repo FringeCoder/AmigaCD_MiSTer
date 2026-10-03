@@ -142,9 +142,19 @@ set ss_clksys [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[1
 # Capture: clk_sys state sources into the serdes shift register.
 set_false_path -from $ss_clksys -to {*ss_serdes*|shifter[*]}
 
-# Restore: the held vector out to its clk_sys consumers (ss_state_out_q, and
-# whatever else unpacks it).
-set_false_path -from {*ss_serdes*|state_out[*]} -to $ss_clksys
+# Restore: the held vector out to the clk_sys bank that receives it.
+#
+# Scoped to ss_state_out_q and NOT to the clk_sys clock, which is a correction
+# rather than tidying. Excepting state_out to the whole clock also excepts
+# state_out -> ss_state_fanout, and if the bank is ever removed that leaves the
+# entire 2093-bit vector distribution with no timing constraint at all: measured
+# on the seed 2 netlist of the revert branch, report_timing -to ss_state_fanout
+# found NO paths from state_out and nothing else feeding it closer than
+# +4.291 ns. Across three seeds that cost 3 shipping builds out of 3 and a mean
+# worst-of-two of +0.200 ns, against 2 of 3 and +0.090 ns. The bank's real job
+# is to keep that distribution timed; the false path is only for the one hop
+# that actually crosses into it.
+set_false_path -from {*ss_serdes*|state_out[*]} -to {*ss_state_out_q*}
 
 # Restore: ss_ctrl's chipset-shadow replay bus into ss_regshadow, which is
 # clk_sys. Same vector, same freeze, carried on its own bus.
