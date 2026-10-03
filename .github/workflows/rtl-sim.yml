@@ -195,6 +195,22 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # video_ce against the inline divider it replaced. CLK_VIDEO moved from
+      # clk_114 to clk_sys to get the video front end off the core's critical
+      # clock, so the pixel enable had to be re-derived: at 28.375 MHz the three
+      # Amiga rates need one cycle in four, one in two, and EVERY cycle, and a
+      # fractional divider cannot emit the last of those. Getting that wrong
+      # gives a picture of the right shape at the wrong rate, which no fit report
+      # shows. The bench runs the old divider at 113.5 MHz beside the new module
+      # at 28.375 MHz and requires the same enable count per frame.
+      - name: Video pixel enable
+        run: |
+          set -euo pipefail
+          cd rtl/sim/videoce
+          iverilog -g2012 -o tb ../../video_ce.v tb_video_ce.sv
+          vvp tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # cpu_cache_new's fill-vs-snoop interlock. sdram_ctrl drives snoop_act from
       # chipWE, so a change to the chip write path shows up here.
       - name: Cache fill/snoop interlock

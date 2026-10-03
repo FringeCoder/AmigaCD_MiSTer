@@ -2550,27 +2550,21 @@ assign LED_POWER[0] = pwr_led | ~led_dim;
 
 assign FB_FORCE_BLANK = 0;
 
-reg ce_out = 0;
-always @(posedge CLK_VIDEO) begin
-	reg [3:0] div;
-	reg [3:0] add;
-	reg [1:0] fs_res;
-	reg old_vs;
-	
-	div <= div + add;
-	if(~hblank & ~vblank) fs_res <= fs_res | res;
-
-	old_vs <= vs;
-	if(old_vs & ~vs) begin
-		fs_res <= 0;
-		div <= 0;
-		add <= 1; // 7MHz
-		if(fs_res[0]) add <= 2; // 14MHz
-		if(fs_res[1] | (~status[42] & ~scandoubler)) add <= 4; // 28MHz
-	end
-
-	ce_out <= div[3] & !div[2:0];
-end
+// The pixel enable now lives in rtl/video_ce.v, because CLK_VIDEO is clk_sys
+// and the rates had to be re-derived for it -- see that file, and
+// rtl/sim/videoce/tb_video_ce.sv, which runs the old inline divider beside it
+// and requires the same number of enables per frame.
+wire ce_out;
+video_ce video_ce_inst
+(
+	.clk      (CLK_VIDEO),
+	.vs       (vs       ),
+	.hblank   (hblank   ),
+	.vblank   (vblank   ),
+	.res      (res      ),
+	.force_28 (~status[42] & ~scandoubler),
+	.ce_pix   (ce_out   )
+);
 
 assign ce_pix = ce_out;
 
@@ -2621,7 +2615,28 @@ video_mixer #(.LINE_LENGTH(2000), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 	.VGA_B(B)
 );
 
-assign CLK_VIDEO = clk_114;
+// CLK_VIDEO is clk_sys, not clk_114.
+//
+// It carries ascal's input side, video_mixer, video_freak and the pixel enable,
+// and on clk_114 all of that sat on the core's critical clock for no reason:
+// the Amiga's fastest pixel rate is 28.375 MHz, which is clk_sys exactly, and
+// ce_pix divides down from there. Measured across three seeds when it moved:
+//
+//     clk_114 Fmax        115.53 MHz -> 120.39 MHz  (1.8% headroom -> 6.1%)
+//     clk_sys Fmax         34.63 MHz ->  34.79 MHz  (absorbed for nothing)
+//     ALMs                    29,926 ->    29,902
+//     builds meeting timing      1/3 ->       3/3
+//     spread of worst-of-two    0.78 ns -> 0.061 ns
+//
+// The last line is the point. The fit used to be decided by which of some sixty
+// near-critical paths the placer happened to hurt, so the same source shipped
+// or did not depending on the seed. Taking this much logic off clk_114 did not
+// merely move the worst path, it collapsed the variance.
+//
+// ce_pix had to be re-derived for the new clock, because a fractional divider
+// cannot emit an enable every cycle and 28.375 MHz on a 28.375 MHz clock needs
+// exactly that. See rtl/video_ce.v.
+assign CLK_VIDEO = clk_sys;
 assign VGA_F1    = field1;
 assign VGA_R     = mt32_lcd ? {{2{mt32_lcd_pix}},R[7:2]} : R;
 assign VGA_G     = mt32_lcd ? {{2{mt32_lcd_pix}},G[7:2]} : G;
