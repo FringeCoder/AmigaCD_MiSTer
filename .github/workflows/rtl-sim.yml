@@ -615,6 +615,27 @@ jobs:
           vvp tb_sec_ingest | tee out_sec_ingest.log
           grep -q "tb_akiko_sec_ingest PASS" out_sec_ingest.log
 
+      # The NVRAM load channel while the CD32 is held in reset. The HPS loads
+      # the per-disc save on its first poll, which with the disc in the config
+      # at power-on is during reset; the bridge's address counter used to be
+      # held at 0 then, every byte landed on address 0, and saves for that
+      # disc were refused for the session.
+      - name: Akiko NVRAM load during reset
+        run: |
+          set -euo pipefail
+          bash rtl/sim/check-icarus-warnings.sh -g2012 -I. -o tb_bridge_nvr_reset rtl/akiko_hps_bridge.v rtl/sim/akiko/tb_akiko_bridge_nvr_reset.sv
+          vvp tb_bridge_nvr_reset | tee out_bridge_nvr_reset.log
+          grep -q "tb_akiko_bridge_nvr_reset PASS" out_bridge_nvr_reset.log
+
+      # The CDDA FIFO: PAL/NTSC rate, normal and large depth, flush, the
+      # underrun counters, and the decay that replaced stepping to zero.
+      - name: CDDA FIFO
+        run: |
+          set -euo pipefail
+          bash rtl/sim/check-icarus-warnings.sh -g2012 -I. -o tb_akiko_cdda rtl/cdda.v rtl/sim/akiko/tb_akiko_cdda.sv
+          vvp tb_akiko_cdda | tee out_akiko_cdda.log
+          grep -q "tb_akiko_cdda PASS" out_akiko_cdda.log
+
       # Where each memory region lands in SDRAM. The savestate names chip RAM,
       # slow RAM and the Kickstart by the address sdram_ctrl's CPU port expects,
       # which is not the CPU address -- gary, the bank mapper and the sram

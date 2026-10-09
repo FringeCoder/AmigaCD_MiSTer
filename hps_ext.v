@@ -59,6 +59,19 @@ module hps_ext
 	input             cdda_req,
 	output reg        cdda_wr,
 	output reg [15:0] cdda_dout,
+	// CDDA control and diagnostics share the cdda class (0xF200) with the
+	// sample stream, picked by io_din[0] on the class word:
+	//   0xF200  write: sample stream (unchanged)
+	//   0xF201  write: control word -> cdda.v CTL_DIN (bit 0 BIG, bit 1 FLUSH)
+	//   either  read:  0xCDDA signature, underruns, starves, fill, flags
+	// A core without this answers the read with zeros, which is how the HPS
+	// tells the two apart.
+	output reg        cdda_ctl_wr,
+	input      [15:0] cdda_underruns,
+	input      [15:0] cdda_starves,
+	input      [13:0] cdda_fill,
+	input             cdda_big,
+	input             cdda_ntsc,
 
 	// Akiko bridge (CD32 native mode). Address class 0xF400 = io_din[15:9]==7'b1111_010.
 	// Sub-channels share the class, picked from extra bits captured on
@@ -204,11 +217,13 @@ always@(posedge clk_sys) begin : main_proc
 	reg [15:0] cmd;
 	reg ide_cs = 0;
 	reg cdda_cs = 0;
+	reg cdda_cs_ctl = 0;
 
 	sset <= 0;
 
 	{ide_rd, ide_wr} <= 0;
 	cdda_wr <= 0;
+	cdda_ctl_wr <= 0;
 	{akiko_rd, akiko_wr} <= 0;
 	{cdtv_rd, cdtv_wr} <= 0;
 	if((ide_rd | ide_wr) & ~&ide_addr[3:0]) ide_addr <= ide_addr + 1'd1;
@@ -219,6 +234,7 @@ always@(posedge clk_sys) begin : main_proc
 		byte_cnt <= 0;
 		ide_cs <= 0;
 		cdda_cs <= 0;
+		cdda_cs_ctl <= 0;
 		akiko_cs <= 0;
 		akiko_cs_sec <= 0;
 		akiko_cs_nvr <= 0;
@@ -246,7 +262,8 @@ always@(posedge clk_sys) begin : main_proc
 		if(byte_cnt == 1) begin
 			ide_addr     <= {io_din[8],io_din[3:0]};
 			ide_cs       <= (io_din[15:9] == 7'b1111000);
-			cdda_cs      <= (io_din[15:9] == 7'b1111001);
+			cdda_cs      <= (io_din[15:9] == 7'b1111001) && !io_din[0];
+			cdda_cs_ctl  <= (io_din[15:9] == 7'b1111001) &&  io_din[0];
 			// Trace sub-channel (io_din[7]=1) and peek sub-channel (io_din[5]=1)
 			// are exclusive: keep cs/cs_sec LOW so the M3/M4 bridge isn't fed
 			// during a debug drain.
@@ -296,7 +313,7 @@ always@(posedge clk_sys) begin : main_proc
 				// bit [11] = akiko_req (M3: command framed, ready to drain)
 				// bit [10] = akiko_sec_req (M4: PBX wants a sector pushed)
 				// Bit  [9] = akiko_rx_busy
-				// bit  [8] = cdda_req (legacy stock-Minimig CDDA — dormant in NATIVE_CD32)
+				// bit  [8] = cdda_req (CD32 CDDA FIFO wants a sector; see rtl/cdda.v)
 				// bit [13] = cdtv_card_dirty (memory card written since last clear)
 				// bit [12] = cdtv_nvr_dirty (CDTV battery RAM written since last clear)
 				// bit  [7] = akiko_nvr_dirty (NVRAM written since last clear)
@@ -370,6 +387,7 @@ always@(posedge clk_sys) begin : main_proc
 				'h61: begin
 					if(byte_cnt >= 3) begin
 						cdda_wr  <= cdda_cs;
+						cdda_ctl_wr <= cdda_cs_ctl;
 						ide_wr   <= ide_cs;
 						akiko_wr <= akiko_cs;
 						// cdtv_wr feeds the cmd-byte channel plus the STCH,
@@ -388,6 +406,18 @@ always@(posedge clk_sys) begin : main_proc
 					if(byte_cnt >= 3 && akiko_cs) begin
 						io_dout  <= akiko_din;
 						akiko_rd <= 1;
+					end
+					// CDDA diagnostics. Muxed off byte_cnt like the save state
+					// window, so reading them cannot disturb the FIFO.
+					if(byte_cnt >= 3 && (cdda_cs | cdda_cs_ctl)) begin
+						case(byte_cnt)
+							6'd3: io_dout <= 16'hCDDA;
+							6'd4: io_dout <= cdda_underruns;
+							6'd5: io_dout <= cdda_starves;
+							6'd6: io_dout <= {2'b00, cdda_fill};
+							6'd7: io_dout <= {14'd0, cdda_ntsc, cdda_big};
+							default: io_dout <= 16'd0;
+						endcase
 					end
 					// cdtv_cs_sec is write-only, so it stays out of the read
 					// path. The cs_* are mutually exclusive, so a read here can

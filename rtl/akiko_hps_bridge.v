@@ -62,14 +62,14 @@ module akiko_hps_bridge
 
 reg cs_d;
 reg cs_sec_d;
-reg cs_nvr_d;
+reg cs_nvr_d = 1'b0;
 reg cs_subcode_d;
 reg saw_read;
 reg saw_write;
 
-reg [9:0] nvr_addr_cnt;
+reg [9:0] nvr_addr_cnt = 10'd0;
 
-reg hi_nvr;
+reg hi_nvr = 1'b0;
 
 wire cs_cmd = uio_cs & ~uio_cs_sec & ~uio_cs_nvr & ~uio_cs_subcode;
 
@@ -80,17 +80,12 @@ always @(posedge clk) begin
 	if (reset) begin
 		cs_d         <= 1'b0;
 		cs_sec_d     <= 1'b0;
-		cs_nvr_d     <= 1'b0;
 		cs_subcode_d <= 1'b0;
 		saw_read     <= 1'b0;
 		saw_write    <= 1'b0;
-		nvr_addr_cnt <= 10'd0;
-		hi_nvr       <= 1'b0;
 	end else begin
-		hi_nvr <= wr_nvr;
 		cs_d         <= uio_cs;
 		cs_sec_d     <= uio_cs_sec;
-		cs_nvr_d     <= uio_cs_nvr;
 		cs_subcode_d <= uio_cs_subcode;
 		if (!uio_cs) begin
 			saw_read  <= 1'b0;
@@ -99,11 +94,25 @@ always @(posedge clk) begin
 			if (uio_rd) saw_read  <= 1'b1;
 			if (uio_wr) saw_write <= 1'b1;
 		end
-		if (uio_cs_nvr & ~cs_nvr_d) begin
-			nvr_addr_cnt <= 10'd0;
-		end else if ((uio_rd & uio_cs_nvr) | wr_nvr | hi_nvr) begin
-			nvr_addr_cnt <= nvr_addr_cnt + 10'd1;
-		end
+	end
+end
+
+// The NVRAM sub-channel runs whatever the CPU is doing. `reset` here is the
+// chip-wide CD32 reset, and the HPS loads the per-disc save while the core is
+// still coming up -- with the disc in the config at power-on, that is the
+// very first poll. Held in reset, this counter sat at 0 and all 1024 bytes of
+// the load landed on address 0: the BRAM kept its .mif image, the HPS verify
+// failed (1/1024, at 0x018, the only byte where a blank save and the .mif
+// differ), and every save for that disc was refused for the session.
+// akiko_nvram itself was already decoupled from this reset for exactly this
+// reason (akiko.v, nvram_inst); its address counter has to be too.
+always @(posedge clk) begin
+	hi_nvr   <= wr_nvr;
+	cs_nvr_d <= uio_cs_nvr;
+	if (uio_cs_nvr & ~cs_nvr_d) begin
+		nvr_addr_cnt <= 10'd0;
+	end else if ((uio_rd & uio_cs_nvr) | wr_nvr | hi_nvr) begin
+		nvr_addr_cnt <= nvr_addr_cnt + 10'd1;
 	end
 end
 

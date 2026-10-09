@@ -2983,16 +2983,34 @@ wire  [15:0] cdda_r;
 wire  [15:0] cdda_dout;
 wire         cdda_req;
 wire         cdda_wr;
+wire         cdda_ctl_wr;
+wire  [15:0] cdda_underruns;
+wire  [15:0] cdda_starves;
+wire  [13:0] cdda_fill;
+wire         cdda_big;
+// clk_sys follows the video standard (pll_cfg above retunes it), so the CD
+// audio rate has to as well. ntsc changes only around a PLL reconfiguration,
+// so a plain two-flop sync is enough.
+reg   [1:0] cdda_ntsc_s;
+always @(posedge clk_sys) cdda_ntsc_s <= {cdda_ntsc_s[0], ntsc};
+wire        cdda_ntsc = cdda_ntsc_s[1];
 
-cdda #(28375160) cdda
+cdda #(.CLK_RATE_PAL(28375160), .CLK_RATE_NTSC(28636360)) cdda
 (
 	.CLK(clk_sys),
 	.nRESET(~reset),
+	.NTSC(cdda_ntsc),
+	.CTL_WR(cdda_ctl_wr),
+	.CTL_DIN(cdda_dout),
 	.WRITE_REQ(cdda_req),
 	.WRITE(cdda_wr),
 	.DIN(cdda_dout),
 	.AUDIO_L(cdda_l),
-	.AUDIO_R(cdda_r)
+	.AUDIO_R(cdda_r),
+	.BIG(cdda_big),
+	.UNDERRUNS(cdda_underruns),
+	.STARVES(cdda_starves),
+	.FILL(cdda_fill)
 );
 
 wire [10:0] cdda_gain = (cdtv_mode && cdtv_cdda_volume_valid_w) ? {1'b0, cdtv_cdda_volume_w} : 11'd1023;
