@@ -37,9 +37,6 @@ ICARUS_CANNOT_BUILD = {
         'Same explicit-lifetime construct, three sites. Also leaves '
         'cpu_chip_slot_req and chip_in_rd_dma unconnected, so it needs work '
         'beyond the port. Run: rtl/sim/akiko/run_chipram.do',
-    'tb_akiko_cdda.sv':
-        'Instantiates a "cdda" module that exists only in the Questa library '
-        'build. Run: rtl/sim/akiko/run_cdda.do',
     'tb_akiko_nvram.sv':
         'Assigns a whole array without a word index, which Icarus rejects as '
         '"Cannot assign to array". Run: rtl/sim/akiko/run_nvram.do',
