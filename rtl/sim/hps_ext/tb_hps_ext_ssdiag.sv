@@ -71,6 +71,14 @@ wire        sset;
 wire        cdda_req = 1'b0;
 wire        cdda_wr;
 wire [15:0] cdda_dout;
+// CDDA control and diagnostics (same class as the sample stream). Distinct
+// values per word, as for the save state window.
+wire        cdda_ctl_wr;
+wire [15:0] cdda_underruns = 16'h1234;
+wire [15:0] cdda_starves   = 16'h0042;
+wire [13:0] cdda_fill      = 14'd1459;
+wire        cdda_big       = 1'b1;
+wire        cdda_ntsc      = 1'b0;
 
 wire [15:0] akiko_din = 16'hAAAA;
 wire [15:0] akiko_dout;
@@ -321,6 +329,68 @@ initial begin
 	// have stayed low through all of that -- a decode that let both through
 	// would have two muxes driving the same read.
 	check("status window not selected during a peek", {31'd0, ss_diag_cs_probe}, 32'd0);
+
+	// ------------------------------------------------------------ CDDA class
+	//
+	// Read: signature, then underruns, starves, fill, flags -- the order
+	// akiko_cdda_stats() in akiko_cd32.cpp decodes.
+	@(negedge clk_sys); hps_uio = 1'b0;
+	@(negedge clk_sys); hps_uio = 1'b1;
+	xfer(16'h0062);
+	xfer(16'hF200);
+	xfer(16'h0000);
+	for (k = 0; k < 6; k = k + 1) xfer_rd(w[k]);
+	check("cdda signature",   {16'd0, w[0]}, 32'h0000CDDA);
+	check("cdda underruns",   {16'd0, w[1]}, 32'h00001234);
+	check("cdda starves",     {16'd0, w[2]}, 32'h00000042);
+	check("cdda fill",        {16'd0, w[3]}, 32'd1459);
+	check("cdda flags",       {16'd0, w[4]}, 32'h00000001);
+	check("cdda past the end", {16'd0, w[5]}, 32'd0);
+
+	// Control write on 0xF201 strobes cdda_ctl_wr, never the sample stream.
+	begin : cdda_ctl
+		reg ctl_seen, wr_seen;
+		reg [15:0] ctl_val;
+		ctl_seen = 0; wr_seen = 0; ctl_val = 0;
+		@(negedge clk_sys); hps_uio = 1'b0;
+		@(negedge clk_sys); hps_uio = 1'b1;
+		xfer(16'h0061);
+		xfer(16'hF201);
+		xfer(16'h0000);
+		fork
+			xfer(16'h0003);
+			begin
+				repeat (4) begin
+					@(posedge clk_sys); #1;
+					if (cdda_ctl_wr) begin ctl_seen = 1; ctl_val = cdda_dout; end
+					if (cdda_wr) wr_seen = 1;
+				end
+			end
+		join
+		check("cdda ctl strobed",           {31'd0, ctl_seen}, 32'd1);
+		check("cdda ctl word",              {16'd0, ctl_val},  32'h00000003);
+		check("cdda ctl not a sample write", {31'd0, wr_seen}, 32'd0);
+
+		// And a sample write on 0xF200 strobes cdda_wr, never the control.
+		ctl_seen = 0; wr_seen = 0;
+		@(negedge clk_sys); hps_uio = 1'b0;
+		@(negedge clk_sys); hps_uio = 1'b1;
+		xfer(16'h0061);
+		xfer(16'hF200);
+		xfer(16'h0000);
+		fork
+			xfer(16'h7FFF);
+			begin
+				repeat (4) begin
+					@(posedge clk_sys); #1;
+					if (cdda_ctl_wr) ctl_seen = 1;
+					if (cdda_wr) wr_seen = 1;
+				end
+			end
+		join
+		check("cdda sample strobed",          {31'd0, wr_seen},  32'd1);
+		check("cdda sample not a ctl write",  {31'd0, ctl_seen}, 32'd0);
+	end
 
 	if (errors) begin
 		$display("%0d FAILURE(S)", errors);

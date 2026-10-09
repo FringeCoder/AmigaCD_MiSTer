@@ -2,8 +2,9 @@
 //
 // Akiko M6.2 CDDA bench — RTL-only acceptance for cdda.v.
 //
-// DUT  : cdda #(.CLK_RATE(441000)) standalone. CLK_RATE picked so the
-//        44.1 kHz clock-enable pulses every 10 sim cycles — the bench
+// DUT  : cdda #(.CLK_RATE_PAL(441000), .CLK_RATE_NTSC(882000)) standalone.
+//        Rates picked so the 44.1 kHz clock-enable pulses every 10 sim
+//        cycles (PAL) or 20 (NTSC) — the bench
 //        consumes ~588 CE pulses per sector, so this keeps a full-sector
 //        drain at a few thousand cycles instead of millions.
 //
@@ -21,9 +22,15 @@
 //   D. One full sector (588 L/R pairs = 1176 WRITE pulses). WRITE_REQ
 //      stays asserted (1 sector consumed leaves >=1 sector free in the
 //      2048-deep buffer). All 588 stereo samples drain in order.
-//   E. Backpressure. Push enough pairs that AVAILABLE_COUNT drops below
-//      SECTOR_SIZE → WRITE_REQ deasserts. Drain one sector → WRITE_REQ
-//      reasserts.
+//   E. Backpressure (NORMAL). Fill past 1459 frames → WRITE_REQ deasserts.
+//      Drain one sector → WRITE_REQ reasserts.
+//   F. LARGE (CTL bit 0). The same fill keeps WRITE_REQ high; it drops only
+//      past 7603 frames, and nothing is lost up to 8191.
+//   G. FLUSH (CTL bit 1). FILL returns to 0, the next play starts clean.
+//   H. Underrun diagnostics. A data -> empty edge counts one STARVE, every
+//      starved period after it counts one UNDERRUN, an idle FIFO counts none.
+//   I. NTSC selects the other clock rate.
+//   C, also: an underrun decays to silence instead of stepping to it.
 
 `timescale 1ns / 1ps
 
@@ -45,17 +52,41 @@ wire         write_req;
 wire         audio_ce;
 wire  [15:0] audio_l;
 wire  [15:0] audio_r;
+logic        ntsc   = 0;
+logic        ctl_wr = 0;
+logic [15:0] ctl_din = 16'h0000;
+wire         big;
+wire  [15:0] underruns;
+wire  [15:0] starves;
+wire  [13:0] fill;
 
-cdda #(.CLK_RATE(441000)) dut (
+cdda #(.CLK_RATE_PAL(441000), .CLK_RATE_NTSC(882000)) dut (
 	.CLK    (clk),
 	.nRESET (reset_n),
+	.NTSC   (ntsc),
+	.CTL_WR (ctl_wr),
+	.CTL_DIN(ctl_din),
 	.WRITE_REQ (write_req),
 	.WRITE  (write_pulse),
 	.DIN    (din),
 	.AUDIO_CE (audio_ce),
 	.AUDIO_L (audio_l),
-	.AUDIO_R (audio_r)
+	.AUDIO_R (audio_r),
+	.BIG    (big),
+	.UNDERRUNS(underruns),
+	.STARVES(starves),
+	.FILL   (fill)
 );
+
+task automatic ctl(input [15:0] w);
+	@(posedge clk);
+	ctl_din <= w;
+	ctl_wr  <= 1'b1;
+	@(posedge clk);
+	ctl_wr  <= 1'b0;
+	@(posedge clk);
+	@(posedge clk);
+endtask
 
 // -----------------------------------------------------------------------
 // Score keeping
@@ -206,12 +237,19 @@ initial begin
 		check_eq16("C.audio_l = 0xAAAA",  16'hAAAA, cap_l);
 		check_eq16("C.audio_r = 0x5555",  16'h5555, cap_r);
 	end
-	// Buffer should now be empty again — next CE must be silent.
+	// Buffer is empty again. The output must not step to zero: it decays
+	// (x - x/32 per period), and reaches zero within a few hundred periods.
 	begin
 		logic [15:0] cap_l, cap_r;
+		int i;
 		wait_for_ce_and_capture(cap_l, cap_r);
-		check_eq16("C.silent after drain (L)", 16'h0000, cap_l);
-		check_eq16("C.silent after drain (R)", 16'h0000, cap_r);
+		// 0xAAAA = -21846; -21846 - (-683) = -21163 = 0xAD55.
+		check_eq16("C.first starved period decays L", 16'hAD55, cap_l);
+		// 0x5555 = 21845; 21845 - 682 = 21163 = 0x52AB.
+		check_eq16("C.first starved period decays R", 16'h52AB, cap_r);
+		for (i = 0; i < 400; i++) wait_for_ce_and_capture(cap_l, cap_r);
+		check_eq16("C.silent after decay (L)", 16'h0000, cap_l);
+		check_eq16("C.silent after decay (R)", 16'h0000, cap_r);
 	end
 
 	// -------------------------------------------------------------------
@@ -279,7 +317,91 @@ initial begin
 		check_bit("E.write_req reasserted after one-sector drain", 1'b1, write_req);
 	end
 
+	// -------------------------------------------------------------------
+	// Group F: LARGE. Drain E's leftovers, then fill 1800 frames: in LARGE
+	// that is far from full, so WRITE_REQ stays high. Fill on to 7700 and
+	// it drops. The last frame that fits is 8191; the 8192nd is refused.
+	// -------------------------------------------------------------------
+	$display("[F] large buffer");
+	ctl(16'h0002);                         // flush E's leftovers, BIG=0
+	ctl(16'h0001);                         // BIG=1
+	check_bit("F.big latched", 1'b1, big);
+	force dut.cen_44100 = 1'b0;
+	begin
+		int i;
+		for (i = 0; i < 1800; i++) push_pair(16'(i), 16'(i));
+		@(posedge clk); @(posedge clk);
+		check_bit("F.write_req still high at 1800 frames", 1'b1, write_req);
+		for (i = 1800; i < 7700; i++) push_pair(16'(i), 16'(i));
+		@(posedge clk); @(posedge clk);
+		check_bit("F.write_req low at 7700 frames", 1'b0, write_req);
+		for (i = 7700; i < 8200; i++) push_pair(16'(i), 16'(i));
+		@(posedge clk); @(posedge clk);
+		check_eq16("F.fill caps at 8191", 16'd8191, {2'b00, fill});
+	end
+	release dut.cen_44100;
+
+	// -------------------------------------------------------------------
+	// Group G: FLUSH empties the FIFO at once and keeps BIG as written.
+	// -------------------------------------------------------------------
+	$display("[G] flush");
+	begin
+		logic [15:0] s0;
+		s0 = starves;
+		ctl(16'h0003);                     // flush, keep BIG=1
+		check_eq16("G.fill 0 after flush", 16'd0, {2'b00, fill});
+		check_bit ("G.big kept", 1'b1, big);
+		check_bit ("G.write_req high after flush", 1'b1, write_req);
+		check_eq16("G.flush is not a starve", s0, starves);
+	end
+	ctl(16'h0000);                         // back to NORMAL
+
+	// -------------------------------------------------------------------
+	// Group H: underrun counters.
+	// -------------------------------------------------------------------
+	$display("[H] underrun diagnostics");
+	begin
+		logic [15:0] s0, u0, u1;
+		logic [15:0] cap_l, cap_r;
+		int i;
+		// Idle FIFO: nothing counts.
+		u0 = underruns; s0 = starves;
+		for (i = 0; i < 50; i++) wait_for_ce_and_capture(cap_l, cap_r);
+		check_eq16("H.idle FIFO counts no underruns", u0, underruns);
+		check_eq16("H.idle FIFO counts no starves",   s0, starves);
+		// Ten frames, drained, then ten starved periods.
+		force dut.cen_44100 = 1'b0;
+		for (i = 0; i < 10; i++) push_pair(16'h0100, 16'h0100);
+		release dut.cen_44100;
+		for (i = 0; i < 10; i++) wait_for_ce_and_capture(cap_l, cap_r);
+		u1 = underruns;
+		for (i = 0; i < 10; i++) wait_for_ce_and_capture(cap_l, cap_r);
+		@(posedge clk); @(posedge clk);
+		check_eq16("H.one starve per data->empty edge", s0 + 16'd1, starves);
+		check_eq16("H.one underrun per starved period", u1 + 16'd10, underruns);
+		// A flush ends the starved run.
+		ctl(16'h0002);
+		u1 = underruns;
+		for (i = 0; i < 10; i++) wait_for_ce_and_capture(cap_l, cap_r);
+		check_eq16("H.flush ends the starved run", u1, underruns);
+	end
+
+	// -------------------------------------------------------------------
+	// Group I: NTSC selects CLK_RATE_NTSC (here twice PAL: half the CEs).
+	// -------------------------------------------------------------------
+	$display("[I] PAL/NTSC rate");
+	begin
+		int n_pal, n_ntsc;
+		count_ce_for(2000, n_pal);
+		ntsc = 1;
+		count_ce_for(2000, n_ntsc);
+		ntsc = 0;
+		check_bit("I.PAL ~200 CEs in 2000 cycles",  1'b1, (n_pal  >= 198 && n_pal  <= 202));
+		check_bit("I.NTSC ~100 CEs in 2000 cycles", 1'b1, (n_ntsc >=  98 && n_ntsc <= 102));
+	end
+
 	$display("==== tb_akiko_cdda end: checks=%0d errs=%0d ====", checks, errs);
+	if (errs == 0) $display("tb_akiko_cdda PASS");
 	$finish;
 end
 
