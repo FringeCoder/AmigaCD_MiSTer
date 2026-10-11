@@ -130,6 +130,7 @@ parameter BLT_L1   = 5'b11001;
 parameter BLT_L2   = 5'b11011;
 parameter BLT_L3   = 5'b11010;
 parameter BLT_L4   = 5'b11000;
+parameter BLT_LB   = 5'b11100;   // line mode: channel B fetch, only with USEB
 parameter BLT_FROZEN = 5'b11111;
 
 //local signals
@@ -835,9 +836,34 @@ always @(*)
 			dma_req = 0; // internal cycle - no DMA access
 
 			if (enable)
-				blt_next = BLT_L2;
+				blt_next = useb ? BLT_LB : BLT_L2;
 			else
 				blt_next = BLT_L1;
+		end
+
+		// Line mode with USEB: channel B is fetched for every pixel and the word
+		// fetched -- not what the CPU left in BLTDAT -- is what the texture bit is
+		// taken from, with BLTBPT advancing by BLTBMOD. A line drawn with B enabled
+		// over zeroed memory therefore comes out blank. That is vAmiga's FETCH_B in
+		// its B-enabled line programs and what an A500 shows for vAmigaTS
+		// Agnus/Blitter/line/channels1 and channels2; the core used to ignore USEB
+		// in line mode and drew every one of those lines.
+		BLT_LB:
+		begin
+			chsel = CHB;
+			ptrsel = CHB;
+			modsel = CHB;
+			enaptr = enable;
+			incptr = 0;
+			decptr = 0;
+			addmod = 1;
+			submod = 0;
+			dma_req = 1;
+
+			if (enable)
+				blt_next = BLT_L2;
+			else
+				blt_next = BLT_LB;
 		end
 		
 		BLT_L2: // fetch source data from channel C

@@ -364,6 +364,16 @@ jobs:
           vvp tbb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # Line mode honours USEB: B is fetched per pixel and is the texture
+      # (vAmigaTS Agnus/Blitter/line/channels1, channels2).
+      - name: Blitter line mode channel B
+        run: |
+          set -euo pipefail
+          cd rtl/sim/blitter
+          iverilog -g2012 -o tbbc tb_blit_line_channels.sv ../../amiga_clk.v ../../agnus*.v
+          vvp tbbc | tee out_ch.log
+          grep -q "RUN: PASS" out_ch.log
+
       # Every line of a frame reads back its own line number, PAL and NTSC. The
       # other beamcounter benches each pin one feature and none of them sweeps a
       # frame, so a vertical readback that reports the same line forever, or that
