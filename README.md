@@ -116,12 +116,12 @@ Everything here is someone else's work. Where we changed it, the row says so.
 
 | From | What | How it arrived |
 |---|---|---|
-| [MiSTer-devel/Minimig-AGA_MiSTer](https://github.com/MiSTer-devel/Minimig-AGA_MiSTer) | The core itself — the Amiga, and the CD32/CDTV chipset support including Akiko, the CDTV bridge and the host sector transport | Merged; synced through `da7632e` |
+| [MiSTer-devel/Minimig-AGA_MiSTer](https://github.com/MiSTer-devel/Minimig-AGA_MiSTer) | The core itself — the Amiga, and the CD32/CDTV chipset support including Akiko, the CDTV bridge and the host sector transport | Merged; synced through `da7632e`. Since then, cherry-picked with authorship preserved: vanfanel's OCS/ECS LORES off-grid fetch fix for *Absolute Inebriation* (`7f93ed1`, `cfcc0dc`, `3c8a0ed`, merged upstream as `c5ffbf9`), the A2065 Ethernet README section (`8325735`, Nigel Shearman), and `5fea457` as a design merge |
 | [kblood/Minimig-AGA-cd32-cdtv-native-akiko](https://github.com/kblood/Minimig-AGA-cd32-cdtv-native-akiko) | This fork's parent line. Specific fixes taken: the chip-DMA slot guard (`114ab43`), the SPRxDATx write vs shift-register load ordering fix (`e6f8fbe`) | Cherry-picked with authorship preserved |
 | [kblood/Main_MiSTer-cd32-cdtv](https://github.com/kblood/Main_MiSTer-cd32-cdtv) | The CD32/CDTV userspace driver and console OSD this fork's host half grew from | Userspace repo |
 | [Anime0t4ku/Main_MiSTer_Physical_Disc](https://github.com/Anime0t4ku/Main_MiSTer_Physical_Disc) | Physical CD-ROM drive support — `support/physical_disc/` is a verbatim copy, re-extracted on each sync | Userspace repo |
 | [RobSmithDev — MiSTer Floppy](https://mister.robsmithdev.co.uk) | `rtl/MiSTerFloppy*.v`, the real-floppy-drive RTL | Vendored as-is |
-| [MiSTer-devel/Main_MiSTer](https://github.com/MiSTer-devel/Main_MiSTer) | The userspace the host half is a fork of | Userspace repo, synced through `0039110` |
+| [MiSTer-devel/Main_MiSTer](https://github.com/MiSTer-devel/Main_MiSTer) | The userspace the host half is a fork of | Userspace repo, synced through `738cb7a` (partial, see the pins) |
 | [Niklas Ekström — a314](https://github.com/niklasekstrom/a314) | The shared-folder Amiga driver | Inherited from Minimig-AGA |
 
 Two more that shaped the work without contributing code:
