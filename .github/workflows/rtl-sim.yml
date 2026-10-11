@@ -451,6 +451,16 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # ECS super hires colour: register 5 * v and the sub-pixel average
+      # (vAmigaTS Denise/Modes/shres, A500+ photographs).
+      - name: Denise ECS super hires colour
+        run: |
+          set -euo pipefail
+          cd rtl/sim/denise
+          iverilog -g2012 -o tb_shres ../../denise_shres_ecs.v tb_denise_shres_ecs.sv
+          vvp tb_shres | tee out_shres.log
+          grep -q "RUN: PASS" out_shres.log
+
       # Three of the four things ciaa.v's 2005 header lists as not implemented:
       # CIA-A's port B, PB6/PB7 driven by the timers, and CIA-B's serial data
       # register. The fourth is the CNT count-source selects, which stay
