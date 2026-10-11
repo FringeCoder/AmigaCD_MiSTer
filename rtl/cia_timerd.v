@@ -42,7 +42,7 @@ module cia_timerd
   reg    [23:0] alarm;    // 24-bit alarm compare value
   reg    [23:0] tod_latch; // TOD readout latch (for consistent multi-byte reads)
   reg    count_del;       // Delayed count signal for edge detection
-  reg    count_del2;      // Double delayed count signal for interrupt generation
+  reg    match_q;         // TOD equalled the alarm last clk7_en
 
 // TOD Read Latching Mechanism:
 // Reading TOD registers must be done in specific order to ensure consistency
@@ -184,11 +184,26 @@ always @(posedge clk)
 always @(posedge clk)
   if (clk7_en) begin
     count_del <= count & count_ena;
-    count_del2 <= count_del & count_ena;
   end
 
-// alarm interrupt request
-assign irq = (tod[23:0]==alarm[23:0] && (count_del || count_del2)) ? 1'b1 : 1'b0;
+// Alarm interrupt request: once, on the clock TOD becomes equal to the alarm,
+// whatever made it equal -- a count, a TOD write or an alarm write. Comparing
+// only on a count missed the write case, which vAmigaTS todvice/0alarm and
+// 1alarm (ported from VICE) show a real 8520 does fire on; vAmiga's
+// TOD::checkIrq() makes the same edge test after every write and increment.
+// The 8520 carry bug still raises its own alarm through the same edge: when the
+// low 12 bits wrap, TOD reads $xxx000 with the old upper bits for one count.
+// match_q is not save state: on a load it is taken from the loaded registers,
+// so a restore never raises an alarm the saved machine had already seen.
+wire match = (tod[23:0] == alarm[23:0]);
+
+always @(posedge clk)
+  if (ss_ld)
+    match_q <= (ss_ld_data[74:51] == ss_ld_data[50:27]);
+  else if (clk7_en)
+    match_q <= match;
+
+assign irq = match && !match_q;
 
 
 assign ss_state = {tod[23:0], alarm[23:0], tod_latch[23:0], crb7, count_ena, latch_ena};
