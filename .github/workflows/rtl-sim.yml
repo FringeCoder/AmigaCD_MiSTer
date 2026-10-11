@@ -352,9 +352,10 @@ jobs:
           grep -q "RUN: PASS" out.log
 
       # Denise holding->shift copy against the hardware comparator (WinUAE
-      # drawing.cpp `dhv == bplcon1_shift_full`). The CHECKs pin the on-grid
-      # cells, which Minimig gets right in every mode; the off-grid and mid-line
-      # MEASURE rows are T28's characterisation and are printed, not asserted.
+      # drawing.cpp `dhv == bplcon1_shift_full`). Asserted: the on-grid cells in
+      # every mode, every AGA off-grid cell for FMODE 0/1/3, and the mid-line
+      # BPLCON1 cases on OCS and AGA -- T28's fix. OCS off-grid cells are printed
+      # only; their one difference is upstream c5ffbf9's.
       # The bench must be listed BEFORE the RTL: denise_bitplanes.v uses `#1`
       # with no timescale of its own.
       - name: Denise scroll copy (T28)

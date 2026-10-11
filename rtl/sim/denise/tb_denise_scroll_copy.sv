@@ -25,10 +25,17 @@
 //
 // The on-grid rows are the model's own check: Minimig is right on the grid
 // (every Kickstart and every on-grid scroller), so if the reference disagreed
-// there the reference would be wrong, not the core. CHECK lines assert that.
-// MEASURE lines are characterisation and do not fail the run.
+// there the reference would be wrong, not the core. Since the T28 fix the AGA
+// off-grid cells and every mid-line case are CHECKs too. The OCS off-grid cells
+// stay MEASUREs: their one difference is upstream c5ffbf9's, not ours to pin.
 //
-// What it measured on 2026-10-11 (core at upstream c5ffbf9 + this fork):
+// Mutations, run by hand 2026-10-11 (run-mutations.py compiles the bench last,
+// which this bench cannot survive -- see the compile-order note below):
+//   AGA immediate BPLCON1 write gated back to !aga  -> exactly the 3 AGA mid-line CHECKs fail
+//   extra_delay_f12 rounded to hpos[4:3] again       -> exactly 128 AGA FMODE1 CHECKs fail
+//   extra_delay_f3 rounded to hpos[5:4] again        -> exactly 768 AGA FMODE3 CHECKs fail
+//
+// What it measured BEFORE the T28 fix (core at upstream c5ffbf9 + this fork):
 //
 //   * FMODE 0, single fetch, OCS and AGA: Minimig matches the comparator at
 //     every off-grid phase. extra_delay plus the scroller's fetch-mode mask
@@ -49,7 +56,11 @@
 //     moves the OCS rows to exactly those AGA numbers, so this is the same
 //     defect c5ffbf9 fixed for OCS, still present on AGA.
 //
-// Not covered: what is copied when a later fetch lands between the BPL1DAT
+// After the fix: 1366 checks, 0 failed. AGA matches the comparator in every
+// cell; OCS is unchanged.
+//
+// Not covered: hires and superhires (their extra_delay tables are untouched),
+// and what is copied when a later fetch lands between the BPL1DAT
 // write and the copy. A single fetch cannot see that, and it is what c5ffbf9's
 // pending/ownership logic exists for.
 //
@@ -208,8 +219,11 @@ endtask
 integer mismatches;
 integer lat;                                      // the mode's latency, from phase 0 scroll 0
 
+// assert_off: off-grid cells are CHECKs, not MEASUREs. On for every AGA mode
+// since the T28 fix; off for OCS, whose one off-grid difference (phase 8, one
+// pixel early) belongs to upstream c5ffbf9's new path and is not ours to pin.
 task automatic sweep(input string name, input integer is_aga, input [1:0] fm,
-                     input integer unit);
+                     input integer unit, input integer assert_off);
   integer ph, s, d;
   begin
     set_mode(is_aga, fm); G = unit;
@@ -226,10 +240,15 @@ task automatic sweep(input string name, input integer is_aga, input [1:0] fm,
             $display("CHECK FAIL %s on-grid scroll %0d: delta %0d, latency %0d -- reference model wrong",
                      name, s, d, lat);
           end
-        end else if (d != lat) begin
-          mismatches = mismatches + 1;
-          $display("MEASURE %s phase %2d scroll %2d: %0d lores px %s (load hpos %0d)",
-                   name, ph, s, (d - lat) / 4, (d > lat) ? "late" : "early", load_hpos);
+        end else begin
+          if (assert_off) checks = checks + 1;
+          if (d != lat) begin
+            mismatches = mismatches + 1;
+            if (assert_off) fails = fails + 1;
+            $display("%s %s phase %2d scroll %2d: %0d lores px %s (load hpos %0d)",
+                     assert_off ? "CHECK FAIL" : "MEASURE", name, ph, s,
+                     (d - lat) / 4, (d > lat) ? "late" : "early", load_hpos);
+          end
         end
       end
     end
@@ -244,9 +263,11 @@ task automatic midline(input string name, input integer is_aga, input integer s1
     set_mode(is_aga, 2'd0); G = 16;
     trial(0, 0, 0, 0); lat = delta;
     trial(0, s1, s2, after);
-    $display("MEASURE %s mid-line BPLCON1 %0d -> %0d at +%0d ticks: %s%0d lores px",
-             name, s1, s2, after, (delta == lat) ? "matches, " : "off by ",
-             (delta - lat) / 4);
+    checks = checks + 1;
+    if (delta != lat) fails = fails + 1;
+    $display("%s %s mid-line BPLCON1 %0d -> %0d at +%0d ticks: %s%0d lores px",
+             (delta == lat) ? "CHECK ok  " : "CHECK FAIL", name, s1, s2, after,
+             (delta == lat) ? "matches, " : "off by ", (delta - lat) / 4);
   end
 endtask
 
@@ -274,10 +295,10 @@ initial begin
     $display("CHECK FAIL bpldata[1] is %b after the flush, not 0", bpldata[1]);
   end
 
-  sweep("OCS  FMODE0", 0, 2'd0, 16);
-  sweep("AGA  FMODE0", 1, 2'd0, 16);
-  sweep("AGA  FMODE1", 1, 2'd1, 32);
-  sweep("AGA  FMODE3", 1, 2'd3, 64);
+  sweep("OCS  FMODE0", 0, 2'd0, 16, 0);
+  sweep("AGA  FMODE0", 1, 2'd0, 16, 1);
+  sweep("AGA  FMODE1", 1, 2'd1, 32, 1);
+  sweep("AGA  FMODE3", 1, 2'd3, 64, 1);
 
   midline("OCS ", 0, 12, 8, 4);
   midline("OCS ", 0, 12, 4, 2);

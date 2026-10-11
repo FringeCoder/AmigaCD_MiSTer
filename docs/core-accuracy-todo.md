@@ -1272,7 +1272,7 @@ The userspace half is `FringeCoder/AmigaCD`; its
 `docs/hardware-test-plan.md` 1f carries the appearance checks and names the fit
 as the first thing to look at.
 
-## T28 — AGA still has the scroll defects c5ffbf9 fixed for OCS  [SIM] — [MEASURED 2026-10-11, OPEN]
+## T28 — AGA still has the scroll defects c5ffbf9 fixed for OCS  [SIM + FIT] — [FIXED IN LORES 2026-10-11, NOT YET ON HARDWARE]
 
 Upstream `c5ffbf9` "Fix Absolute Inebriation" (vanfanel) moved OCS/ECS LORES
 FMODE=0 onto the hardware's copy rule: BPL1DAT arms a holding->shift copy that
@@ -1281,7 +1281,7 @@ BPLCON1 scroll, and a BPLCON1 write reaches that comparator at once. WinUAE
 does both on every chipset (`drawing.cpp` `expand_bplcon1()` and
 `dhv == bplcon1_shift_full`). The fix is gated `!aga`.
 
-`rtl/sim/denise/tb_denise_scroll_copy.sv` measures Minimig against that rule:
+`rtl/sim/denise/tb_denise_scroll_copy.sv` measures Minimig against that rule. Before the fix:
 
 | | single fetch, off-grid | mid-line BPLCON1 |
 |---|---|---|
@@ -1310,10 +1310,25 @@ is behind EAB's bot wall.
 BPL1DAT write and the copy. A single fetch cannot show it, and it is what
 `c5ffbf9`'s pending/ownership state machine handles.
 
-**The fix shape, not attempted:** extend the comparator copy to AGA and to
-FMODE 1/2/3 in place of `extra_delay_*`, and drop the `!aga` gate on the
-immediate BPLCON1 write. That is new logic on Denise's pixel path, so it needs
-this bench as its guard, a matched-seed fit, and a title on hardware.
+**Fixed, in lores, two changes in `denise_bitplanes.v`:**
+
+1. A BPLCON1 write reaches `pf1h`/`pf2h` at once on AGA as well, with the AGA
+   bits (`[11:10]`/`[15:14]` coarse, `[9:8]`/`[13:12]` fine) in place of OCS's
+   constants. That is upstream `7f93ed1` without its `!aga` gate.
+2. `extra_delay_f12` / `extra_delay_f3` are computed, not tabled, in lores:
+   `(-phase) mod unit` from `hpos[5:2]`. The FMODE 0 table already was exactly
+   that formula; the other two were the same formula with the low phase bits
+   dropped. Hires and superhires keep their tables -- the bench does not cover
+   them, and their mask arithmetic differs.
+
+No comparator was added. The delay line plus the scroller's fetch-mode mask
+already computes the comparator's answer for a single fetch, once the delay is
+exact -- which is what made a two-change fix possible instead of a new path.
+
+The bench now asserts every AGA cell: 1366 checks, 0 failed, and each change
+reverted alone fails exactly its own checks (3 mid-line, 128 FMODE 1, 768
+FMODE 3). **Still owed:** a hardware title (Turrican 2 AGA, stages 3-1 / 3-3 per
+upstream #158), and hires/superhires coverage.
 
 ---
 
