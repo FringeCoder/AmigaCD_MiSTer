@@ -1272,7 +1272,7 @@ The userspace half is `FringeCoder/AmigaCD`; its
 `docs/hardware-test-plan.md` 1f carries the appearance checks and names the fit
 as the first thing to look at.
 
-## T28 — AGA still has the scroll defects c5ffbf9 fixed for OCS  [SIM + FIT] — [FIXED IN LORES 2026-10-11, NOT YET ON HARDWARE]
+## T28 — AGA still has the scroll defects c5ffbf9 fixed for OCS  [SIM + FIT] — [MID-LINE BPLCON1 FIXED 2026-10-11; FMODE 1/3 OFF-GRID OPEN]
 
 Upstream `c5ffbf9` "Fix Absolute Inebriation" (vanfanel) moved OCS/ECS LORES
 FMODE=0 onto the hardware's copy rule: BPL1DAT arms a holding->shift copy that
@@ -1322,19 +1322,26 @@ BPL1DAT write and the copy. A single fetch cannot show it, and it is what
 1. A BPLCON1 write reaches `pf1h`/`pf2h` at once on AGA as well, with the AGA
    bits (`[11:10]`/`[15:14]` coarse, `[9:8]`/`[13:12]` fine) in place of OCS's
    constants. That is upstream `7f93ed1` without its `!aga` gate.
-2. `extra_delay_f12` / `extra_delay_f3` are computed, not tabled, in lores:
-   `(-phase) mod unit` from `hpos[5:2]`. The FMODE 0 table already was exactly
-   that formula; the other two were the same formula with the low phase bits
-   dropped. Hires and superhires keep their tables -- the bench does not cover
-   them, and their mask arithmetic differs.
+2. ~~`extra_delay_f12` / `extra_delay_f3` computed as `(-phase) mod unit`~~ --
+   **reverted the same day.** Measured on hardware against vAmigaTS
+   `Agnus/DDF/AGADDF`: `agaddf1`, `11`, `12`, `15` (all with real A1200 photos)
+   were pixel-identical with and without it, so it fixed nothing visible. The
+   only test it changed, `agaddf16` (FMODE 3, DDFSTRT `$3C`), has no photo, and
+   the suite's README says a real A1200 produces **scrambled** lores output
+   there and quantises DDFSTRT to the fetch unit. The change moved the picture
+   from one non-scrambled answer to another on the strength of WinUAE's rule,
+   which silicon does not support for that case. Copperline differs again
+   (agaddf16 identical to agaddf15; agaddf12 missing the late lores start the
+   A1200 photo shows, which our core has). Reopen with a photo of an off-grid
+   FMODE 1/3 load.
 
 No comparator was added. The delay line plus the scroller's fetch-mode mask
 already computes the comparator's answer for a single fetch, once the delay is
 exact -- which is what made a two-change fix possible instead of a new path.
 
-The bench now asserts every AGA cell: 1366 checks, 0 failed, and each change
-reverted alone fails exactly its own checks (3 mid-line, 128 FMODE 1, 768
-FMODE 3). **Still owed:** a hardware title (Turrican 2 AGA, stages 3-1 / 3-3 per
+The bench asserts the AGA mid-line cases and the AGA FMODE 0 cells; reverting
+change 1 fails exactly the 3 mid-line checks. The FMODE 1/3 off-grid cells are
+printed, not asserted. **Still owed:** a hardware title (Turrican 2 AGA, stages 3-1 / 3-3 per
 upstream #158, though see above), and hires/superhires coverage.
 
 **What remains of the copy model, measured by the `stream` cases:** a plane

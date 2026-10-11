@@ -353,9 +353,9 @@ jobs:
 
       # Denise holding->shift copy against the hardware comparator (WinUAE
       # drawing.cpp `dhv == bplcon1_shift_full`). Asserted: the on-grid cells in
-      # every mode, every AGA off-grid cell for FMODE 0/1/3, and the mid-line
-      # BPLCON1 cases on OCS and AGA -- T28's fix. OCS off-grid cells are printed
-      # only; their one difference is upstream c5ffbf9's.
+      # every mode, AGA FMODE 0 off-grid cells, and the mid-line BPLCON1 cases on
+      # OCS and AGA -- T28's fix. OCS and AGA FMODE 1/3 off-grid cells are
+      # printed only (T28 explains why FMODE 1/3 is not asserted).
       # The bench must be listed BEFORE the RTL: denise_bitplanes.v uses `#1`
       # with no timescale of its own.
       - name: Denise scroll copy (T28)

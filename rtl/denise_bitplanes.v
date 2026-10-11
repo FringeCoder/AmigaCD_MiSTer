@@ -97,40 +97,32 @@ always @(hpos)
     2'b11 : extra_delay_f0 = 8'b00_0100_00;
   endcase
 
-// The hardware copies holding->shift on the first pixel after BPL1DAT whose
-// counter, masked to the fetch unit, equals the scroll (WinUAE drawing.cpp,
-// `dhv == bplcon1_shift_full`). As a delay from the load that is
-// (scroll - phase) mod unit, so extra_delay must be (-phase) mod unit and the
-// scroller's fetch-mode mask does the wrap. The FMODE 0 table above is exactly
-// that. The FMODE 1/2 and 3 tables keyed on hpos[4:3] and hpos[5:4] alone,
-// rounding the phase to 8 and 16 lores pixels, while DDFSTRT moves in 2-cck
-// (4-pixel) steps on ECS/AGA -- so a load between those steps came out up to 12
-// pixels late, or a whole unit early (T28, rtl/sim/denise). In lores the exact
-// value is used; hires and superhires keep the tables until a bench covers them.
-wire       lores = !hires && !shres;
-wire [5:0] load_phase_neg = 6'd0 - {hpos[5:2], 2'b00};
+// FMODE 1/2 and 3 key the load phase on hpos[4:3] and hpos[5:4] only, which
+// rounds it to 8 and 16 lores pixels. Against WinUAE's copy rule that is wrong
+// for a load between those steps (T28, rtl/sim/denise measures it), and an
+// exact (-phase) mod unit was tried here on 2026-10-11 -- and taken back out.
+// On hardware it changed nothing that has a photograph: vAmigaTS AGADDF
+// agaddf1/11/12/15 were pixel-identical either way. The one test it did change,
+// agaddf16 (FMODE 3, DDFSTRT $3C), has no photo, and its README says a real
+// A1200 produces SCRAMBLED lores output there and quantises DDFSTRT to the fetch
+// unit -- neither of which WinUAE's model, nor this exact delay, reproduces. A
+// change that real silicon contradicts and no photo supports stays out until
+// one does. The mid-line BPLCON1 half of T28 below is kept.
+always @(hpos)
+  case (hpos[4:3])
+    2'b00 : extra_delay_f12 = 8'b00_0000_00;
+    2'b01 : extra_delay_f12 = 8'b01_1000_00;
+    2'b10 : extra_delay_f12 = 8'b01_0000_00;
+    2'b11 : extra_delay_f12 = 8'b00_1000_00;
+  endcase
 
-always @(*)
-  if (lores)
-    extra_delay_f12 = {1'b0, load_phase_neg[4:0], 2'b00};
-  else
-    case (hpos[4:3])
-      2'b00 : extra_delay_f12 = 8'b00_0000_00;
-      2'b01 : extra_delay_f12 = 8'b01_1000_00;
-      2'b10 : extra_delay_f12 = 8'b01_0000_00;
-      2'b11 : extra_delay_f12 = 8'b00_1000_00;
-    endcase
-
-always @(*)
-  if (lores)
-    extra_delay_f3 = {load_phase_neg[5:0], 2'b00};
-  else
-    case (hpos[5:4])
-      2'b00 : extra_delay_f3 = 8'b00_0000_00;
-      2'b01 : extra_delay_f3 = 8'b11_0000_00;
-      2'b10 : extra_delay_f3 = 8'b10_0000_00;
-      2'b11 : extra_delay_f3 = 8'b01_0000_00;
-    endcase
+always @(hpos)
+  case (hpos[5:4])
+    2'b00 : extra_delay_f3 = 8'b00_0000_00;
+    2'b01 : extra_delay_f3 = 8'b11_0000_00;
+    2'b10 : extra_delay_f3 = 8'b10_0000_00;
+    2'b11 : extra_delay_f3 = 8'b01_0000_00;
+  endcase
 
 always @ (posedge clk) begin
   if (clk7_en) begin

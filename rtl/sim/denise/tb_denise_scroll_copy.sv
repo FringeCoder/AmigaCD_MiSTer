@@ -25,15 +25,17 @@
 //
 // The on-grid rows are the model's own check: Minimig is right on the grid
 // (every Kickstart and every on-grid scroller), so if the reference disagreed
-// there the reference would be wrong, not the core. Since the T28 fix the AGA
-// off-grid cells and every mid-line case are CHECKs too. The OCS off-grid cells
-// stay MEASUREs: their one difference is upstream c5ffbf9's, not ours to pin.
+// there the reference would be wrong, not the core. AGA FMODE 0 off-grid cells
+// and every mid-line case are CHECKs too. OCS off-grid cells and AGA FMODE 1/3
+// off-grid cells stay MEASUREs (see assert_off).
 //
 // Mutations, run by hand 2026-10-11 (run-mutations.py compiles the bench last,
 // which this bench cannot survive -- see the compile-order note below):
 //   AGA immediate BPLCON1 write gated back to !aga  -> exactly the 3 AGA mid-line CHECKs fail
-//   extra_delay_f12 rounded to hpos[4:3] again       -> exactly 128 AGA FMODE1 CHECKs fail
-//   extra_delay_f3 rounded to hpos[5:4] again        -> exactly 768 AGA FMODE3 CHECKs fail
+//   (the exact FMODE 1/3 delay was reverted the same day: it fixed 128 FMODE 1
+//    and 768 FMODE 3 cells against WinUAE's rule, changed no photographed
+//    vAmigaTS test, and changed agaddf16, whose real A1200 output is
+//    "scrambled" -- so WinUAE's rule is not established there)
 //
 // What it measured BEFORE the T28 fix (core at upstream c5ffbf9 + this fork):
 //
@@ -56,8 +58,8 @@
 //     moves the OCS rows to exactly those AGA numbers, so this is the same
 //     defect c5ffbf9 fixed for OCS, still present on AGA.
 //
-// After the fix: 1366 checks, 0 failed. AGA matches the comparator in every
-// cell; OCS is unchanged.
+// After the fix: AGA mid-line BPLCON1 matches the comparator; AGA FMODE 1/3
+// off-grid cells still differ from it, deliberately (see above).
 //
 // Whole-stream cases (the `stream` task), 2026-10-11, identical on OCS and AGA:
 //   * a plane written after BPL1DAT cannot reach the pending copy, in WinUAE or
@@ -341,9 +343,11 @@ endtask
 integer mismatches;
 integer lat;                                      // the mode's latency, from phase 0 scroll 0
 
-// assert_off: off-grid cells are CHECKs, not MEASUREs. On for every AGA mode
-// since the T28 fix; off for OCS, whose one off-grid difference (phase 8, one
-// pixel early) belongs to upstream c5ffbf9's new path and is not ours to pin.
+// assert_off: off-grid cells are CHECKs, not MEASUREs. On for AGA FMODE 0,
+// where Minimig already matches; off for OCS, whose one off-grid difference
+// (phase 8, one pixel early) belongs to upstream c5ffbf9's new path; and off
+// for AGA FMODE 1/3, where the exact-delay fix was taken back out because real
+// A1200 photos do not support it (see T28).
 task automatic sweep(input string name, input integer is_aga, input [1:0] fm,
                      input integer unit, input integer assert_off);
   integer ph, s, d;
@@ -419,8 +423,8 @@ initial begin
 
   sweep("OCS  FMODE0", 0, 2'd0, 16, 0);
   sweep("AGA  FMODE0", 1, 2'd0, 16, 1);
-  sweep("AGA  FMODE1", 1, 2'd1, 32, 1);
-  sweep("AGA  FMODE3", 1, 2'd3, 64, 1);
+  sweep("AGA  FMODE1", 1, 2'd1, 32, 0);
+  sweep("AGA  FMODE3", 1, 2'd3, 64, 0);
 
   midline("OCS ", 0, 12, 8, 4);
   midline("OCS ", 0, 12, 4, 2);
