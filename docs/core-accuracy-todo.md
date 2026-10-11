@@ -1301,10 +1301,17 @@ ordinary AGA displays look right; a display that steps DDFSTRT by 2 cck to
 scroll cannot keep every step on it under FMODE 3.
 
 **Why it matters here:** CD32 is AGA. Every CD32 title runs on the path this
-fix did not touch. Upstream #158 (Turrican 2 AGA, shoot-'em-up stages, "a copper
-timing issue" per its developer, game bar shifted right) is the shape these
-rows predict, but its mechanism has not been confirmed -- the developer's post
-is behind EAB's bot wall.
+fix did not touch.
+
+**Not Turrican 2 AGA (upstream #158), most likely.** Its developer (muzza, EAB
+thread 112916 p.17, relayed 2026-10-11) traced it with WinUAE's DMA view to the
+copper finishing too late: the status-bar split has one scanline to rewrite 16
+AGA colours and the bitplane registers before the next bitplane fetch, and he
+reproduces the MiSTer picture on WinUAE by inserting one empty copper
+instruction. In 3-3 the copper repositions the parallax sprites mid-line, so a
+late write leaves half an attached sprite in the wrong place. That is Agnus
+copper/DMA slot timing, not this Denise copy. T28 should not be expected to fix
+it.
 
 **Not measured yet:** what gets copied when a later fetch lands between the
 BPL1DAT write and the copy. A single fetch cannot show it, and it is what
@@ -1328,7 +1335,17 @@ exact -- which is what made a two-change fix possible instead of a new path.
 The bench now asserts every AGA cell: 1366 checks, 0 failed, and each change
 reverted alone fails exactly its own checks (3 mid-line, 128 FMODE 1, 768
 FMODE 3). **Still owed:** a hardware title (Turrican 2 AGA, stages 3-1 / 3-3 per
-upstream #158), and hires/superhires coverage.
+upstream #158, though see above), and hires/superhires coverage.
+
+**What remains of the copy model, measured by the `stream` cases:** a plane
+written after BPL1DAT cannot reach the pending copy in either model, so ordinary
+multi-plane displays match. Three cases do not, on OCS and AGA alike: a BPLCON1
+change between copies makes Minimig repeat (raise) or garble (lower) pixels
+already in its delay line, and a second BPL1DAT before the copy shows the first
+word's leading pixels where the hardware drops it. Copper BPLCON1 writes in
+horizontal blanking never see this; mid-line writes and CPU/copper BPL1DAT
+writes do. Fixing it means a real comparator copy instead of the delay line, in
+every mode -- the general form of what c5ffbf9 did narrowly.
 
 ---
 
