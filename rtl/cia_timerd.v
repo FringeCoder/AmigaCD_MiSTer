@@ -152,10 +152,12 @@ always @(posedge clk)
   else if (clk7_en) begin
     if (reset) // synchronous reset
     begin
-      // Set alarm to maximum value (never match by default)
-      alarm[7:0] <= 8'b1111_1111;
-      alarm[15:8] <= 8'b1111_1111;
-      alarm[23:16] <= 8'b1111_1111;
+      // The alarm resets to 0, like the counter. It used to reset to $FFFFFF
+      // ("never match"), but vAmigaTS CIA/TOD/todvice/0alarm writes only the
+      // alarm's high byte and relies on the rest being 0 from reset: an A500
+      // counts two alarms per pass, the core counted none. vAmiga resets it
+      // to 0 too. Reset itself raises nothing -- match_q starts set.
+      alarm[23:0] <= 24'd0;
     end
     else if (wr && crb7)  // CRB7=1 enables writing to ALARM
     begin
@@ -201,7 +203,7 @@ always @(posedge clk)
   if (ss_ld)
     match_q <= (ss_ld_data[74:51] == ss_ld_data[50:27]);
   else if (clk7_en)
-    match_q <= match;
+    match_q <= reset ? 1'b1 : match;
 
 assign irq = match && !match_q;
 

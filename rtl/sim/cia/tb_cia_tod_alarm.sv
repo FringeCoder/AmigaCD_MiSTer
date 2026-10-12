@@ -12,6 +12,9 @@
 // two never fired. vAmiga's TOD::checkIrq() and VICE do the same edge test on
 // every write and every increment.
 //
+// The alarm's reset value matters as well: 0alarm writes only the alarm's
+// high byte, so it counts on the rest being 0 from reset.
+//
 // Runs standalone under Icarus:
 //   iverilog -g2012 -o tb ../../cia_timerd.v tb_cia_tod_alarm.sv
 //   vvp tb
@@ -98,9 +101,24 @@ module tb_cia_tod_alarm;
 	integer pass, i, prev;
 
 	initial begin
+		alarms = 0;
 		repeat (8) tick;
 		reset = 0;
 		repeat (4) tick;
+		check("reset raises no alarm", alarms, 0);
+
+		// 0. 0alarm exactly as written: the alarm's MID and LO are never
+		//    written and must be 0 from reset. TOD has been counting lines
+		//    since reset by the time a program runs (Kickstart's boot), which
+		//    the first loop stands in for; it passes no alarm on the way.
+		for (i = 0; i < 'h300; i = i + 1) pulse;
+		check("counting from reset raises no alarm", alarms, 0);
+		alarms = 0;
+		set_tod(24'h000000);
+		write_reg(CRB, 8'h80);
+		write_reg(HI, 8'h00);
+		for (i = 0; i < 'h1E84; i = i + 1) pulse;
+		check("0alarm from reset", alarms, 2);
 
 		// 1. A count that reaches the alarm fires once.
 		set_tod(24'h000000);
