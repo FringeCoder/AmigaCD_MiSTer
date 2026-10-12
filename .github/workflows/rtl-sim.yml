@@ -380,6 +380,19 @@ jobs:
           python3 check_planelimit.py | tee out_pl.log
           grep -q "RUN: PASS" out_pl.log
 
+      # DDFSTRT == DDFSTOP on ECS/AGA: reached while idle the fetch runs to the
+      # hardware stop, reached while running it stops one unit later (vAmigaTS
+      # Agnus/DDF/DDF/doublematch1, A500 ECS and A1200). Same bench again.
+      - name: DDF double match, idle and running
+        run: |
+          set -euo pipefail
+          cd rtl/sim/copper
+          python3 gen_ddfdouble.py ddfdouble.memh
+          iverilog -g2012 -o tbs tb_copper_slots.sv ../../amiga_clk.v ../../agnus*.v
+          vvp tbs +memh=ddfdouble.memh +out=ddfdouble_sim.txt +all
+          python3 check_ddfdouble.py ddfdouble_sim.txt | tee out_dd.log
+          grep -q "RUN: PASS" out_dd.log
+
       # Every line of a frame reads back its own line number, PAL and NTSC. The
       # other beamcounter benches each pin one feature and none of them sweeps a
       # frame, so a vertical readback that reports the same line forever, or that
