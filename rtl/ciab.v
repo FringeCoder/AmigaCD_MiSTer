@@ -135,22 +135,27 @@ assign data_out = icr_out | tmra_out | tmrb_out | tmrd_out | sdr_out | pb_out | 
 
 // Serial port data register.
 //
-// The shift register is clocked by timer A underflow, not by the CNT pin.
-// WinUAE cia.cpp does the shift inside the timer A underflow path, gated on
+// Output mode: the shift register is clocked by timer A underflow. WinUAE
+// cia.cpp does the shift inside the timer A underflow path, gated on
 // (cr & (CR_SPMODE | CR_RUNMODE)) == CR_SPMODE -- in output mode the CIA
-// GENERATES CNT rather than receiving it, so nothing external is needed. That
-// is what makes this implementable here: CIA-B's CNT pin goes to the expansion
-// bus and is unconnected on a stock Amiga, so input mode has no source on real
-// hardware either and an input-mode read returns whatever was last shifted in,
-// which is nothing.
+// GENERATES CNT rather than receiving it, so nothing external is needed.
+//
+// Input mode: bits are taken from the SP pin on each rising edge of the CNT
+// pin, MSB first, and the eighth one loads SDR and raises the SP interrupt. On
+// the A500 CIA-B's SP and CNT pins are wired to the parallel port's BUSY and
+// POUT lines, which are also port A bits 0 and 1 -- so a program that makes
+// PA0/PA1 outputs can clock bytes into its own SDR, and vAmigaTS CIA/CIA/ser/ser1
+// and ser2 do exactly that (an A500 reads back $A5 from ser1's pulse train).
+// With PA0/PA1 left as inputs the lines idle high and nothing shifts. Only the
+// serial port takes CNT from here; the timers' CNT count source stays
+// unimplemented on purpose (see the rtl-sim.yml guard step).
 //
 // A write while a shift is running is held and starts when the current byte
 // finishes, again following WinUAE's sdr_load.
 //
-// sdr_buf, sdr_cnt and sdr_load are deliberately NOT in ss_state -- see the
-// note in rtl/ss_state.vh. A save taken mid-transmission restores with the
-// shifter idle and that byte's SP interrupt lost. That is strictly better than
-// what this did before, which was to never transmit and never interrupt at all.
+// sdr_buf, sdr_cnt, sdr_load and the input shifter are deliberately NOT in
+// ss_state -- see the note in rtl/ss_state.vh. A save taken mid-byte restores
+// with the shifter idle and that byte's SP interrupt lost.
 always @(posedge clk)
   if (ss_ld)
     sdr_latch[7:0] <= ss_ld_data[39:32];
@@ -159,7 +164,26 @@ always @(posedge clk)
       sdr_latch[7:0] <= 8'h00;
     else if (wr & sdr)
       sdr_latch[7:0] <= data_in[7:0];
+    else if (sdr_in_done)
+      sdr_latch[7:0] <= sdr_in_byte;
   end
+
+// Port A state, declared here because the serial port reads it.
+reg [5:0] porta_in2;        // Synchronized input data
+reg [7:0] regporta;         // Port A output register
+reg [7:0] ddrporta;         // Port A direction register
+
+// The SP and CNT pins as the outside world drives them: PA0 (BUSY) and PA1
+// (POUT), from the port A latch when DDRA makes them outputs, otherwise from
+// the parallel port.
+wire      pin_sp  = ddrporta[0] ? regporta[0] : porta_in2[0];
+wire      pin_cnt = ddrporta[1] ? regporta[1] : porta_in2[1];
+reg       pin_cnt_q;
+reg [6:0] sdr_in_buf;   // input mode: bits received so far
+reg [2:0] sdr_in_cnt;   // input mode: how many
+wire      cnt_rise    = pin_cnt && !pin_cnt_q;
+wire      sdr_in_done = clk7_en && !reset && !spmode && cnt_rise && sdr_in_cnt == 3'd7;
+wire [7:0] sdr_in_byte = {sdr_in_buf[6:0], pin_sp};
 
 reg [7:0] sdr_buf;    // the byte being shifted out
 reg [3:0] sdr_cnt;    // bits left to shift, 0 = idle
@@ -169,17 +193,23 @@ reg       ser_int;    // SP interrupt: a byte has finished
 always @(posedge clk)
   if (clk7_en) begin
     ser_int <= 1'b0;
+    pin_cnt_q <= pin_cnt;
+    if (reset || spmode) sdr_in_cnt <= 3'd0;
     if (reset) begin
       sdr_buf  <= 8'h00;
       sdr_cnt  <= 4'd0;
       sdr_load <= 1'b0;
     end
     else if (!spmode) begin
-      // Input mode. Nothing drives CNT on this machine, so the shifter simply
-      // does not run; drop any transmission in progress rather than leaving it
-      // half done across a mode change.
+      // Input mode: drop any transmission in progress rather than leaving it
+      // half done across a mode change, and shift in from the SP/CNT pins.
       sdr_cnt  <= 4'd0;
       sdr_load <= 1'b0;
+      if (cnt_rise) begin
+        sdr_in_buf <= {sdr_in_buf[5:0], pin_sp};
+        sdr_in_cnt <= sdr_in_cnt + 3'd1;   // wraps to 0 after the eighth bit
+        if (sdr_in_cnt == 3'd7) ser_int <= 1'b1;
+      end
     end
     else begin
       if (wr & sdr) begin
@@ -211,9 +241,7 @@ assign sdr_out = (!wr && sdr) ? sdr_latch[7:0] : 8'h00;
 //----------------------------------------------------------------------------------
 // Port A - Serial port control signals
 //----------------------------------------------------------------------------------
-reg [5:0] porta_in2;        // Synchronized input data
-reg [7:0] regporta;         // Port A output register
-reg [7:0] ddrporta;         // Port A direction register
+// (porta_in2, regporta and ddrporta are declared above, with the serial port.)
 
 // Synchronize external inputs
 always @(posedge clk)
