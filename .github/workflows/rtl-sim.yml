@@ -351,6 +351,19 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # Denise holding->shift copy against the hardware comparator (WinUAE
+      # drawing.cpp `dhv == bplcon1_shift_full`). The CHECKs pin the on-grid
+      # cells, which Minimig gets right in every mode; the off-grid and mid-line
+      # MEASURE rows are T28's characterisation and are printed, not asserted.
+      # The bench must be listed BEFORE the RTL: denise_bitplanes.v uses `#1`
+      # with no timescale of its own.
+      - name: Denise scroll copy (T28)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/denise
+          iverilog -g2012 -o tb tb_denise_scroll_copy.sv ../../amiga_clk.v ../../denise_bitplane_shifter.v ../../denise_bitplanes.v
+          vvp tb | tee out.log
+
       # A sprite pair is attached by the odd sprite's AT bit only (vAmigaTS
       # Denise/Sprites/attached/attached2, attached5; A500 OCS and ECS photos).
       - name: Sprite attach by the odd AT bit only

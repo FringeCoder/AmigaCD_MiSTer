@@ -1272,6 +1272,49 @@ The userspace half is `FringeCoder/AmigaCD`; its
 `docs/hardware-test-plan.md` 1f carries the appearance checks and names the fit
 as the first thing to look at.
 
+## T28 — AGA still has the scroll defects c5ffbf9 fixed for OCS  [SIM] — [MEASURED 2026-10-11, OPEN]
+
+Upstream `c5ffbf9` "Fix Absolute Inebriation" (vanfanel) moved OCS/ECS LORES
+FMODE=0 onto the hardware's copy rule: BPL1DAT arms a holding->shift copy that
+fires when the horizontal counter, masked to the fetch unit, equals the
+BPLCON1 scroll, and a BPLCON1 write reaches that comparator at once. WinUAE
+does both on every chipset (`drawing.cpp` `expand_bplcon1()` and
+`dhv == bplcon1_shift_full`). The fix is gated `!aga`.
+
+`rtl/sim/denise/tb_denise_scroll_copy.sv` measures Minimig against that rule:
+
+| | single fetch, off-grid | mid-line BPLCON1 |
+|---|---|---|
+| OCS FMODE 0 | matches, except phase 8 one pixel early (the new path's shorter pipeline) | matches |
+| AGA FMODE 0 | matches | **+4 / +8 / -8 px**, the pre-fix OCS numbers |
+| AGA FMODE 1/2 | **128 of 224 cells off**: +4 px, or -28 px when scroll < phase | not measured |
+| AGA FMODE 3 | **768 of 960 cells off**: +4/+8/+12 px, or -60/-56/-52 px | not measured |
+
+The FMODE 1/2/3 rows have one cause: `extra_delay_f12` and `extra_delay_f3`
+key on `hpos[4:3]` and `hpos[5:4]`, rounding the load phase to 8 and 16 lores
+pixels, while DDFSTRT moves in 2-cck (4-pixel) steps on ECS/AGA, in
+`agnus_bitplanedma.v` and in WinUAE (`bprun_start` at the DDFSTRT match, not
+aligned). Which DDFSTRT values land off the grid depends on the fixed
+Agnus-to-Denise offset, which the bench does not model. The standard values
+($38, $30, $28, $18) are all multiples of 8 cck and presumably sit on it, since
+ordinary AGA displays look right; a display that steps DDFSTRT by 2 cck to
+scroll cannot keep every step on it under FMODE 3.
+
+**Why it matters here:** CD32 is AGA. Every CD32 title runs on the path this
+fix did not touch. Upstream #158 (Turrican 2 AGA, shoot-'em-up stages, "a copper
+timing issue" per its developer, game bar shifted right) is the shape these
+rows predict, but its mechanism has not been confirmed -- the developer's post
+is behind EAB's bot wall.
+
+**Not measured yet:** what gets copied when a later fetch lands between the
+BPL1DAT write and the copy. A single fetch cannot show it, and it is what
+`c5ffbf9`'s pending/ownership state machine handles.
+
+**The fix shape, not attempted:** extend the comparator copy to AGA and to
+FMODE 1/2/3 in place of `extra_delay_*`, and drop the `!aga` gate on the
+immediate BPLCON1 write. That is new logic on Denise's pixel path, so it needs
+this bench as its guard, a matched-seed fit, and a title on hardware.
+
 ---
 
 ## What is not on this list
