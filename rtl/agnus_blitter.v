@@ -853,7 +853,7 @@ always @(*)
 			dma_req = usec;
 			
 			if (enable)
-				blt_next = BLT_L3;
+				blt_next = line_w1_end ? BLT_IDLE : BLT_L3;
 			else
 				blt_next = BLT_L2;
 		end
@@ -949,9 +949,20 @@ always @(posedge clk)
   		store_result <= enable && next_word;
   end
 
+// A line blit counts BLTSIZE words like any other, and spends two of them per
+// pixel (L2 and L4). With the usual width of 2 the row -- and with it the
+// height count -- always ends in L4, which is the only place the end used to be
+// tested. With width 1 every word ends a row, so a blit whose last word lands
+// in L2 (any odd height) stepped past last_line there, L4 never saw it, and the
+// 15-bit counter wrapped: ~32767 pixels of busy instead of a few. Real
+// hardware stops (vAmigaTS irqtim1l, irqtim11l1, irqtim15l1, timing11l1 on an
+// A500; WinUAE counts width-1 line blits as h words). End in L2 when the last
+// word is there.
+wire line_w1_end = (blt_state==BLT_L2) && (width[10:0]==11'd1) && last_line;
+
 // blitter busy flag is cleared immediately after last source data is fetched (if D channel is not enabled) or the last but one result is stored
 // signal 'done' is used to clear the 'busy' and 'start' flags
-assign done = (blt_state==BLT_C && !used || blt_state==BLT_D) && last_word && last_line || blt_state==BLT_L4 && last_line ? enable : 1'b0;
+assign done = (blt_state==BLT_C && !used || blt_state==BLT_D) && last_word && last_line || blt_state==BLT_L4 && last_line || line_w1_end ? enable : 1'b0;
 
 always @(posedge clk)
   if (clk7_en) begin
