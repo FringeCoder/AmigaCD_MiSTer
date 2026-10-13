@@ -530,6 +530,16 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # CIA-B serial input clocked from the SP/CNT pins, which are the parallel
+      # port's BUSY/POUT and port A bits 0/1 (vAmigaTS CIA/CIA/ser/ser1, ser2).
+      - name: CIA-B serial input from BUSY/POUT
+        run: |
+          set -euo pipefail
+          cd rtl/sim/cia
+          iverilog -g2012 -o tb_ser ../../ciab.v ../../cia_timera.v ../../cia_timerb.v ../../cia_int.v ../../cia_timerd.v tb_ciab_serial_in.sv
+          vvp tb_ser | tee out_ser.log
+          grep -q "RUN: PASS" out_ser.log
+
       # The TOD alarm fires on the clock TOD becomes equal to the alarm, whether a
       # count or a write made it equal (vAmigaTS todvice/0alarm and 1alarm).
       - name: CIA TOD alarm on write and on count
