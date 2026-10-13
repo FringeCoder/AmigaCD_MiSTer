@@ -351,6 +351,16 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # A sprite pair is attached by the odd sprite's AT bit only (vAmigaTS
+      # Denise/Sprites/attached/attached2, attached5; A500 OCS and ECS photos).
+      - name: Sprite attach by the odd AT bit only
+        run: |
+          set -euo pipefail
+          cd rtl/sim/sprites
+          iverilog -g2012 -o tb_att ../../denise_sprites.v ../../denise_sprites_shifter.v tb_sprite_attach.sv
+          vvp tb_att | tee out_att.log
+          grep -q "RUN: PASS" out_att.log
+
       # A line blit with a BLTSIZE width of 1 must finish. The blitter spends two
       # words per line pixel; with width 1 the last word can land in L2, where the
       # end was never tested, and the height counter wrapped -- ~32767 pixels of
