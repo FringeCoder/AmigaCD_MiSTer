@@ -504,6 +504,16 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # The TOD alarm fires on the clock TOD becomes equal to the alarm, whether a
+      # count or a write made it equal (vAmigaTS todvice/0alarm and 1alarm).
+      - name: CIA TOD alarm on write and on count
+        run: |
+          set -euo pipefail
+          cd rtl/sim/cia
+          iverilog -g2012 -o tb_tod tb_cia_tod_alarm.sv ../../cia_timerd.v
+          vvp tb_tod | tee out_tod.log
+          grep -q "RUN: PASS" out_tod.log
+
       # The drive _READY line. Covers the fix (a spinning empty drive must not
       # report ready) and, just as importantly, the 2008 behaviour it must not
       # break: _READY still answers _SEL with the motor stopped.
