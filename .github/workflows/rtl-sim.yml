@@ -364,6 +364,16 @@ jobs:
           iverilog -g2012 -o tb tb_denise_scroll_copy.sv ../../amiga_clk.v ../../denise_bitplane_shifter.v ../../denise_bitplanes.v
           vvp tb | tee out.log
 
+      # A sprite pair is attached by the odd sprite's AT bit only (vAmigaTS
+      # Denise/Sprites/attached/attached2, attached5; A500 OCS and ECS photos).
+      - name: Sprite attach by the odd AT bit only
+        run: |
+          set -euo pipefail
+          cd rtl/sim/sprites
+          iverilog -g2012 -o tb_att ../../denise_sprites.v ../../denise_sprites_shifter.v tb_sprite_attach.sv
+          vvp tb_att | tee out_att.log
+          grep -q "RUN: PASS" out_att.log
+
       # A line blit with a BLTSIZE width of 1 must finish. The blitter spends two
       # words per line pixel; with width 1 the last word can land in L2, where the
       # end was never tested, and the height counter wrapped -- ~32767 pixels of
@@ -376,6 +386,16 @@ jobs:
           iverilog -g2012 -o tbb tb_blit_line.sv ../../amiga_clk.v ../../agnus*.v
           vvp tbb | tee out.log
           grep -q "RUN: PASS" out.log
+
+      # Line mode honours USEB: B is fetched per pixel and is the texture
+      # (vAmigaTS Agnus/Blitter/line/channels1, channels2).
+      - name: Blitter line mode channel B
+        run: |
+          set -euo pipefail
+          cd rtl/sim/blitter
+          iverilog -g2012 -o tbbc tb_blit_line_channels.sv ../../amiga_clk.v ../../agnus*.v
+          vvp tbbc | tee out_ch.log
+          grep -q "RUN: PASS" out_ch.log
 
       # Who owns each DMA slot on a copper-busy line, in every bitplane fetch
       # mode, against Copperline's cycle trace of the same copper list. Added
@@ -405,6 +425,19 @@ jobs:
           vvp tbs +memh=planelimit.memh +out=planelimit_sim.txt +all
           python3 check_planelimit.py | tee out_pl.log
           grep -q "RUN: PASS" out_pl.log
+
+      # DDFSTRT == DDFSTOP on ECS/AGA: reached while idle the fetch runs to the
+      # hardware stop, reached while running it stops one unit later (vAmigaTS
+      # Agnus/DDF/DDF/doublematch1, A500 ECS and A1200). Same bench again.
+      - name: DDF double match, idle and running
+        run: |
+          set -euo pipefail
+          cd rtl/sim/copper
+          python3 gen_ddfdouble.py ddfdouble.memh
+          iverilog -g2012 -o tbs tb_copper_slots.sv ../../amiga_clk.v ../../agnus*.v
+          vvp tbs +memh=ddfdouble.memh +out=ddfdouble_sim.txt +all
+          python3 check_ddfdouble.py ddfdouble_sim.txt | tee out_dd.log
+          grep -q "RUN: PASS" out_dd.log
 
       # Every line of a frame reads back its own line number, PAL and NTSC. The
       # other beamcounter benches each pin one feature and none of them sweeps a
@@ -506,6 +539,16 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # ECS super hires colour: register 5 * v and the sub-pixel average
+      # (vAmigaTS Denise/Modes/shres, A500+ photographs).
+      - name: Denise ECS super hires colour
+        run: |
+          set -euo pipefail
+          cd rtl/sim/denise
+          iverilog -g2012 -o tb_shres ../../denise_shres_ecs.v tb_denise_shres_ecs.sv
+          vvp tb_shres | tee out_shres.log
+          grep -q "RUN: PASS" out_shres.log
+
       # OCS/ECS dual playfield: an invalid priority code (PFxP > 4) draws that
       # playfield in COLOR00 but keeps it opaque. Every pixel x BPLCON2 value
       # against vAmiga's translateDPF (vAmigaTS Denise/Registers/BPLCON2/dualpf*).
@@ -529,6 +572,16 @@ jobs:
           iverilog -g2012 -o tb             ../../ciaa.v ../../ciab.v ../../cia_timera.v ../../cia_timerb.v             ../../cia_int.v ../../cia_timerd.v tb_cia_leftovers.sv
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
+
+      # CIA-B serial input clocked from the SP/CNT pins, which are the parallel
+      # port's BUSY/POUT and port A bits 0/1 (vAmigaTS CIA/CIA/ser/ser1, ser2).
+      - name: CIA-B serial input from BUSY/POUT
+        run: |
+          set -euo pipefail
+          cd rtl/sim/cia
+          iverilog -g2012 -o tb_ser ../../ciab.v ../../cia_timera.v ../../cia_timerb.v ../../cia_int.v ../../cia_timerd.v tb_ciab_serial_in.sv
+          vvp tb_ser | tee out_ser.log
+          grep -q "RUN: PASS" out_ser.log
 
       # The TOD alarm fires on the clock TOD becomes equal to the alarm, whether a
       # count or a write made it equal (vAmigaTS todvice/0alarm and 1alarm).
