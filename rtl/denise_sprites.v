@@ -276,11 +276,17 @@ assign nsprite[7] = (sprena && sprdat7[1:0]!=2'b00) ? 1'b1 : 1'b0;//if any non-z
 //--------------------------------------------------------------------------------------
 
 // sprite video priority logic and color decoder
+//
+// A pair is attached by the ODD sprite's AT bit alone, on every chipset. The
+// even sprite's AT bit, which this used to honour on OCS/ECS since 2015 as an
+// "ECS feature", does nothing: vAmigaTS Denise/Sprites/attached/attached2 and
+// attached5 set it on even sprites only, and real A500s (OCS and ECS) show
+// those pairs unattached. tb_sprite_attach.sv covers it.
 always @(*)
 begin
   if (nsprite[1:0]!=2'b00) // sprites 0,1 non transparant ?
   begin
-    if (attach1 || (!aga && attach0)) // sprites are attached -> 15 colors + transparant
+    if (attach1) // sprites are attached -> 15 colors + transparant
       sprdata[7:0] = {osprm,sprdat1[1:0],sprdat0[1:0]};
        else if (nsprite[0]) // output lowered number sprite
       sprdata[7:0] = {esprm,2'b00,sprdat0[1:0]};
@@ -289,7 +295,7 @@ begin
   end
   else if (nsprite[3:2]!=2'b00) // sprites 2,3 non transparant ?
   begin
-    if (attach3 || (!aga && attach2)) // sprites are attached -> 15 colors + transparant
+    if (attach3) // sprites are attached -> 15 colors + transparant
       sprdata[7:0] = {osprm,sprdat3[1:0],sprdat2[1:0]};
        else if (nsprite[2]) // output lowered number sprite
       sprdata[7:0] = {esprm,2'b01,sprdat2[1:0]};
@@ -298,7 +304,7 @@ begin
   end
   else if (nsprite[5:4]!=2'b00) // sprites 4,5 non transparant ?
   begin
-    if (attach5 || (!aga && attach4)) // sprites are attached -> 15 colors + transparant
+    if (attach5) // sprites are attached -> 15 colors + transparant
       sprdata[7:0] = {osprm,sprdat5[1:0],sprdat4[1:0]};
        else if (nsprite[4]) // output lowered number sprite
       sprdata[7:0] = {esprm,2'b10,sprdat4[1:0]};
@@ -307,7 +313,7 @@ begin
   end
   else if (nsprite[7:6]!=2'b00) // sprites 6,7 non transparant ?
   begin
-    if (attach7 || (!aga && attach6)) // sprites are attached -> 15 colors + transparant
+    if (attach7) // sprites are attached -> 15 colors + transparant
       sprdata[7:0] = {osprm,sprdat7[1:0],sprdat6[1:0]};
        else if (nsprite[6]) // output lowered number sprite
       sprdata[7:0] = {esprm,2'b11,sprdat6[1:0]};

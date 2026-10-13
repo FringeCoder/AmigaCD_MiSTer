@@ -130,6 +130,7 @@ parameter BLT_L1   = 5'b11001;
 parameter BLT_L2   = 5'b11011;
 parameter BLT_L3   = 5'b11010;
 parameter BLT_L4   = 5'b11000;
+parameter BLT_LB   = 5'b11100;   // line mode: channel B fetch, only with USEB
 parameter BLT_FROZEN = 5'b11111;
 
 //local signals
@@ -835,9 +836,34 @@ always @(*)
 			dma_req = 0; // internal cycle - no DMA access
 
 			if (enable)
-				blt_next = BLT_L2;
+				blt_next = useb ? BLT_LB : BLT_L2;
 			else
 				blt_next = BLT_L1;
+		end
+
+		// Line mode with USEB: channel B is fetched for every pixel and the word
+		// fetched -- not what the CPU left in BLTDAT -- is what the texture bit is
+		// taken from, with BLTBPT advancing by BLTBMOD. A line drawn with B enabled
+		// over zeroed memory therefore comes out blank. That is vAmiga's FETCH_B in
+		// its B-enabled line programs and what an A500 shows for vAmigaTS
+		// Agnus/Blitter/line/channels1 and channels2; the core used to ignore USEB
+		// in line mode and drew every one of those lines.
+		BLT_LB:
+		begin
+			chsel = CHB;
+			ptrsel = CHB;
+			modsel = CHB;
+			enaptr = enable;
+			incptr = 0;
+			decptr = 0;
+			addmod = 1;
+			submod = 0;
+			dma_req = 1;
+
+			if (enable)
+				blt_next = BLT_L2;
+			else
+				blt_next = BLT_LB;
 		end
 		
 		BLT_L2: // fetch source data from channel C
@@ -853,7 +879,7 @@ always @(*)
 			dma_req = usec;
 			
 			if (enable)
-				blt_next = BLT_L3;
+				blt_next = line_w1_end ? BLT_IDLE : BLT_L3;
 			else
 				blt_next = BLT_L2;
 		end
@@ -949,9 +975,20 @@ always @(posedge clk)
   		store_result <= enable && next_word;
   end
 
+// A line blit counts BLTSIZE words like any other, and spends two of them per
+// pixel (L2 and L4). With the usual width of 2 the row -- and with it the
+// height count -- always ends in L4, which is the only place the end used to be
+// tested. With width 1 every word ends a row, so a blit whose last word lands
+// in L2 (any odd height) stepped past last_line there, L4 never saw it, and the
+// 15-bit counter wrapped: ~32767 pixels of busy instead of a few. Real
+// hardware stops (vAmigaTS irqtim1l, irqtim11l1, irqtim15l1, timing11l1 on an
+// A500; WinUAE counts width-1 line blits as h words). End in L2 when the last
+// word is there.
+wire line_w1_end = (blt_state==BLT_L2) && (width[10:0]==11'd1) && last_line;
+
 // blitter busy flag is cleared immediately after last source data is fetched (if D channel is not enabled) or the last but one result is stored
 // signal 'done' is used to clear the 'busy' and 'start' flags
-assign done = (blt_state==BLT_C && !used || blt_state==BLT_D) && last_word && last_line || blt_state==BLT_L4 && last_line ? enable : 1'b0;
+assign done = (blt_state==BLT_C && !used || blt_state==BLT_D) && last_word && last_line || blt_state==BLT_L4 && last_line || line_w1_end ? enable : 1'b0;
 
 always @(posedge clk)
   if (clk7_en) begin

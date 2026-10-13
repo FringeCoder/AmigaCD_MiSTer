@@ -323,7 +323,24 @@ end
 
 assign shres = ecs & bplcon0_delayed[5];
 assign hires = bplcon0_delayed[4];
-assign bpu = aga ? bplcon0_delayed[3:0] : {1'b0, &bplcon0_delayed[2:0] ? 3'd4 : bplcon0_delayed[2:0]};
+// Planes the fetch mode and resolution can carry: FMODE 0 lores 8, hires 4,
+// superhires 2; FMODE 1/2 8, 8, 4; FMODE 3 8 throughout. Asking for MORE than
+// that does not fetch the first N -- it fetches nothing: Agnus disables bitplane
+// DMA. vAmigaTS Agnus/DDF/AGADDF/agaddf1-14 show it on a real A1200 (the plane
+// rows past the limit are black), and WinUAE does the same (custom.cpp,
+// real_bitplane_number, citing the Sanity WOC demo). Before this the core fetched
+// the first 4 / 2 planes and drew them.
+//
+// The OCS/ECS quirk that 7 planes in lores fetch as 4 is applied after the limit,
+// as WinUAE does: 7 in hires exceeds the limit and fetches nothing.
+wire [ 3: 0] bpu_raw = aga ? bplcon0_delayed[3:0] : {1'b0, bplcon0_delayed[2:0]};
+wire [ 3: 0] bpu_max = (bp_fmode3)              ? 4'd8 :
+                       (bp_fmode12 && shres)    ? 4'd4 :
+                       (bp_fmode12)             ? 4'd8 :
+                       (shres)                  ? 4'd2 :
+                       (hires)                  ? 4'd4 : 4'd8;
+assign bpu = (bpu_raw > bpu_max)                   ? 4'd0 :
+             (!aga && !hires && !shres && bpu_raw == 4'd7) ? 4'd4 : bpu_raw;
 
 // fmode
 always @ (posedge clk) begin
@@ -402,7 +419,13 @@ end
 // softena : software display data fetch window
 
 // AMR - OCS and ECS/AGA behave differently when DDFSTRT == DDFSTOP.
-// On OCS the fetch runs until hard_stop. On ECS/AGA it stops after one complete fetch cycle.
+// On OCS the fetch runs until hard_stop. On ECS/AGA it stops after one complete
+// fetch cycle -- but only when the fetch was ALREADY running as the double match
+// arrived (the Sanity: Roots 2.0 case this was written for). Reached while idle,
+// the start wins and the stop is ignored: the fetch runs to the hardware stop.
+// vAmigaTS Agnus/DDF/DDF/doublematch1 shows both on an A500 ECS and an A1200,
+// and vAmiga's ECS sequencer does the same (SIG_BPHSTART | SIG_BPHSTOP starts
+// when !bprun, stops when bprun). check_ddfdouble.py covers both.
 reg softena_off;
 
 always @ (posedge clk) begin
@@ -412,7 +435,7 @@ always @ (posedge clk) begin
         softena <= #1 1'b1;
       else if (softena_off || (soft_stop || !ecs && hard_stop))
         softena <= #1 1'b0;
-      softena_off<=soft_stop && soft_start && ecs;  // AMR - ECS / AGA: DDFSTRT==DDFSTOP, disable fetch after one fetch cycle.
+      softena_off<=soft_stop && soft_start && ecs && softena;  // ECS / AGA: DDFSTRT==DDFSTOP while running, disable fetch after one fetch cycle.
     end
   end
 end
