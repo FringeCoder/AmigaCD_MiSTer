@@ -436,6 +436,11 @@ denise_colortable clut0
 );
 
 // instantiate HAM (hold and modify) module
+// On an OCS/ECS dual playfield line HAM decodes the playfield-translated colour
+// index -- the control bits still come from planes 5 and 6 -- as vAmiga's
+// colorizeHAM does (index from the translated buffer, control from the raw
+// one). vAmigaTS Denise/Registers/BPLCON2/dualpf1-4 run DPF+HAM.
+wire [7:0] ham_select = (dpf && !aga) ? {bpldata[8:5], plfdata[3:0]} : bpldata;
 wire ham8 = ham && (l_bpu == 4'd8);
 wire ham_sel = ham;// && ((l_bpu == 4'd6) || (l_bpu == 4'd8));
 
@@ -445,7 +450,7 @@ denise_hamgenerator ham0
   .clk7_en(clk7_en),
   .reg_address_in(reg_address_in),
   .data_in(data_in[11:0]),
-  .select(bpldata),
+  .select(ham_select),
   .bplxor(bplxor),
   .bank(bank),
   .loct(loct),

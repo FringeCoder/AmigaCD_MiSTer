@@ -361,6 +361,19 @@ jobs:
           vvp tb_att | tee out_att.log
           grep -q "RUN: PASS" out_att.log
 
+      # A line blit with a BLTSIZE width of 1 must finish. The blitter spends two
+      # words per line pixel; with width 1 the last word can land in L2, where the
+      # end was never tested, and the height counter wrapped -- ~32767 pixels of
+      # busy (vAmigaTS irqtim1l/11l1/15l1, timing11l1 on an A500). Width 2 is
+      # printed as the reference.
+      - name: Blitter line mode, BLTSIZE width 1
+        run: |
+          set -euo pipefail
+          cd rtl/sim/blitter
+          iverilog -g2012 -o tbb tb_blit_line.sv ../../amiga_clk.v ../../agnus*.v
+          vvp tbb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # Who owns each DMA slot on a copper-busy line, in every bitplane fetch
       # mode, against Copperline's cycle trace of the same copper list. Added
       # after the Turrican 2 AGA report (copper finishing a split late): a copper
@@ -490,6 +503,18 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # OCS/ECS dual playfield: an invalid priority code (PFxP > 4) draws that
+      # playfield in COLOR00 but keeps it opaque. Every pixel x BPLCON2 value
+      # against vAmiga's translateDPF (vAmigaTS Denise/Registers/BPLCON2/dualpf*).
+      - name: Denise dual playfield invalid priority
+        run: |
+          set -euo pipefail
+          cd rtl/sim/denise
+          iverilog -g2012 -o tb_dpf ../../denise_playfields.v tb_dpf_priority.sv
+          vvp tb_dpf > dpf.txt
+          python3 check_dpf_priority.py dpf.txt | tee out_dpf.log
+          grep -q "RUN: PASS" out_dpf.log
+
       # Three of the four things ciaa.v's 2005 header lists as not implemented:
       # CIA-A's port B, PB6/PB7 driven by the timers, and CIA-B's serial data
       # register. The fourth is the CNT count-source selects, which stay
@@ -501,6 +526,16 @@ jobs:
           iverilog -g2012 -o tb             ../../ciaa.v ../../ciab.v ../../cia_timera.v ../../cia_timerb.v             ../../cia_int.v ../../cia_timerd.v tb_cia_leftovers.sv
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
+
+      # The TOD alarm fires on the clock TOD becomes equal to the alarm, whether a
+      # count or a write made it equal (vAmigaTS todvice/0alarm and 1alarm).
+      - name: CIA TOD alarm on write and on count
+        run: |
+          set -euo pipefail
+          cd rtl/sim/cia
+          iverilog -g2012 -o tb_tod tb_cia_tod_alarm.sv ../../cia_timerd.v
+          vvp tb_tod | tee out_tod.log
+          grep -q "RUN: PASS" out_tod.log
 
       # The drive _READY line. Covers the fix (a spinning empty drive must not
       # report ready) and, just as importantly, the 2008 behaviour it must not
