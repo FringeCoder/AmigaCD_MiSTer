@@ -104,6 +104,11 @@ task automatic cpu_wr(input [8:0] reg_byte_addr, input [15:0] d);
 endtask
 
 integer i, f, frames = 0;
+// +memh=<file> picks the chip RAM image, +out=<file> the log, +all logs every
+// line $3E-$C0 instead of the five copslots test lines. Defaults are the
+// copper-slot comparison's.
+reg [8*256-1:0] memh_name, out_name;
+reg log_all = 0;
 reg logging = 0;
 reg [10:0] prev_vpos = 0;
 always @(posedge clk) if (clk7_en) begin
@@ -113,17 +118,21 @@ always @(posedge clk) if (clk7_en) begin
     // each test line and the one after it: Copperline's hpos is offset from
     // ours, so the end of a test line in its numbering is the start of the
     // next line in ours.
-    if (dut.vpos == 11'h40 || dut.vpos == 11'h54 || dut.vpos == 11'h68 ||
-        dut.vpos == 11'h7c || dut.vpos == 11'h90 ||
-        dut.vpos == 11'h41 || dut.vpos == 11'h55 || dut.vpos == 11'h69 ||
-        dut.vpos == 11'h7d || dut.vpos == 11'h91)
+    if (log_all ? (dut.vpos >= 11'h3e && dut.vpos <= 11'hc0) :
+        (dut.vpos == 11'h40 || dut.vpos == 11'h54 || dut.vpos == 11'h68 ||
+         dut.vpos == 11'h7c || dut.vpos == 11'h90 ||
+         dut.vpos == 11'h41 || dut.vpos == 11'h55 || dut.vpos == 11'h69 ||
+         dut.vpos == 11'h7d || dut.vpos == 11'h91))
       $fdisplay(f, "SLOT %0h %0d %0s", dut.vpos, dut.hpos[8:1], owner(0));
 end
 
 initial begin
   for (i = 0; i < 262144; i = i + 1) mem[i] = 16'h0000;
-  $readmemh("copslots.memh", mem);
-  f = $fopen("copslots_sim.txt", "w");
+  if (!$value$plusargs("memh=%s", memh_name)) memh_name = "copslots.memh";
+  if (!$value$plusargs("out=%s", out_name))   out_name  = "copslots_sim.txt";
+  log_all = $test$plusargs("all");
+  $readmemh(memh_name, mem);
+  f = $fopen(out_name, "w");
   repeat (8) @(posedge clk);
   reset_n = 1;
   repeat (32) tick;
@@ -143,7 +152,7 @@ initial begin
   while (frames < 3) tick;
   logging = 0;
   $fclose(f);
-  $display("logged frame 3 to copslots_sim.txt");
+  $display("logged frame 3 to %0s", out_name);
   $finish;
 end
 

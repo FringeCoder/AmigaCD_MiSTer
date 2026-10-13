@@ -367,6 +367,19 @@ jobs:
           python3 check_copslots.py | tee out_slots.log
           grep -q "RUN: PASS" out_slots.log
 
+      # Bitplane DMA must stop entirely when BPLCON0 asks for more planes than
+      # the fetch mode and resolution carry -- not fetch the first N. Real A1200:
+      # vAmigaTS AGADDF agaddf1-14. Same bench, a different copper list.
+      - name: Bitplane plane limit per fetch mode
+        run: |
+          set -euo pipefail
+          cd rtl/sim/copper
+          python3 gen_planelimit.py planelimit.memh
+          iverilog -g2012 -o tbs tb_copper_slots.sv ../../amiga_clk.v ../../agnus*.v
+          vvp tbs +memh=planelimit.memh +out=planelimit_sim.txt +all
+          python3 check_planelimit.py | tee out_pl.log
+          grep -q "RUN: PASS" out_pl.log
+
       # Every line of a frame reads back its own line number, PAL and NTSC. The
       # other beamcounter benches each pin one feature and none of them sweeps a
       # frame, so a vertical readback that reports the same line forever, or that
