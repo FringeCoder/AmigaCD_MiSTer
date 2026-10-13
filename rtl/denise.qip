@@ -9,3 +9,4 @@ set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) denise_
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) denise_collision.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) denise_bitplanes.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) denise_bitplane_shifter.v ]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) denise_shres_ecs.v ]

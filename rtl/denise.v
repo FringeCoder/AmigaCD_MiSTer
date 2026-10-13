@@ -474,6 +474,20 @@ denise_collision col0
 );
 
 
+// ECS (8373) super hires reaches only COLOR00/05/10/15 and shows each register
+// split across two sub-pixels; AGA super hires is a full-depth mode.
+wire           ecs_shres = ecs && !aga && shres;
+wire  [ 8-1:0] shres_index;
+wire  [24-1:0] shres_rgb;
+
+denise_shres_ecs shres_ecs0
+(
+  .v(plfdata[1:0]),
+  .index(shres_index),
+  .rgb_in(clut_rgb),
+  .rgb_out(shres_rgb)
+);
+
 always @(*) begin
   if (brdsprt && sprsel) // select border sprites
     clut_data = sprdata;
@@ -481,20 +495,25 @@ always @(*) begin
     clut_data = 8'b000000;
   else if (sprsel) // select sprites
     clut_data = sprdata;
+  else if (ecs_shres) // ECS super hires: register 5 * v, see denise_shres_ecs.v
+    clut_data = shres_index;
   else // select playfield
     clut_data = plfdata ^ bplxor;
 end
 
 reg window_del;
 reg sprsel_del;
+reg ecs_shres_del;
 
 always @(posedge clk) begin
   window_del <= window_ena;
   sprsel_del <= sprsel;
+  ecs_shres_del <= ecs_shres;
 end
 
 // ham_rgb / clut_rgb multiplexer
-wire  [24-1:0] out_rgb  = ham_sel && window_del && !sprsel_del ? ham_rgb : clut_rgb; //if no HAM mode, always select normal (table selected) rgb data
+wire  [24-1:0] out_rgb  = ham_sel && window_del && !sprsel_del ? ham_rgb :  //if no HAM mode, always select normal (table selected) rgb data
+                         ecs_shres_del && !sprsel_del         ? shres_rgb : clut_rgb;
 
 //--------------------------------------------------------------------------------------
 
