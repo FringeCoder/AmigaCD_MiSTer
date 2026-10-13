@@ -1272,7 +1272,7 @@ The userspace half is `FringeCoder/AmigaCD`; its
 `docs/hardware-test-plan.md` 1f carries the appearance checks and names the fit
 as the first thing to look at.
 
-## T28 — AGA still has the scroll defects c5ffbf9 fixed for OCS  [SIM] — [MEASURED 2026-10-11, OPEN]
+## T28 — AGA still has the scroll defects c5ffbf9 fixed for OCS  [SIM + FIT] — [MID-LINE BPLCON1 FIXED 2026-10-11; FMODE 1/3 OFF-GRID OPEN]
 
 Upstream `c5ffbf9` "Fix Absolute Inebriation" (vanfanel) moved OCS/ECS LORES
 FMODE=0 onto the hardware's copy rule: BPL1DAT arms a holding->shift copy that
@@ -1281,7 +1281,7 @@ BPLCON1 scroll, and a BPLCON1 write reaches that comparator at once. WinUAE
 does both on every chipset (`drawing.cpp` `expand_bplcon1()` and
 `dhv == bplcon1_shift_full`). The fix is gated `!aga`.
 
-`rtl/sim/denise/tb_denise_scroll_copy.sv` measures Minimig against that rule:
+`rtl/sim/denise/tb_denise_scroll_copy.sv` measures Minimig against that rule. Before the fix:
 
 | | single fetch, off-grid | mid-line BPLCON1 |
 |---|---|---|
@@ -1301,19 +1301,58 @@ ordinary AGA displays look right; a display that steps DDFSTRT by 2 cck to
 scroll cannot keep every step on it under FMODE 3.
 
 **Why it matters here:** CD32 is AGA. Every CD32 title runs on the path this
-fix did not touch. Upstream #158 (Turrican 2 AGA, shoot-'em-up stages, "a copper
-timing issue" per its developer, game bar shifted right) is the shape these
-rows predict, but its mechanism has not been confirmed -- the developer's post
-is behind EAB's bot wall.
+fix did not touch.
+
+**Not Turrican 2 AGA (upstream #158), most likely.** Its developer (muzza, EAB
+thread 112916 p.17, relayed 2026-10-11) traced it with WinUAE's DMA view to the
+copper finishing too late: the status-bar split has one scanline to rewrite 16
+AGA colours and the bitplane registers before the next bitplane fetch, and he
+reproduces the MiSTer picture on WinUAE by inserting one empty copper
+instruction. In 3-3 the copper repositions the parallax sprites mid-line, so a
+late write leaves half an attached sprite in the wrong place. That is Agnus
+copper/DMA slot timing, not this Denise copy. T28 should not be expected to fix
+it.
 
 **Not measured yet:** what gets copied when a later fetch lands between the
 BPL1DAT write and the copy. A single fetch cannot show it, and it is what
 `c5ffbf9`'s pending/ownership state machine handles.
 
-**The fix shape, not attempted:** extend the comparator copy to AGA and to
-FMODE 1/2/3 in place of `extra_delay_*`, and drop the `!aga` gate on the
-immediate BPLCON1 write. That is new logic on Denise's pixel path, so it needs
-this bench as its guard, a matched-seed fit, and a title on hardware.
+**Fixed, in lores, two changes in `denise_bitplanes.v`:**
+
+1. A BPLCON1 write reaches `pf1h`/`pf2h` at once on AGA as well, with the AGA
+   bits (`[11:10]`/`[15:14]` coarse, `[9:8]`/`[13:12]` fine) in place of OCS's
+   constants. That is upstream `7f93ed1` without its `!aga` gate.
+2. ~~`extra_delay_f12` / `extra_delay_f3` computed as `(-phase) mod unit`~~ --
+   **reverted the same day.** Measured on hardware against vAmigaTS
+   `Agnus/DDF/AGADDF`: `agaddf1`, `11`, `12`, `15` (all with real A1200 photos)
+   were pixel-identical with and without it, so it fixed nothing visible. The
+   only test it changed, `agaddf16` (FMODE 3, DDFSTRT `$3C`), has no photo, and
+   the suite's README says a real A1200 produces **scrambled** lores output
+   there and quantises DDFSTRT to the fetch unit. The change moved the picture
+   from one non-scrambled answer to another on the strength of WinUAE's rule,
+   which silicon does not support for that case. Copperline differs again
+   (agaddf16 identical to agaddf15; agaddf12 missing the late lores start the
+   A1200 photo shows, which our core has). Reopen with a photo of an off-grid
+   FMODE 1/3 load.
+
+No comparator was added. The delay line plus the scroller's fetch-mode mask
+already computes the comparator's answer for a single fetch, once the delay is
+exact -- which is what made a two-change fix possible instead of a new path.
+
+The bench asserts the AGA mid-line cases and the AGA FMODE 0 cells; reverting
+change 1 fails exactly the 3 mid-line checks. The FMODE 1/3 off-grid cells are
+printed, not asserted. **Still owed:** a hardware title (Turrican 2 AGA, stages 3-1 / 3-3 per
+upstream #158, though see above), and hires/superhires coverage.
+
+**What remains of the copy model, measured by the `stream` cases:** a plane
+written after BPL1DAT cannot reach the pending copy in either model, so ordinary
+multi-plane displays match. Three cases do not, on OCS and AGA alike: a BPLCON1
+change between copies makes Minimig repeat (raise) or garble (lower) pixels
+already in its delay line, and a second BPL1DAT before the copy shows the first
+word's leading pixels where the hardware drops it. Copper BPLCON1 writes in
+horizontal blanking never see this; mid-line writes and CPU/copper BPL1DAT
+writes do. Fixing it means a real comparator copy instead of the delay line, in
+every mode -- the general form of what c5ffbf9 did narrowly.
 
 ---
 

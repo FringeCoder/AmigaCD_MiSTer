@@ -97,6 +97,17 @@ always @(hpos)
     2'b11 : extra_delay_f0 = 8'b00_0100_00;
   endcase
 
+// FMODE 1/2 and 3 key the load phase on hpos[4:3] and hpos[5:4] only, which
+// rounds it to 8 and 16 lores pixels. Against WinUAE's copy rule that is wrong
+// for a load between those steps (T28, rtl/sim/denise measures it), and an
+// exact (-phase) mod unit was tried here on 2026-10-11 -- and taken back out.
+// On hardware it changed nothing that has a photograph: vAmigaTS AGADDF
+// agaddf1/11/12/15 were pixel-identical either way. The one test it did change,
+// agaddf16 (FMODE 3, DDFSTRT $3C), has no photo, and its README says a real
+// A1200 produces SCRAMBLED lores output there and quantises DDFSTRT to the fetch
+// unit -- neither of which WinUAE's model, nor this exact delay, reproduces. A
+// change that real silicon contradicts and no photo supports stays out until
+// one does. The mid-line BPLCON1 half of T28 below is kept.
 always @(hpos)
   case (hpos[4:3])
     2'b00 : extra_delay_f12 = 8'b00_0000_00;
@@ -120,10 +131,13 @@ always @ (posedge clk) begin
 end
 
 //playfield 1 effective horizontal scroll
+// A BPLCON1 write reaches the scroll at once, on every chipset: WinUAE's
+// expand_bplcon1() makes no AGA exception, and before T28 AGA alone still waited
+// for the next BPL1DAT load -- the defect upstream 7f93ed1 fixed for OCS/ECS.
 always @(posedge clk)
   if (clk7_en) begin
-    if (!aga && (reg_address_in[8:1] == BPLCON1[8:1]))
-      pf1h <= {2'b11,data_in[3:0],2'b11};
+    if (reg_address_in[8:1] == BPLCON1[8:1])
+      pf1h <= aga ? {data_in[11:10],data_in[3:0],data_in[9:8]} : {2'b11,data_in[3:0],2'b11};
     else if (load)
       pf1h <= {bplcon1[11:10],bplcon1[3:0],bplcon1[9:8]};
   end
@@ -136,8 +150,8 @@ always @(posedge clk)
 //playfield 2 effective horizontal scroll
 always @(posedge clk)
   if (clk7_en) begin
-    if (!aga && (reg_address_in[8:1] == BPLCON1[8:1]))
-      pf2h <= {2'b11,data_in[7:4],2'b11};
+    if (reg_address_in[8:1] == BPLCON1[8:1])
+      pf2h <= aga ? {data_in[15:14],data_in[7:4],data_in[13:12]} : {2'b11,data_in[7:4],2'b11};
     else if (load)
       pf2h <= {bplcon1[15:14],bplcon1[7:4],bplcon1[13:12]};
   end

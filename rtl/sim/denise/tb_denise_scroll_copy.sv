@@ -25,10 +25,19 @@
 //
 // The on-grid rows are the model's own check: Minimig is right on the grid
 // (every Kickstart and every on-grid scroller), so if the reference disagreed
-// there the reference would be wrong, not the core. CHECK lines assert that.
-// MEASURE lines are characterisation and do not fail the run.
+// there the reference would be wrong, not the core. AGA FMODE 0 off-grid cells
+// and every mid-line case are CHECKs too. OCS off-grid cells and AGA FMODE 1/3
+// off-grid cells stay MEASUREs (see assert_off).
 //
-// What it measured on 2026-10-11 (core at upstream c5ffbf9 + this fork):
+// Mutations, run by hand 2026-10-11 (run-mutations.py compiles the bench last,
+// which this bench cannot survive -- see the compile-order note below):
+//   AGA immediate BPLCON1 write gated back to !aga  -> exactly the 3 AGA mid-line CHECKs fail
+//   (the exact FMODE 1/3 delay was reverted the same day: it fixed 128 FMODE 1
+//    and 768 FMODE 3 cells against WinUAE's rule, changed no photographed
+//    vAmigaTS test, and changed agaddf16, whose real A1200 output is
+//    "scrambled" -- so WinUAE's rule is not established there)
+//
+// What it measured BEFORE the T28 fix (core at upstream c5ffbf9 + this fork):
 //
 //   * FMODE 0, single fetch, OCS and AGA: Minimig matches the comparator at
 //     every off-grid phase. extra_delay plus the scroller's fetch-mode mask
@@ -49,9 +58,24 @@
 //     moves the OCS rows to exactly those AGA numbers, so this is the same
 //     defect c5ffbf9 fixed for OCS, still present on AGA.
 //
-// Not covered: what is copied when a later fetch lands between the BPL1DAT
-// write and the copy. A single fetch cannot see that, and it is what c5ffbf9's
-// pending/ownership logic exists for.
+// After the fix: AGA mid-line BPLCON1 matches the comparator; AGA FMODE 1/3
+// off-grid cells still differ from it, deliberately (see above).
+//
+// Whole-stream cases (the `stream` task), 2026-10-11, identical on OCS and AGA:
+//   * a plane written after BPL1DAT cannot reach the pending copy, in WinUAE or
+//     in Minimig -- both copy from the BPL1DAT-time snapshot. Four units at a
+//     constant scroll match pixel for pixel; those are CHECKs.
+//   * scroll raised between copies (2 -> 10): Minimig REPEATS 8 pixels of the
+//     word in flight where the hardware drains it and shows zeros (6 px differ).
+//   * scroll lowered (10 -> 2): 2 px garbled where the hardware truncates.
+//   * a second BPL1DAT before the first copy: the hardware never shows the
+//     first word; Minimig shows its leading pixels (14 px differ).
+// All three come from the delay-line design itself -- moving a tap under
+// pixels already in flight, and a load that cannot be cancelled. They are
+// MEASUREs: fixing them means a real comparator copy in place of the delay
+// line, for every mode.
+//
+// Not covered: hires and superhires (their extra_delay tables are untouched).
 //
 // Compile the bench FIRST. denise_bitplanes.v writes with `<= #1` and declares
 // no timescale; listed first, the bench's `timescale reaches it. Listed after
@@ -204,12 +228,128 @@ task automatic set_mode(input integer is_aga, input [1:0] fm);
   end
 endtask
 
+
+// ---- whole-stream comparison: several fetches, plane 1 ----------------------
+// WinUAE keeps three stages: holding (bplxdat), a snapshot taken AT the BPL1DAT
+// write (bpldat_docopy -> bplxdat2), and the shift registers, loaded from the
+// snapshot at the comparator match (copybpl*) and shifting zeros in
+// (shiftbpl*: `<<= 1`). So a plane written after BPL1DAT cannot reach the
+// pending copy -- the same data Minimig's load-at-BPL1DAT gives -- and the
+// cases where the two models can differ are:
+//   * a second BPL1DAT before the first copy fires: WinUAE re-snapshots and the
+//     first word never shows; Minimig has already started shifting it out;
+//   * BPLCON1 changed between copies: WinUAE lets the current word drain and
+//     waits for the new match; Minimig moves its delay tap under pixels that are
+//     already in flight.
+// ref_* below is that model, one plane, one bit per lores pixel.
+reg  [15:0] ref_snap, ref_sr;
+reg         ref_armed = 0;
+reg         ref_on = 0;
+reg  [8191:0] ref_bits, mm_bits;     // indexed by clk7 tick within the window
+integer     win_tick = 0, win_clk0 = 0;
+integer     tick_clk [0:8191];
+
+always @(posedge clk) begin
+  if (clk7_en && ref_on) begin
+    tick_clk[win_tick] <= now;
+    if (dut.load) begin                         // snapshot at the BPL1DAT write
+      ref_snap  = dut.bpl1dat[63:48];
+      ref_armed = 1;
+    end
+    if (ref_armed && ((hpos & (G-1)) == (scroll_live & (G-1)))) begin
+      ref_sr    = ref_snap;
+      ref_armed = 0;
+    end
+    ref_bits[win_tick] <= ref_sr[15];
+    ref_sr = ref_sr << 1;
+    win_tick <= win_tick + 1;
+  end
+end
+
+// Fetch units every G ticks from `base`, word w(k); optionally rewrite BPLCON1
+// to s2 just before unit `chg_unit`, and optionally write an extra BPL1DAT
+// `extra_after` ticks after unit 0.
+task automatic stream(input string name, input integer is_aga, input integer s1,
+                      input integer s2, input integer chg_unit,
+                      input integer extra_after, input integer assert_it);
+  integer base, k, i, bad, first_bad, n;
+  reg [15:0] w [0:3];
+  begin
+    set_mode(is_aga, 2'd0); G = 16;
+    trial(0, 0, 0, 0); lat = delta;             // this mode's latency
+    w[0] = 16'hF00F; w[1] = 16'hC3A5; w[2] = 16'h8001; w[3] = 16'hFFFF;
+    base = 192;
+    wait_hpos(40);
+    wr(A_BPLCON1, bplcon1_for(s1, s1), 0);
+    ref_sr = 0; ref_armed = 0; ref_bits = 0; mm_bits = 0;
+    wait_hpos(base - 8);
+    win_tick = 0; ref_on = 1;
+    for (k = 0; k < 4; k = k + 1) begin
+      if (k == chg_unit) begin
+        wait_hpos(base + 16*k - 2);
+        wr(A_BPLCON1, bplcon1_for(s2, s2), 0);
+      end
+      wait_hpos(base + 16*k);
+      wr(A_BPL1DAT, w[k], 1);
+      if (k == 0 && extra_after > 0) begin
+        wait_hpos(base + extra_after);
+        wr(A_BPL1DAT, 16'h0FF0, 0);
+      end
+    end
+    repeat (5*16) tick;
+    ref_on = 0;
+    // Minimig's pixel for reference tick i is bpldata[1] `lat` clocks after it.
+    // Sampled from the recorded clock stamps rather than re-simulated.
+    n = win_tick; bad = 0; first_bad = -1;
+    for (i = 0; i < n - 8; i = i + 1)
+      if (mm_at(tick_clk[i] + lat) !== ref_bits[i]) begin
+        bad = bad + 1;
+        if (first_bad < 0) first_bad = i;
+      end
+    if (assert_it) begin
+      checks = checks + 1;
+      if (bad) fails = fails + 1;
+    end
+    $display("%s %s stream %s: %0d of %0d lores px differ%s",
+             assert_it ? (bad ? "CHECK FAIL" : "CHECK ok  ") : "MEASURE   ",
+             is_aga ? "AGA" : "OCS", name, bad, n - 8,
+             bad ? $sformatf(", first at tick %0d", first_bad) : "");
+    if (bad) dump_stream(n);
+  end
+endtask
+
+// bpldata[1] history by clock, kept for the stream comparison
+reg [1:0] mm_hist [0:16383];
+integer   mm_hist_base = 0;
+always @(posedge clk) if (ref_on) mm_hist[(now - mm_hist_base) & 16383] <= {1'b1, bpldata[1]};
+function automatic reg mm_at(input integer c);
+  reg [1:0] e;
+  begin e = mm_hist[(c - mm_hist_base) & 16383]; mm_at = e[1] ? e[0] : 1'bx; end
+endfunction
+
+task automatic dump_stream(input integer n);
+  integer i;
+  reg [8191:0] l1, l2;
+  begin
+    $write("    ref: ");
+    for (i = 0; i < n - 8 && i < 112; i = i + 1) $write("%0d", ref_bits[i]);
+    $write("\n    mm : ");
+    for (i = 0; i < n - 8 && i < 112; i = i + 1) $write("%0d", mm_at(tick_clk[i] + lat));
+    $write("\n");
+  end
+endtask
+
 // ---- sweep -------------------------------------------------------------------
 integer mismatches;
 integer lat;                                      // the mode's latency, from phase 0 scroll 0
 
+// assert_off: off-grid cells are CHECKs, not MEASUREs. On for AGA FMODE 0,
+// where Minimig already matches; off for OCS, whose one off-grid difference
+// (phase 8, one pixel early) belongs to upstream c5ffbf9's new path; and off
+// for AGA FMODE 1/3, where the exact-delay fix was taken back out because real
+// A1200 photos do not support it (see T28).
 task automatic sweep(input string name, input integer is_aga, input [1:0] fm,
-                     input integer unit);
+                     input integer unit, input integer assert_off);
   integer ph, s, d;
   begin
     set_mode(is_aga, fm); G = unit;
@@ -226,10 +366,15 @@ task automatic sweep(input string name, input integer is_aga, input [1:0] fm,
             $display("CHECK FAIL %s on-grid scroll %0d: delta %0d, latency %0d -- reference model wrong",
                      name, s, d, lat);
           end
-        end else if (d != lat) begin
-          mismatches = mismatches + 1;
-          $display("MEASURE %s phase %2d scroll %2d: %0d lores px %s (load hpos %0d)",
-                   name, ph, s, (d - lat) / 4, (d > lat) ? "late" : "early", load_hpos);
+        end else begin
+          if (assert_off) checks = checks + 1;
+          if (d != lat) begin
+            mismatches = mismatches + 1;
+            if (assert_off) fails = fails + 1;
+            $display("%s %s phase %2d scroll %2d: %0d lores px %s (load hpos %0d)",
+                     assert_off ? "CHECK FAIL" : "MEASURE", name, ph, s,
+                     (d - lat) / 4, (d > lat) ? "late" : "early", load_hpos);
+          end
         end
       end
     end
@@ -244,9 +389,11 @@ task automatic midline(input string name, input integer is_aga, input integer s1
     set_mode(is_aga, 2'd0); G = 16;
     trial(0, 0, 0, 0); lat = delta;
     trial(0, s1, s2, after);
-    $display("MEASURE %s mid-line BPLCON1 %0d -> %0d at +%0d ticks: %s%0d lores px",
-             name, s1, s2, after, (delta == lat) ? "matches, " : "off by ",
-             (delta - lat) / 4);
+    checks = checks + 1;
+    if (delta != lat) fails = fails + 1;
+    $display("%s %s mid-line BPLCON1 %0d -> %0d at +%0d ticks: %s%0d lores px",
+             (delta == lat) ? "CHECK ok  " : "CHECK FAIL", name, s1, s2, after,
+             (delta == lat) ? "matches, " : "off by ", (delta - lat) / 4);
   end
 endtask
 
@@ -274,10 +421,10 @@ initial begin
     $display("CHECK FAIL bpldata[1] is %b after the flush, not 0", bpldata[1]);
   end
 
-  sweep("OCS  FMODE0", 0, 2'd0, 16);
-  sweep("AGA  FMODE0", 1, 2'd0, 16);
-  sweep("AGA  FMODE1", 1, 2'd1, 32);
-  sweep("AGA  FMODE3", 1, 2'd3, 64);
+  sweep("OCS  FMODE0", 0, 2'd0, 16, 0);
+  sweep("AGA  FMODE0", 1, 2'd0, 16, 1);
+  sweep("AGA  FMODE1", 1, 2'd1, 32, 0);
+  sweep("AGA  FMODE3", 1, 2'd3, 64, 0);
 
   midline("OCS ", 0, 12, 8, 4);
   midline("OCS ", 0, 12, 4, 2);
@@ -285,6 +432,19 @@ initial begin
   midline("AGA ", 1, 12, 8, 4);
   midline("AGA ", 1, 12, 4, 2);
   midline("AGA ", 1, 4, 12, 2);
+
+  // Whole-stream cases. The plain ones are the model's own check: four
+  // consecutive units at a constant scroll must match, or the stream model is
+  // wrong. The rest are characterisation.
+  stream("constant scroll 6",          0, 6, 6, 9, 0, 1);
+  stream("constant scroll 6",          1, 6, 6, 9, 0, 1);
+  stream("constant scroll 13",         1, 13, 13, 9, 0, 1);
+  stream("scroll 2 -> 10 before unit 2", 0, 2, 10, 2, 0, 0);
+  stream("scroll 2 -> 10 before unit 2", 1, 2, 10, 2, 0, 0);
+  stream("scroll 10 -> 2 before unit 2", 0, 10, 2, 2, 0, 0);
+  stream("scroll 10 -> 2 before unit 2", 1, 10, 2, 2, 0, 0);
+  stream("2nd BPL1DAT +6 at scroll 12",  0, 12, 12, 9, 6, 0);
+  stream("2nd BPL1DAT +6 at scroll 12",  1, 12, 12, 9, 6, 0);
 
   $display("%0d checks, %0d failed", checks, fails);
   $display("RUN: %s", fails ? "FAIL" : "PASS");
