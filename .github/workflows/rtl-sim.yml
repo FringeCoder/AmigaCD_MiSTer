@@ -351,6 +351,19 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # A line blit with a BLTSIZE width of 1 must finish. The blitter spends two
+      # words per line pixel; with width 1 the last word can land in L2, where the
+      # end was never tested, and the height counter wrapped -- ~32767 pixels of
+      # busy (vAmigaTS irqtim1l/11l1/15l1, timing11l1 on an A500). Width 2 is
+      # printed as the reference.
+      - name: Blitter line mode, BLTSIZE width 1
+        run: |
+          set -euo pipefail
+          cd rtl/sim/blitter
+          iverilog -g2012 -o tbb tb_blit_line.sv ../../amiga_clk.v ../../agnus*.v
+          vvp tbb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # Who owns each DMA slot on a copper-busy line, in every bitplane fetch
       # mode, against Copperline's cycle trace of the same copper list. Added
       # after the Turrican 2 AGA report (copper finishing a split late): a copper
