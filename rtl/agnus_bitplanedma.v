@@ -419,7 +419,13 @@ end
 // softena : software display data fetch window
 
 // AMR - OCS and ECS/AGA behave differently when DDFSTRT == DDFSTOP.
-// On OCS the fetch runs until hard_stop. On ECS/AGA it stops after one complete fetch cycle.
+// On OCS the fetch runs until hard_stop. On ECS/AGA it stops after one complete
+// fetch cycle -- but only when the fetch was ALREADY running as the double match
+// arrived (the Sanity: Roots 2.0 case this was written for). Reached while idle,
+// the start wins and the stop is ignored: the fetch runs to the hardware stop.
+// vAmigaTS Agnus/DDF/DDF/doublematch1 shows both on an A500 ECS and an A1200,
+// and vAmiga's ECS sequencer does the same (SIG_BPHSTART | SIG_BPHSTOP starts
+// when !bprun, stops when bprun). check_ddfdouble.py covers both.
 reg softena_off;
 
 always @ (posedge clk) begin
@@ -429,7 +435,7 @@ always @ (posedge clk) begin
         softena <= #1 1'b1;
       else if (softena_off || (soft_stop || !ecs && hard_stop))
         softena <= #1 1'b0;
-      softena_off<=soft_stop && soft_start && ecs;  // AMR - ECS / AGA: DDFSTRT==DDFSTOP, disable fetch after one fetch cycle.
+      softena_off<=soft_stop && soft_start && ecs && softena;  // ECS / AGA: DDFSTRT==DDFSTOP while running, disable fetch after one fetch cycle.
     end
   end
 end
