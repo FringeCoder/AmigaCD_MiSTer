@@ -19,10 +19,21 @@ module denise_playfields
 //local signals
 wire pf2pri;            //playfield 2 priority over playfield 1
 wire [2:0] pf2p;          //playfield 2 priority code
+wire [2:0] pf1p;          //playfield 1 priority code
 reg [7:0] pf2of_val;    // playfield 2 offset value
 
 assign pf2pri = bplcon2[6];
 assign pf2p = bplcon2[5:3];
+assign pf1p = bplcon2[2:0];
+
+// OCS/ECS dual playfield with an invalid priority code (PFxP > 4): that
+// playfield's pixels are drawn in COLOR00 but stay opaque -- they still hide
+// the other playfield. vAmigaTS Denise/Registers/BPLCON2/dualpf1-12 sweep the
+// codes; the A500 ECS photographs show the invalid ones as background-coloured
+// bands, and vAmiga's translateDPF masks the colour the same way. AGA (Lisa)
+// does not: the A1200 photographs show the whole picture.
+wire pf1_inv = !aga && (pf1p > 3'd4);
+wire pf2_inv = !aga && (pf2p > 3'd4);
 
 always @ (*) begin
   case(pf2of)
@@ -73,21 +84,21 @@ begin
         if (aga)
           plfdata[7:0] = {4'b0000,bpldata[8],bpldata[6],bpldata[4],bpldata[2]} + pf2of_val;
         else
-          plfdata[7:0] = {4'b0000,1'b1,bpldata[6],bpldata[4],bpldata[2]};
+          plfdata[7:0] = pf2_inv ? 8'd0 : {4'b0000,1'b1,bpldata[6],bpldata[4],bpldata[2]};
       else if (nplayfield[1])
-        plfdata[7:0] = {4'b0000,bpldata[7],bpldata[5],bpldata[3],bpldata[1]};
+        plfdata[7:0] = pf1_inv ? 8'd0 : {4'b0000,bpldata[7],bpldata[5],bpldata[3],bpldata[1]};
       else //both planes transparant, select background color
         plfdata[7:0] = 8'b00000000;
     end
     else //playfield 1 (1,3,5) has priority
     begin
       if (nplayfield[1])
-        plfdata[7:0] = {4'b0000,bpldata[7],bpldata[5],bpldata[3],bpldata[1]};
+        plfdata[7:0] = pf1_inv ? 8'd0 : {4'b0000,bpldata[7],bpldata[5],bpldata[3],bpldata[1]};
       else if (nplayfield[2])
         if (aga)
           plfdata[7:0] = {4'b0000,bpldata[8],bpldata[6],bpldata[4],bpldata[2]} + pf2of_val;
         else
-          plfdata[7:0] = {4'b0000,1'b1,bpldata[6],bpldata[4],bpldata[2]};
+          plfdata[7:0] = pf2_inv ? 8'd0 : {4'b0000,1'b1,bpldata[6],bpldata[4],bpldata[2]};
       else //both planes transparent, select background color
         plfdata[7:0] = 8'b00000000;
     end
