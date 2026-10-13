@@ -365,6 +365,22 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # Who owns each DMA slot on a copper-busy line, in every bitplane fetch
+      # mode, against Copperline's cycle trace of the same copper list. Added
+      # after the Turrican 2 AGA report (copper finishing a split late): a copper
+      # that lost slots to bitplane DMA in some fetch mode would do that. All 224
+      # colour clocks $00-$DF match on all five lines; the line wrap is reported
+      # only. The whole agnus.v runs; the bench is listed first for the timescale.
+      - name: Copper DMA slots vs Copperline
+        run: |
+          set -euo pipefail
+          cd rtl/sim/copper
+          python3 gen_copslots.py copslots.memh
+          iverilog -g2012 -o tbs tb_copper_slots.sv ../../amiga_clk.v ../../agnus*.v
+          vvp tbs
+          python3 check_copslots.py | tee out_slots.log
+          grep -q "RUN: PASS" out_slots.log
+
       # Every line of a frame reads back its own line number, PAL and NTSC. The
       # other beamcounter benches each pin one feature and none of them sweeps a
       # frame, so a vertical readback that reports the same line forever, or that
