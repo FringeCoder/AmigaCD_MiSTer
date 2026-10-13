@@ -364,6 +364,16 @@ jobs:
           vvp tbb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # Line mode honours USEB: B is fetched per pixel and is the texture
+      # (vAmigaTS Agnus/Blitter/line/channels1, channels2).
+      - name: Blitter line mode channel B
+        run: |
+          set -euo pipefail
+          cd rtl/sim/blitter
+          iverilog -g2012 -o tbbc tb_blit_line_channels.sv ../../amiga_clk.v ../../agnus*.v
+          vvp tbbc | tee out_ch.log
+          grep -q "RUN: PASS" out_ch.log
+
       # Who owns each DMA slot on a copper-busy line, in every bitplane fetch
       # mode, against Copperline's cycle trace of the same copper list. Added
       # after the Turrican 2 AGA report (copper finishing a split late): a copper
