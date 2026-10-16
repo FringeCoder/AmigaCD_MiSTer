@@ -107,6 +107,7 @@ jobs:
           path: |
             fit.json
             fit_${{ matrix.seed }}.log
+            paths_${{ matrix.seed }}.rpt
             output_files/AmigaCD.rbf
             output_files/*.rpt
             output_files/*.summary
