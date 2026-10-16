@@ -14,6 +14,9 @@ wire         _cpu_as;
 wire         _cpu_uds;
 wire         _cpu_lds;
 wire         cpu_r_w;
+wire         cpu_long;
+wire         chip32_en;
+wire         ram_long;
 wire         _cpu_dtack;
 wire         _cpu_reset;
 wire         _cpu_reset_in;
@@ -119,7 +122,7 @@ wire         cdtv_nvr_dirty;
 wire         cdtv_card_dirty;
 wire [9:0]   cdtv_cdda_volume;
 wire         cdtv_cdda_volume_valid;
-wire [2:0]   cpucfg;
+wire [4:0]   cpucfg;
 wire [2:0]   cachecfg;
 wire [6:0]   memcfg;
 wire         bootrom;
@@ -133,6 +136,7 @@ wire         ide_write;
 wire [15:0]  ide_writedata;
 wire         ide_read;
 wire [15:0]  ide_readdata;
+wire [8:0]   drive_snd;
 wire         a2065_clk_ddr;
 wire [28:0]  a2065_mem_address;
 wire [7:0]   a2065_mem_burstcount;
@@ -190,6 +194,7 @@ reg          drv__cpu_as;
 reg          drv__cpu_uds;
 reg          drv__cpu_lds;
 reg          drv_cpu_r_w;
+reg          drv_cpu_long;
 reg          drv__cpu_reset_in;
 reg  [31:0]  drv_nmi_addr;
 reg  [15:0]  drv_ramdata_in;
@@ -262,6 +267,7 @@ assign _cpu_as = drv__cpu_as;
 assign _cpu_uds = drv__cpu_uds;
 assign _cpu_lds = drv__cpu_lds;
 assign cpu_r_w = drv_cpu_r_w;
+assign cpu_long = drv_cpu_long;
 assign _cpu_reset_in = drv__cpu_reset_in;
 assign nmi_addr = drv_nmi_addr;
 assign ramdata_in = drv_ramdata_in;
@@ -337,6 +343,7 @@ begin
 	drv__cpu_uds = 0;
 	drv__cpu_lds = 0;
 	drv_cpu_r_w = 0;
+	drv_cpu_long = 0;
 	drv__cpu_reset_in = 0;
 	drv_nmi_addr = 0;
 	drv_ramdata_in = 0;
@@ -415,6 +422,9 @@ minimig dut (
 	._cpu_uds(_cpu_uds),
 	._cpu_lds(_cpu_lds),
 	.cpu_r_w(cpu_r_w),
+	.cpu_long(cpu_long),
+	.chip32_en(chip32_en),
+	.ram_long(ram_long),
 	._cpu_dtack(_cpu_dtack),
 	._cpu_reset(_cpu_reset),
 	._cpu_reset_in(_cpu_reset_in),
@@ -534,6 +544,7 @@ minimig dut (
 	.ide_writedata(ide_writedata),
 	.ide_read(ide_read),
 	.ide_readdata(ide_readdata),
+	.drive_snd(drive_snd),
 	.a2065_clk_ddr(a2065_clk_ddr),
 	.a2065_mem_address(a2065_mem_address),
 	.a2065_mem_burstcount(a2065_mem_burstcount),

@@ -544,15 +544,19 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
-      # cpu_wrapper's save state park, stock-speed throttle and chip-slot guard.
+      # cpu_wrapper's save state park, CPU speed and chip-slot guard.
       # All three are things an upstream merge can remove without anyone
       # noticing, and the park came within one conflict resolution of exactly
       # that at 74d6ce0. The two CPU cores are stubbed -- see cpu_core_stubs.v.
+      # Since upstream 26eb46a the speed is cpu_cycles.v's cycle model: the
+      # bench holds the unthrottled 68020 (CPU Turbo On) to running free and
+      # requires the park in every CPU mode. Falsified 2026-10-16 by putting
+      # the 68020 on the stock-speed model (Turbo On then held 35 cycles).
       - name: CPU wrapper park and throttle
         run: |
           set -euo pipefail
           cd rtl/sim/cpuwrap
-          iverilog -g2012 -o tb             ../../cpu_wrapper.v ../../memory_router.v             cpu_core_stubs.v tb_cpu_wrapper_park.sv
+          iverilog -g2012 -I ../.. -o tb             ../../cpu_wrapper.v ../../memory_router.v ../../cpu_cycles.v             cpu_core_stubs.v tb_cpu_wrapper_park.sv
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
