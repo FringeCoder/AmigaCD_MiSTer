@@ -358,14 +358,13 @@ set_multicycle_path -hold  2 -from $sdram_launch -to [get_clocks SDRAM_CLK_out]
 set_multicycle_path -setup 2 -from [get_clocks SDRAM_CLK_out] -to $sdram_launch
 set_multicycle_path -hold  2 -from [get_clocks SDRAM_CLK_out] -to $sdram_launch
 
-# Upstream 26eb46a adds 0.4 ns of setup uncertainty on clk_114 and clk_sys ->
-# clk_114, for the FITTER only, so the fitter places those paths with margin.
-# Not taken here. It is an over-constraint, not a relaxation: removing it makes
-# no path's real requirement easier, and quartus_sta never saw it either way.
-# What it does here is ask the fitter for 0.4 ns on ~16k clk_114 paths in a
-# design at 83% of the ALMs, where 24 seeds with it all missed setup by
-# 0.15-1.5 ns on a different ordinary path each. This core closed timing
-# before 26eb46a without it. The HDMI clock's 0.1 ns stays as upstream has it.
+# Upstream 26eb46a: extra setup uncertainty for the FITTER only, on the clk_114
+# domain, clk_sys -> clk_114 and the HDMI clock. It makes the fitter place
+# those paths with margin; timing analysis (quartus_sta) does not see it, so
+# the reported slack is still against the real constraints. Taken as upstream
+# has it, with the SDRAM controller it was tuned for.
 if {[string equal "quartus_fit" $::TimeQuestInfo(nameofexecutable)]} {
+	set_clock_uncertainty -add -setup -from [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] -to [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] 0.4
+	set_clock_uncertainty -add -setup -from [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[1].output_counter|divclk}] -to [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] 0.4
 	set_clock_uncertainty -add -setup -from [get_clocks {pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] -to [get_clocks {pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] 0.1
 }
