@@ -218,7 +218,13 @@ initial begin
 
 	$display("--- Test A: 4-byte TX ---");
 	set_misc_base(24'h010000);
-	mem[16'h0200] = 8'hAB;
+	// Opcode 8 is a defined 5-byte command (4 + checksum), so a 4-byte fetch
+	// moves all four bytes without the framer closing the frame. This test is
+	// about the DMA transport, not framing. It used 0xAB -- opcode 0xB, which
+	// the drive does not define -- and that only worked while the core framed
+	// an undefined opcode at 32 bytes. Since upstream cbf17d2 it is a complete
+	// one-byte command and the fetch rightly stops after it.
+	mem[16'h0200] = 8'hA8;
 	mem[16'h0201] = 8'hB2;
 	mem[16'h0202] = 8'hC3;
 	mem[16'h0203] = 8'hD4;
@@ -227,7 +233,7 @@ initial begin
 	set_config(CFG_TXD);
 	write_txcmp(8'd4);
 	wait_tx_done(8000, cyc);
-	check8 ("A.cmd[0]",  8'hAB, u_dut.g_cd.cdrom_command_buffer[0]);
+	check8 ("A.cmd[0]",  8'hA8, u_dut.g_cd.cdrom_command_buffer[0]);
 	check8 ("A.cmd[1]",  8'hB2, u_dut.g_cd.cdrom_command_buffer[1]);
 	check8 ("A.cmd[2]",  8'hC3, u_dut.g_cd.cdrom_command_buffer[2]);
 	check8 ("A.cmd[3]",  8'hD4, u_dut.g_cd.cdrom_command_buffer[3]);
@@ -375,7 +381,7 @@ initial begin
 	do_reset();
 	bus_write_long(5'b00100, 32'hFF000000);
 	set_misc_base(24'h070000);
-	mem[16'h0200 + 16'h00FE] = 8'h0B;
+	mem[16'h0200 + 16'h00FE] = 8'h08;   // defined 5-byte opcode; see Test A
 	mem[16'h0200 + 16'h00FF] = 8'h02;
 	mem[16'h0200 + 16'h0000] = 8'h03;
 	mem[16'h0200 + 16'h0001] = 8'h04;
@@ -384,7 +390,7 @@ initial begin
 	set_config(CFG_TXD);
 	write_txcmp(8'h02);
 	wait_tx_done(8000, cyc);
-	check8 ("G.cmd[0]", 8'h0B, u_dut.g_cd.cdrom_command_buffer[0]);
+	check8 ("G.cmd[0]", 8'h08, u_dut.g_cd.cdrom_command_buffer[0]);
 	check8 ("G.cmd[1]", 8'h02, u_dut.g_cd.cdrom_command_buffer[1]);
 	check8 ("G.cmd[2]", 8'h03, u_dut.g_cd.cdrom_command_buffer[2]);
 	check8 ("G.cmd[3]", 8'h04, u_dut.g_cd.cdrom_command_buffer[3]);

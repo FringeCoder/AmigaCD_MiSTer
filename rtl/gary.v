@@ -234,7 +234,8 @@ assign sel_gayle = hdc_ena && cpu_address_in[23:12]==12'b1101_1110_0001;  //GAYL
 // without that selack short-circuit would have its data OR'd with a clock
 // nibble, and the symptom would appear in the new device rather than here.
 assign sel_rtc   = cpu_address_in[23:16]==8'b1101_1100;                   //RTC registers at $DC0000 - $DCFFFF
-assign sel_reg   = cpu_address_in[23:16]==8'b1101_1111;                   //chip registers at $DF0000 - $DFFFFF
+assign sel_reg   = cpu_address_in[23:16]==8'b1101_1111                    //chip registers at $DF0000 - $DFFFFF, and $C00000 - $D7FFFF without slow ram
+                || cpu_address_in[23:21]==3'b110 && cpu_address_in[20:19]!=2'b11 && ~|t_sel_slow;
 assign sel_cia   = cpu_address_in[23:16]==8'hBF; // $BFxxxx
 assign sel_cia_a = sel_cia & ~cpu_address_in[12];
 assign sel_cia_b = sel_cia & ~cpu_address_in[13];

@@ -498,7 +498,13 @@ if (NATIVE_CD32) begin : g_cd
 			4'h8: expected_total_len = 6'd5;   // 4 + chk
 			4'h9: expected_total_len = 6'd2;   // 1 + chk
 			4'ha: expected_total_len = 6'd3;   // 2 + chk
-			default: expected_total_len = 6'd32; // unknown — frame on buffer full
+			// An opcode the drive does not define is one byte long: WinUAE
+			// (akiko.cpp) ends it after its first byte and answers
+			// CH_ERR_BADCOMMAND. It used to be 32 here -- "frame on buffer
+			// full" -- so the channel waited for bytes that never came.
+			// Upstream cbf17d2 (#263). The host drain in akiko_cd32.cpp
+			// (FringeCoder/AmigaCD) reads one byte for these to match.
+			default: expected_total_len = 6'd1;
 		endcase
 	endfunction
 
