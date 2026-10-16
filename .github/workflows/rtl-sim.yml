@@ -116,10 +116,15 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          grep -qF "assign count = eclk;" rtl/cia_timera.v || {
+          # The eclk forms, gated by the start-up delay ported from upstream
+          # 2bddf21 -- which is a timing detail of the E-clock source, not a
+          # second source. What must never come back is cnt_rise / tmcr[5].
+          grep -qF "assign count = eclk & start_delay[1];" rtl/cia_timera.v || {
             echo "rtl/cia_timera.v: timer A count source is not the eclk form"; fail=1; }
-          grep -qF "assign count = tmcr[6] ? tmra_ovf : eclk;" rtl/cia_timerb.v || {
+          grep -qF "assign count = tmcr[6] ? tmra_ovf : (eclk & start_delay[1]);" rtl/cia_timerb.v || {
             echo "rtl/cia_timerb.v: timer B count source is not the eclk form"; fail=1; }
+          if grep -nE "cnt_rise|cnt_sync" rtl/cia_timera.v rtl/cia_timerb.v; then
+            echo "a CNT-pin count source is back in the CIA timers"; fail=1; fi
           if [ "$fail" -ne 0 ]; then
             echo
             echo "The CIA CNT revert has been undone. See the comment above this"

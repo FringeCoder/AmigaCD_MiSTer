@@ -48,7 +48,34 @@ wire  count;              // Count enable signal
 // Control register bit 6 selects count source:
 // 0 = Count system clock pulses (eclk)
 // 1 = Count Timer A underflows (cascade mode)
-assign count = tmcr[6] ? tmra_ovf : eclk;
+assign count = tmcr[6] ? tmra_ovf : (eclk & start_delay[1]);
+
+// Start-up delay, from upstream 2bddf21 "Fix Risky Woods SFX" (#253): the
+// 8520 does not begin counting E-clocks the moment START is set, but two
+// E-clocks later, which WinUAE also models. Ported WITHOUT the rest of that
+// commit, which restores the CNT-pin count source -- CNT is not wired here
+// (minimig.v drives cnt_in high), so that source stops the timer dead; see
+// the "CIA count source is eclk" step in rtl-sim.yml.
+//
+// Not part of ss_state: a restore with START set comes back already past
+// the delay, as the running timer it was saved from, not as one just started.
+reg   [1:0] start_delay;
+
+always @(posedge clk)
+  if (ss_ld)
+    start_delay <= {2{ss_ld_data[0]}};
+  else if (clk7_en) begin
+    if (reset)
+      start_delay <= 2'b00;
+    else if (!start)
+      start_delay <= 2'b00;
+    else if (thi_load && oneshot)
+      start_delay <= 2'b00;
+    else if (tcr && wr && !data_in[0])
+      start_delay <= 2'b00;
+    else if (eclk)
+      start_delay <= {start_delay[0],1'b1};
+  end
 
 // Timer Control Register (CRB) bit definitions:
 // Bit 0: START - Start/stop timer (1=start, 0=stop)
