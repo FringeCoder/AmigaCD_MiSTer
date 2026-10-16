@@ -169,6 +169,14 @@ jobs:
       # Falsified 2026-10-16 by dropping ~wq_any from ss_ram_idle (16 of 16
       # grants then came with the write still queued). The stream buffer's
       # ~ss_port_own on its return is not reached by this bench.
+      #
+      # Checks 4, 6 and 7 are the grant itself, after a review found three ways
+      # a save or restore could hang or be refused: a request armed on the
+      # freeze edge was pinned forever (check 6), one armed on the grant edge
+      # was held for the whole ownership with ss_ram_idle low (check 4), and a
+      # restore could be granted before the CPU parked (check 7). Falsified
+      # 2026-10-16 by undoing each fix: 2010 duplicate writes and no grant; 102
+      # owned cycles with idle low; a grant with the CPU still running.
       - name: DDR3 read return under waitrequest
         run: |
           set -euo pipefail

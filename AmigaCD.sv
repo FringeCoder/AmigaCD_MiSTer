@@ -519,6 +519,9 @@ wire [31:0] ss_reg_data;
 // code. That is what the restores that ended in a reset were doing.
 wire [31:0] ss_pc;
 wire        ss_cpu_at_boundary;
+// Declared here because ram2 (ddram_ctrl) takes it; assigned with the park
+// logic further down.
+wire        ss_cpu_parked;
 wire        ss_cpu_bus_settled;
 wire [15:0] ss_sr;
 wire [31:0] ss_usp;
@@ -1481,6 +1484,7 @@ ddram_ctrl ram2
 	.ss_readdatavalid(ss_ddr_readdatavalid),
 	.ss_waitrequest(ss_ddr_waitrequest),
 	.ss_ram_idle  (ss_ram_idle        ),
+	.ss_cpu_parked(ss_cpu_parked      ),
 
 	// Bridge (Akiko/CDTV) DMA port — see chipdma_arb.
 	// dmaRD carries the read-return word so the
@@ -2089,7 +2093,7 @@ end
 // not declare it quiesced without cpu_boundary, so a peek that was not in this
 // term reached S_PEEK_FREEZE, waited, and fell back to idle with freeze still
 // low -- every peek returning "not valid yet" and never a byte of memory.
-wire ss_cpu_parked = (ss_save_busy | ss_load_busy | ss_peek_busy)
+assign ss_cpu_parked = (ss_save_busy | ss_load_busy | ss_peek_busy)
                      & ss_cpu_at_boundary & ss_cpu_settled_q;
 
 always @(posedge clk_sys) begin

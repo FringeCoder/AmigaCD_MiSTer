@@ -67,13 +67,13 @@ module ddram_ctrl
 	// lets ss_dma borrow the SDRAM CPU port. The bridge is NOT parked; its
 	// sector DMA is driven by the HPS, which knows nothing about the freeze.
 	//
-	// What actually makes taking the port safe is ram_busy, not the CPU
-	// park. ram_busy is pinned high for the whole freeze (see its assign
-	// below), the only place a master-0 request is armed is
-	// `case(state) 0: if(~ram_busy)`, and ram_rd / ram_we are cleared only
-	// under ~ram_busy. So during the freeze no new master-0 request of
-	// either kind is generated, and anything already armed at freeze entry
-	// is held with its strobe intact and re-issued when the freeze lifts.
+	// What makes taking the port safe is ss_hold, not the CPU park: every
+	// state-0 select is gated on it (st0), and it is high from the freeze,
+	// the grant edge and the ownership on, so nothing new of either kind is
+	// generated. Anything armed before -- including on the freeze edge itself,
+	// which ss_quiesce can pick -- completes first, because the grant waits
+	// for ss_ram_idle and ram_busy is pinned only by the grant. Since upstream
+	// 26eb46a that includes the posted write queue and the stream buffer.
 	//
 	// The consequence, which is deliberate: bridge DMA to DDR3 (Zorro fast
 	// RAM) stalls for the duration of the dump, ~0.2 s. That is the same
@@ -87,8 +87,9 @@ module ddram_ctrl
 	// restore must be a no-op. Those reads are master-0 traffic issued while
 	// ss_freeze is still low, so the takeover condition here is ss_load_busy
 	// OR ss_freeze, not ss_freeze alone. AmigaCD.sv parks the CPU on the same
-	// ss_load_busy, so the port is not being fought over -- it is idle by the
-	// time the grant below fires.
+	// ss_load_busy, and the grant waits for that park (ss_cpu_parked): granted
+	// earlier, the CPU's next fast RAM access would never be served and it
+	// would never reach the boundary it is parking on.
 	//
 	// The grant (ss_port_own) is registered and waits for ss_ram_idle. That
 	// is what makes the takeover safe rather than merely convenient: it must
@@ -109,6 +110,13 @@ module ddram_ctrl
 	// High when nothing is in flight or queued on this controller, i.e. when
 	// it is safe to take the port away. See ss_ram_idle below.
 	output            ss_ram_idle,
+	// The CPU is parked for the save state (AmigaCD.sv's ss_cpu_parked). A
+	// restore asks for the port with ss_load_busy, before any freeze, while
+	// the CPU is still running on to its instruction boundary; granting the
+	// port before it gets there would leave a fast RAM access of its unserved
+	// and the CPU never parked. So a restore's grant waits for this too. A
+	// save's grant does not need it: the freeze already implies it.
+	input             ss_cpu_parked,
 
 	// cpu
 	input      [28:1] cpuAddr,
@@ -436,22 +444,29 @@ wire        m0_waitrequest_int;
 // grant fire.
 wire ss_port_req = ss_freeze | ss_load_busy;
 reg  ss_port_own;
+// The edge the grant lands on. Combinational so that ss_hold below can keep
+// the state machine from arming anything on that same edge: a request armed
+// there would be held, masked by the m0 mux, for the whole ownership, and
+// keep ss_ram_idle -- which is in AmigaCD.sv's cpu_boundary -- low all that
+// time, so a restore's quiesce would time out.
+wire ss_grant = ss_port_req & ~ss_port_own & ss_ram_idle & (ss_freeze | ss_cpu_parked);
 always @(posedge sysclk) begin
 	if (~reset_n)          ss_port_own <= 1'b0;
 	else if (~ss_port_req) ss_port_own <= 1'b0;
-	else if (ss_ram_idle)  ss_port_own <= 1'b1;
+	else if (ss_grant)     ss_port_own <= 1'b1;
 end
 
-// ss_freeze appears here as well as ss_port_own so that the pin goes up on
-// the same cycle the freeze does. ss_port_own is registered and can lag it by
-// a cycle, and a single unpinned cycle at the freeze instant is enough for the
-// state machine below to arm a bridge DMA write -- exactly the write this pin
-// exists to keep out of a snapshot. (At the freeze instant ss_ram_idle is
-// already true, because AmigaCD.sv puts it in cpu_boundary, so the grant
-// follows on the very next edge.) During a restore ss_freeze is low until the
-// payload has been checked, so the pin is driven by ss_port_own alone up to
-// that point, which is what lets the port go idle in the first place.
-assign ram_busy       = (ss_freeze | ss_port_own) ? 1'b1 : m0_waitrequest_int;
+// Pinned on the grant only. It used to be pinned on ss_freeze as well, so that
+// nothing could be armed in the cycle between the freeze and the grant -- but
+// ss_quiesce raises the freeze on an edge where ss_ram_idle was true BEFORE
+// it, and on that same edge the state machine can still arm (ss_hold is 0
+// before the edge too). With ram_busy pinned, that strobe could never be
+// accepted or cleared, ss_ram_idle never came back, and the save hung with the
+// machine frozen. Now the freeze stops new arms through ss_hold, a strobe
+// armed on the freeze edge completes normally, and the grant follows once it
+// has. That write landing before the dump is consistent: the dump reads fast
+// RAM through this same port, after it.
+assign ram_busy       = ss_port_own ? 1'b1 : m0_waitrequest_int;
 assign ss_waitrequest = ss_port_own ? m0_waitrequest_int : 1'b1;
 
 // Read return. Only ss can have a master-0 read outstanding while it owns the
@@ -489,7 +504,7 @@ wire      ss_rd_ret = ~ss_port_own & ram_dout_ready;
 always @(posedge sysclk) begin
 	if (~reset_n)       ss_rd_beats <= 4'd0;
 	else if (ss_rd_acc) ss_rd_beats <= ss_rd_beats + {2'b00, ram_bcnt[1:0]} - {3'b000, ss_rd_ret};
-	else if (ss_rd_ret) ss_rd_beats <= ss_rd_beats - 4'd1;
+	else if (ss_rd_ret & ss_rd_outstanding) ss_rd_beats <= ss_rd_beats - 4'd1;
 end
 wire [28:0] hs_address;
 wire  [7:0] hs_burstcount;
@@ -654,7 +669,8 @@ assign ss_ram_idle = ~ss_rd_outstanding & ~ram_rd & ~ram_we & ~wq_any &
 // do not go to DDR3 at all: the sdr_* port in state 0 does not look at
 // ram_busy, so pinning ram_busy alone would let a bridge DMA write reach SDRAM
 // fast RAM mid-dump. ss_hold gates every state-0 select below.
-wire ss_hold = ss_freeze | ss_port_own;
+// ss_grant too: see its declaration.
+wire ss_hold = ss_freeze | ss_port_own | ss_grant;
 
 wire       st0     = (state == 3'd0) & ~ss_hold;
 wire       dw_sel  = st0 & ~dma_write_ack & dma_write_req & ~wr_first;

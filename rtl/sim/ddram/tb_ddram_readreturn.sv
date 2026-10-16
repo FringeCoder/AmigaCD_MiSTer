@@ -63,6 +63,8 @@ module tb_ddram_readreturn;
 	wire        ramready;
 
 	reg         ss_load_busy = 0;
+	reg         ss_freeze = 0;
+	reg         ss_cpu_parked = 1;   // check 7 holds it low
 	reg  [28:0] ss_address = 0;
 	reg         ss_read = 0;
 	wire [63:0] ss_readdata;
@@ -96,11 +98,12 @@ module tb_ddram_readreturn;
 		// Save state port. Idle for the first three checks; check 4 takes
 		// the port for real, because that is the one thing this tree has
 		// that the upstream of this fix does not.
-		.ss_freeze(1'b0), .ss_load_busy(ss_load_busy), .ss_address(ss_address),
+		.ss_freeze(ss_freeze), .ss_load_busy(ss_load_busy), .ss_address(ss_address),
 		.ss_writedata(64'd0), .ss_byteenable(8'hFF), .ss_write(1'b0),
 		.ss_read(ss_read), .ss_readdata(ss_readdata),
 		.ss_readdatavalid(ss_readdatavalid),
 		.ss_waitrequest(ss_waitrequest), .ss_ram_idle(ss_ram_idle),
+		.ss_cpu_parked(ss_cpu_parked),
 
 		.cpuAddr(cpuAddr), .cpuCS(cpuCS), .cpustate(cpustate),
 		.cpuL(cpuL), .cpuU(cpuU), .cpuWR(cpuWR), .cpuRD(cpuRD),
@@ -280,14 +283,24 @@ module tb_ddram_readreturn;
 	integer    soak_fail;
 	reg        ok_case;
 
-	// Did the test ever actually reach the state it is testing -- a read armed
-	// but unaccepted while ss owns master 0? ram_rd is the held strobe, so
-	// ram_rd & ss_port_own is exactly "state 1 is waiting for a return it will
-	// never be issued". Counted, and required to be non-zero: a construction
-	// that never enters the window would pass no matter what the DUT did.
-	integer coincide = 0;
-	always @(posedge sysclk)
+	// A read armed but unaccepted while ss owns master 0. ram_rd is the held
+	// strobe, so ram_rd & ss_port_own is "something of ours is parked under
+	// ss". It used to be expected here -- the grant edge could arm one -- and
+	// it held ss_ram_idle low for the whole ownership, which in the core keeps
+	// cpu_boundary low and times a restore's quiesce out. Since the grant edge
+	// is gated (ss_grant in ss_hold) it must never happen, and ss_ram_idle must
+	// stay high for as long as ss owns the port.
+	//
+	// grant_pending counts grants that landed with a request waiting to arm,
+	// which is the construction this check exists for: required non-zero, or
+	// the zero above proves nothing.
+	integer coincide = 0, idle_lost = 0, grant_pending = 0;
+	always @(posedge sysclk) begin
 		if (dut.ram_rd && dut.ss_port_own) coincide = coincide + 1;
+		if (dut.ss_port_own && !ss_ram_idle) idle_lost = idle_lost + 1;
+		if (dut.ss_grant && (dut.cache_req || (dut.dma_read_req && !dut.dma_read_ack)))
+			grant_pending = grant_pending + 1;
+	end
 
 	// Park a read on the grant edge, then let ss read, and check the parked
 	// client never takes ss's answer.
@@ -441,6 +454,84 @@ module tb_ddram_readreturn;
 		end
 	endtask
 
+	integer ddr_we_n = 0;
+	always @(posedge sysclk) if (!DDRAM_BUSY && DDRAM_WE) ddr_we_n = ddr_we_n + 1;   // check 6's write is the only one in flight
+
+	task ss_freeze_edge(output ok);
+		integer n;
+		begin
+			ok = 1;
+			busy_mode = BUSY_NEVER;
+			ddr_we_n = 0;
+			repeat (10) @(posedge sysclk);
+			dmaAddr = 28'h0001_E00;
+			dmaWE = 1; dmaU = 0; dmaL = 0; dmaWR = 16'hD00D;
+			dmaCS = 1;
+			n = 0;
+			// raise the freeze on the edge the write arms, with idle true before it
+			while (n < TIMEOUT_CYC) begin
+				@(negedge sysclk);
+				if (ss_ram_idle && dut.dw_sel && !dut.ram_busy) begin
+					@(posedge sysclk); #0.1 ss_freeze = 1;
+					n = TIMEOUT_CYC;
+				end
+				n = n + 1;
+			end
+			if (!ss_freeze) begin
+				$display("FAIL: freeze edge: the arming edge was never reached");
+				ok = 0;
+			end
+			n = 0;
+			while (ss_waitrequest && n < TIMEOUT_CYC) begin @(posedge sysclk); n = n + 1; end
+			if (ss_waitrequest) begin
+				$display("FAIL: freeze edge: frozen with a write armed, and the port was never granted");
+				ok = 0;
+			end
+			repeat (20) @(posedge sysclk);
+			if (ddr_we_n != 1) begin
+				$display("FAIL: freeze edge: the write reached DDR3 %0d times, want 1", ddr_we_n);
+				ok = 0;
+			end
+			if (ok) $display("ok:   a write armed on the freeze edge completed once and the grant followed");
+			ss_freeze = 0;
+			dmaCS = 0; dmaWE = 0;
+			repeat (20) @(posedge sysclk);
+		end
+	endtask
+
+	task ss_parked_gate(output ok);
+		integer n;
+		reg [15:0] got;
+		reg to;
+		begin
+			ok = 1;
+			busy_mode = BUSY_NEVER;
+			ss_cpu_parked = 0;
+			ss_load_busy = 1;
+			repeat (40) @(posedge sysclk);
+			if (!ss_waitrequest) begin
+				$display("FAIL: restore granted before the CPU parked");
+				ok = 0;
+			end
+			// the CPU, not yet parked, still gets its fast RAM read
+			cpu_read(28'h0080_000, got, to);
+			if (to) begin
+				$display("FAIL: an unparked CPU's read was not served during a restore request");
+				ok = 0;
+			end
+			ss_cpu_parked = 1;
+			n = 0;
+			while (ss_waitrequest && n < TIMEOUT_CYC) begin @(posedge sysclk); n = n + 1; end
+			if (ss_waitrequest) begin
+				$display("FAIL: restore never granted after the CPU parked");
+				ok = 0;
+			end
+			if (ok) $display("ok:   the restore's grant waited for the park, and the CPU was served until then");
+			ss_load_busy = 0;
+			repeat (20) @(posedge sysclk);
+		end
+	endtask
+
 	initial begin
 		repeat (20) @(posedge sysclk);
 		reset_n = 1;
@@ -496,11 +587,13 @@ module tb_ddram_readreturn;
 
 		// ---- 4. the save-state port owns master 0 --------------------------
 		// ss_port_own is registered, so it is granted on the edge AFTER
-		// ss_ram_idle goes true -- and on that same edge the state machine can
-		// still arm a bridge DMA read, because the bridge is not parked for a
-		// restore (ddram_ctrl.v:65-84). That read then sits in state 1 while
-		// ss owns the port. Without ~ram_busy holding it off, state 1 would
-		// take the NEXT return it sees, and the next return belongs to ss.
+		// ss_ram_idle goes true -- and on that same edge the state machine
+		// could still arm a bridge DMA read, because the bridge is not parked
+		// for a restore (ddram_ctrl.v:65-84). It used to: the read then sat in
+		// state 1 under ss, and ~ss_port_own there kept it off ss's returns,
+		// but it also kept ss_ram_idle low for the whole ownership. Now the
+		// grant edge is gated, so nothing arms on it; this checks that, and
+		// that ss's own read is right and the CPU's is served after.
 		//
 		// Swept rather than hand-timed: the bridge request crosses a 2-FF sync
 		// chain, so the arming cycle is not exactly predictable from here.
@@ -515,16 +608,19 @@ module tb_ddram_readreturn;
 			ss_park_case(i, ok_case);
 			if (!ok_case) soak_fail = soak_fail + 1;
 		end
-		$display("info: %0d cycles with a read parked while ss owned master 0", coincide);
+		$display("info: %0d grants landed with a request waiting to arm", grant_pending);
 		if (soak_fail) begin
-			$display("FAIL: a parked read took the save-state port's data in %0d of 8 constructions",
-			         soak_fail);
+			$display("FAIL: the save-state port's read went wrong in %0d of 8 constructions", soak_fail);
 			errors = errors + 1;
-		end else if (coincide == 0) begin
-			$display("FAIL: no read was ever parked under ss ownership -- this check proved nothing");
+		end else if (grant_pending == 0) begin
+			$display("FAIL: no grant ever landed with a request waiting -- this check proved nothing");
+			errors = errors + 1;
+		end else if (coincide != 0 || idle_lost != 0) begin
+			$display("FAIL: a request was armed on the grant edge: %0d cycles parked under ss, %0d owned cycles with ss_ram_idle low",
+			         coincide, idle_lost);
 			errors = errors + 1;
 		end else begin
-			$display("ok:   a read parked under ss ownership never took an ss return");
+			$display("ok:   nothing armed on the grant edge; ss_ram_idle stayed high through every ownership");
 		end
 
 		// ---- 5. posted writes drain before the grant ------------------------
@@ -539,6 +635,20 @@ module tb_ddram_readreturn;
 		end else begin
 			$display("ok:   16 grants, each after its posted write reached DDR3");
 		end
+
+		// ---- 6. a request armed on the freeze edge does not hang the save --
+		// ss_quiesce raises the freeze on an edge where ss_ram_idle was true
+		// before it, and the state machine can arm on that same edge. With
+		// ram_busy pinned by the freeze that strobe was never accepted, idle
+		// never came back and the grant never fired. Freeze raised on exactly
+		// such an edge (a bridge DMA write arming): the grant must follow, and
+		// the write must reach DDR3 once, not be re-issued.
+		ss_freeze_edge(ok_case);
+		if (!ok_case) errors = errors + 1;
+
+		// ---- 7. a restore's grant waits for the CPU to park ---------------
+		ss_parked_gate(ok_case);
+		if (!ok_case) errors = errors + 1;
 
 		if (errors == 0) $display("RUN: PASS");
 		else             $display("RUN: FAIL (%0d)", errors);
