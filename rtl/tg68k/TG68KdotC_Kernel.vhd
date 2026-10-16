@@ -339,6 +339,7 @@ architecture logic of TG68KdotC_Kernel is
 	signal source_2ndHbits	: bit;
 	signal source_2ndMbits	: bit;
 	signal source_2ndLbits	: bit;
+	signal source_2ndHAbits	: bit;
 	signal dest_areg			: std_logic;
 	signal dest_LDRareg		: std_logic;
 	signal dest_LDRHbits		: bit;
@@ -477,6 +478,12 @@ architecture logic of TG68KdotC_Kernel is
 	signal micro_state		: micro_states;
 	signal clkena_i			: std_logic;
 	signal FC_i				: std_logic_vector(2 downto 0);
+	signal FC_eff			: std_logic_vector(2 downto 0);
+	signal moves_op		: std_logic;
+	signal moves_fc		: std_logic;
+	signal moves_fcv		: std_logic_vector(2 downto 0);
+	signal moves_skip		: std_logic;
+	signal state_mmu		: std_logic_vector(1 downto 0);
 	signal data_write_i		: std_logic_vector(15 downto 0);
 	signal longword_i		: std_logic;
 	signal mmu_stall		: std_logic;
@@ -564,7 +571,7 @@ ALU: TG68K_ALU
 	port map(
 		clk => clk, reset => Reset, k_ena => clkena_lw,
 		tc => MMU_TC, crp => MMU_CRP, srp => MMU_SRP, tt0 => MMU_TT0, tt1 => MMU_TT1,
-		l_addr => addr, l_state => state, l_fc => FC_i, l_rmw => '0',
+		l_addr => addr, l_state => state_mmu, l_fc => FC_eff, l_rmw => '0',
 		l_uds => memmaskmux(5), l_lds => memmaskmux(4), l_wr => data_write_i, l_long => longword_i,
 		p_addr => addr_out, p_state => mmu_pstate, p_uds => nUDS, p_lds => nLDS, p_wr => data_write,
 		p_long => longword, p_ci => open, p_ack => clkena_in, p_rd => data_in, stall => mmu_stall,
@@ -574,7 +581,10 @@ ALU: TG68K_ALU
 
 	mmu_busy <= mmu_stall;
 	clkena_i <= clkena_in AND NOT mmu_stall;
-	FC <= FC_i;
+	FC <= FC_eff;
+	FC_eff <= moves_fcv WHEN moves_fc='1' ELSE FC_i;
+	state_mmu <= "01" WHEN moves_skip='1' ELSE state;
+	moves_op <= '1' WHEN cpu(0)='1' AND opcode(15 downto 8)="00001110" AND opcode(7 downto 6)/="11" ELSE '0';
 	-- AMR - let the parent module know this is a longword access.  (Easy way to enable burst writes.)
 	longword_i <= not memmaskmux(3);
 	
@@ -864,7 +874,7 @@ PROCESS (opcode, rf_source_addrd, brief, setstackaddr, dest_hbits, dest_areg, de
 -----------------------------------------------------------------------------
 -- set source regaddr
 -----------------------------------------------------------------------------
-PROCESS (opcode, movem_presub, movem_regaddr, source_lowbits, source_areg, sndOPC, exec, set, source_2ndLbits, source_2ndHbits, 	source_LDRLbits, source_LDRMbits, last_data_read, source_2ndMbits)
+PROCESS (opcode, movem_presub, movem_regaddr, source_lowbits, source_areg, sndOPC, exec, set, source_2ndLbits, source_2ndHbits, 	source_LDRLbits, source_LDRMbits, last_data_read, source_2ndMbits, source_2ndHAbits)
 	BEGIN
 		IF exec(movem_action)='1' OR set(movem_action) ='1' THEN
 			IF movem_presub='1' THEN
@@ -874,6 +884,8 @@ PROCESS (opcode, movem_presub, movem_regaddr, source_lowbits, source_areg, sndOP
 			END IF; 
 		ELSIF source_2ndLbits='1' THEN
 			rf_source_addr <= '0'&sndOPC(2 downto 0);
+		ELSIF source_2ndHAbits='1' THEN
+			rf_source_addr <= sndOPC(15 downto 12);
 		ELSIF source_2ndHbits='1' THEN
 			rf_source_addr <= '0'&sndOPC(14 downto 12);
 		ELSIF source_2ndMbits='1' THEN
@@ -1296,6 +1308,8 @@ PROCESS (clk, IPL, setstate, addrvalue, state, exec_write_back, set_direct_data,
 			IF Reset = '1' THEN
 				state <= "01";
 				addrvalue <= '0';
+				moves_fc <= '0';
+				moves_skip <= '0';
 				opcode <= X"2E79"; 					--move $0,a7
 				trap_interrupt <= '0';
 				interrupt <= '0';
@@ -1410,6 +1424,8 @@ PROCESS (clk, IPL, setstate, addrvalue, state, exec_write_back, set_direct_data,
 					memread <= "1111";
 					FC_i(1) <= NOT setstate(1) OR (PCbase AND NOT setstate(0));
 					FC_i(0) <= setstate(1) AND (NOT PCbase OR setstate(0));
+					moves_fc <= '0';
+					moves_skip <= '0';
 					IF interrupt='1' THEN
 						FC_i(1 downto 0) <= "11";
 					END IF;	
@@ -1426,6 +1442,10 @@ PROCESS (clk, IPL, setstate, addrvalue, state, exec_write_back, set_direct_data,
 						addrvalue <= '0';
 					ELSIF execOPC='1' AND exec_write_back='1' THEN
 						state <= "11";
+						IF moves_op='1' AND sndOPC(11)='1' THEN
+							moves_fc <= '1';
+							moves_fcv <= DFC;
+						END IF;
 						FC_i(1 downto 0) <= "01";
 						memmask <= wbmemmask;
 						mm_plain <= wb_plain;
@@ -1433,6 +1453,14 @@ PROCESS (clk, IPL, setstate, addrvalue, state, exec_write_back, set_direct_data,
 					ELSE	
 						state <= setstate;
 						addrvalue <= setaddrvalue; 
+						IF moves_op='1' AND setstate="10" AND setaddrvalue='0' THEN
+							IF sndOPC(11)='0' THEN
+								moves_fc <= '1';
+								moves_fcv <= SFC;
+							ELSE
+								moves_skip <= '1';
+							END IF;
+						END IF;
 						IF setstate="01" THEN
 							memmask <= "111111";
 							mm_plain <= '0';
@@ -1807,6 +1835,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		source_LDRLbits <= '0';
 		source_LDRMbits <= '0';
 		source_2ndHbits <= '0';
+		source_2ndHAbits <= '0';
 		source_2ndMbits <= '0';
 		source_2ndLbits <= '0';
 		dest_LDRHbits <= '0';
@@ -2120,9 +2149,31 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 				ELSIF opcode(11 downto 9)="111" THEN		--MOVES not in 68000
 					IF cpu(0)='1' AND opcode(7 downto 6)/="11" AND opcode(5 downto 4)/="00" AND (opcode(5 downto 3)/="111" OR opcode(2 downto 1)="00") THEN
 						IF SVmode='1' THEN
-							--TODO: implement MOVES
-							trap_illegal <= '1';
-							trapmake <= '1';
+							datatype <= opcode(7 downto 6);
+							set(no_Flags) <= '1';
+							set_exec(opcMOVE) <= '1';
+							IF decodeOPC='1' THEN
+								next_micro_state <= nop;
+								set(get_2ndOPC) <= '1';
+								set(ea_build) <= '1';
+							END IF;
+							IF sndOPC(11)='0' THEN
+								set_exec(Regwrena) <= '1';
+								IF state="10" AND addrvalue='0' THEN
+									dest_2ndHbits <= '1';
+									dest_LDRareg <= sndOPC(15);
+									IF sndOPC(15)='1' AND opcode(7 downto 6)="00" THEN
+										set_datatype <= "10";
+										set(opcEXTB) <= '1';
+									END IF;
+								END IF;
+							ELSE
+								set_exec(ea_data_OP1) <= '1';
+								write_back <= '1';
+								IF state="10" AND addrvalue='0' THEN
+									source_2ndHAbits <= '1';
+								END IF;
+							END IF;
 						ELSE
 							trap_priv <= '1';
 							trapmake <= '1';
