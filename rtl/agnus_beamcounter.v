@@ -326,6 +326,11 @@ reg [ 8:0] hcenter_reg;
 // programmed blanking edge by half a lores pixel, which on hardware reads as a
 // blurred picture and a doubled OSD -- measured 2026-09-01, PAL, and the reason
 // this comment is longer than the code.
+//
+// Upstream 430209e "agnus: keep the fine bits of HBSTRT and HBSTOP" (#261)
+// feeds bits 10-8 back into this comparison on AGA (VARBEAMEN). Not taken, at
+// the 2026-10-16 sync, for the reason above; revisit only with a hardware
+// measurement that says otherwise.
 reg [ 8:0] hbstrt_reg;
 reg [ 8:0] hbstop_reg;
 reg [10:0] vtotal_reg;
