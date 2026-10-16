@@ -532,6 +532,50 @@ module tb_ddram_readreturn;
 		end
 	endtask
 
+	// ---- 8. the stream buffer does not take ss's return ----------------
+	// Defence in depth, and white-box because it has to be: since the grant
+	// waits for ~sb_wait & ~sc_wait and nothing can arm on the grant edge or
+	// under ownership, no input sequence leaves a buffer read owed while ss
+	// owns master 0. The ~ss_port_own on the buffer's return is there for the
+	// day that stops being true, so the owed read is planted directly: sb_wait
+	// set while ss owns the port, then an ss read. The beat is ss's and must
+	// go to ss only -- sb_wait still set afterwards, nothing filled from it.
+	task ss_buffer_guard(output ok);
+		integer n;
+		begin
+			ok = 1;
+			busy_mode = BUSY_NEVER;
+			ss_cpu_parked = 1;
+			ss_load_busy = 1;
+			n = 0;
+			while (ss_waitrequest && n < TIMEOUT_CYC) begin @(posedge sysclk); n = n + 1; end
+			@(negedge sysclk);
+			dut.sb_wait = 1'b1;          // a buffer read "owed" under ss
+			dut.sb_kill = 1'b0;
+			ss_address = 29'h001_0400;
+			ss_read = 1;
+			@(posedge sysclk);
+			while (ss_waitrequest && n < TIMEOUT_CYC) begin @(posedge sysclk); n = n + 1; end
+			ss_read = 0;
+			n = 0;
+			while (!ss_readdatavalid && n < TIMEOUT_CYC) begin @(posedge sysclk); n = n + 1; end
+			@(posedge sysclk); #0.1;
+			if (!dut.sb_wait) begin
+				$display("FAIL: the stream buffer took the save-state port's beat (sb_wait cleared by it)");
+				ok = 0;
+			end
+			if (dut.sb_d === row_data(29'h001_0400)) begin
+				$display("FAIL: the stream buffer holds the save-state port's data");
+				ok = 0;
+			end
+			if (ok) $display("ok:   a buffer read owed under ss did not take ss's beat");
+			@(negedge sysclk);
+			dut.sb_wait = 1'b0;
+			ss_load_busy = 0;
+			repeat (20) @(posedge sysclk);
+		end
+	endtask
+
 	initial begin
 		repeat (20) @(posedge sysclk);
 		reset_n = 1;
@@ -648,6 +692,10 @@ module tb_ddram_readreturn;
 
 		// ---- 7. a restore's grant waits for the CPU to park ---------------
 		ss_parked_gate(ok_case);
+		if (!ok_case) errors = errors + 1;
+
+		// ---- 8. the stream buffer's guard ----------------------------------
+		ss_buffer_guard(ok_case);
 		if (!ok_case) errors = errors + 1;
 
 		if (errors == 0) $display("RUN: PASS");

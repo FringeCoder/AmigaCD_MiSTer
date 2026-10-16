@@ -167,8 +167,10 @@ jobs:
       # every beat of a burst, and check 5 holds a posted write in the queue
       # while the port is asked for: the grant must wait until it is in DDR3.
       # Falsified 2026-10-16 by dropping ~wq_any from ss_ram_idle (16 of 16
-      # grants then came with the write still queued). The stream buffer's
-      # ~ss_port_own on its return is not reached by this bench.
+      # grants then came with the write still queued). Check 8 covers the
+      # stream buffer's ~ss_port_own on its return: no input sequence reaches
+      # it any more, so it plants an owed buffer read under ss ownership.
+      # Falsified by dropping the guard (the buffer then takes ss's beat).
       #
       # Checks 4, 6 and 7 are the grant itself, after a review found three ways
       # a save or restore could hang or be refused: a request armed on the
