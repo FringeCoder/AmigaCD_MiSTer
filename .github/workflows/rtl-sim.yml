@@ -296,6 +296,24 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # ss_serdes became a real shift register (it was addressed by count) to
+      # take a ~50-way word mux and a per-word count decode off two clk_114
+      # paths that missed setup after the 68030 merge. This proves every output
+      # cycle-identical to the addressed version (frozen as ss_serdes_ref.v)
+      # under random saves, gapped and restarted loads and stray words, at one
+      # word (its own generate branch), a ragged top word, and the real vector's
+      # size. Falsified on 2026-10-16: words shifted in at the bottom, a save
+      # that does not shift, and a broken one-word branch each fail it.
+      - name: ss_serdes shift register matches the addressed version (tb_ss_serdes_equiv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/ssserdes
+          for w in 32 77 1530; do
+            iverilog -g2012 -Ptb_ss_serdes_equiv.WIDTH=$w -o tb ../../ss_serdes.v ss_serdes_ref.v tb_ss_serdes_equiv.sv
+            vvp -n tb | tee out_$w.log
+            grep -q "RUN: PASS" out_$w.log
+          done
+
       # sys/yc_out.sv carries a local retiming: the chroma sine ROM moved in
       # front of the register feeding the U/V multipliers, without which the
       # 114 MHz fit missed setup by 1.0-1.4 ns on every seed. This proves the
