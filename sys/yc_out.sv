@@ -77,9 +77,17 @@ reg de_dly4 = 1'b0, de_dly5 = 1'b0, de_dly6 = 1'b0;
 
 reg [10:0]  cburst_phase = 11'd0; // colorburst counter
 reg unsigned [7:0] vref = 'd128; // Voltage reference point (Used for Chroma)
-logic [7:0]  chroma_LUT_COS = 8'd0; // Chroma cos LUT reference
-logic [7:0]  chroma_LUT_SIN = 8'd0; // Chroma sin LUT reference
-logic [7:0]  chroma_LUT_BURST = 8'd0; // Chroma colorburst LUT reference
+// AmigaCD_MiSTer local change (not upstream): these hold chroma_sin() of the
+// LUT index rather than the index itself, so the sine ROM and its negate sit
+// in front of the register instead of between it and the U/V multipliers. The
+// registers were only ever read through chroma_sin(), so the output is the
+// same on every clock; rtl/sim/yc proves it against the upstream module. With
+// the ROM on the multiply path the 114 MHz fit missed setup by 1.0-1.4 ns on
+// every seed (LUT mux, ROM, negate, then a 3.1 ns DSP). A sys/ resync that
+// drops this breaks that bench's build, by design.
+logic signed [10:0] chroma_COS_val = 11'sd0;   // chroma_sin(cos LUT reference)
+logic signed [10:0] chroma_SIN_val = 11'sd0;   // chroma_sin(sin LUT reference)
+logic signed [10:0] chroma_BURST_val = 11'sd0; // chroma_sin(colorburst LUT reference)
 logic [7:0]  chroma_LUT = 8'd0;
 
 /*
@@ -163,15 +171,15 @@ always_ff @(posedge clk) begin
 	// Adjust SINE carrier reference for PAL (Also adjust for PAL Switch)
 	if (PAL_EN) begin
 		if (PAL_FLIP)
-			chroma_LUT_BURST <= chroma_LUT + 8'd160;
+			chroma_BURST_val <= chroma_sin(chroma_LUT + 8'd160);
 		else
-			chroma_LUT_BURST <= chroma_LUT + 8'd96;
+			chroma_BURST_val <= chroma_sin(chroma_LUT + 8'd96);
 	end else  // Adjust SINE carrier reference for NTSC
-		chroma_LUT_BURST <= chroma_LUT + 8'd128;
+		chroma_BURST_val <= chroma_sin(chroma_LUT + 8'd128);
 
 	// Prepare LUT values for sin / cos (+90 degress)
-	chroma_LUT_SIN <= chroma_LUT;
-	chroma_LUT_COS <= chroma_LUT + 8'd64;
+	chroma_SIN_val <= chroma_sin(chroma_LUT);
+	chroma_COS_val <= chroma_sin(chroma_LUT + 8'd64);
 
 	// Calculate for U, V - Bit Shift Multiple by u = by * 1024 x 0.492 = 504, v = ry * 1024 x 0.877 = 898
 	phase[0].u <= $signed({2'b0 ,(blue_2)}) - $signed({2'b0 ,phase[0].y[17:10]});
@@ -196,7 +204,7 @@ always_ff @(posedge clk) begin
 	else begin // Generate Colorburst for 9 cycles
 		if (cburst_phase >= COLORBURST_RANGE[16:10] && cburst_phase <= COLORBURST_RANGE[9:0]) begin // Start the color burst signal at 40 samples or 0.9 us
 			// COLORBURST SIGNAL GENERATION (9 CYCLES ONLY or between count 40 - 240)
-			phase[2].u <= $signed({chroma_sin(chroma_LUT_BURST),5'd0});
+			phase[2].u <= $signed({chroma_BURST_val,5'd0});
 			phase[2].v <= 21'b0;
 			phase[2].burst <= 1'b1;
 			phase[2].chroma_en <= 1'b0;
@@ -213,8 +221,8 @@ always_ff @(posedge clk) begin
 			U,V are both multiplied by 1024 earlier to scale for the decimals in the YUV colorspace conversion.
 			U and V are both divided by 2^10 which introduce chroma subsampling of 4:1:1 (25% or from 8 bit to 6 bit)
 			*/
-			phase[2].u <= $signed((phase[1].u)>>>10) * $signed(chroma_sin(chroma_LUT_SIN));
-			phase[2].v <= $signed((phase[1].v)>>>10) * $signed(chroma_sin(chroma_LUT_COS));
+			phase[2].u <= $signed((phase[1].u)>>>10) * $signed(chroma_SIN_val);
+			phase[2].v <= $signed((phase[1].v)>>>10) * $signed(chroma_COS_val);
 			phase[2].burst <= 1'b0;
 			phase[2].chroma_en <= de_dly3;
 

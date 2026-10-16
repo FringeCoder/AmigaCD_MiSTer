@@ -253,14 +253,12 @@ set_false_path -from {*a2065_ddr3_mailbox*|cmd_clear}        -to {*a2065_regfile
 set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_valid}  -to {*a2065_ddram*|rv_sync0}
 set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_data[*]} -to {*a2065_ddram*|rd_sync0[*]}
 
-# yc_out chroma LUT: multicycle retained from the old bridge, where boardram BRAM
-# placement congestion pushed this path to -0.471ns. The flat-DDR3 design removes
-# that BRAM, so this exception may now be UNNECESSARY. Re-validate against the
-# merged fitter run (R3); keep only if report_timing still shows the path marginal.
-set_multicycle_path -from {yc_out|chroma_LUT_BURST[*]} \
-                    -to   {yc_out|phase[*].u[*]} -setup 2
-set_multicycle_path -from {yc_out|chroma_LUT_BURST[*]} \
-                    -to   {yc_out|phase[*].u[*]} -hold 1
+# yc_out: no exception. A multicycle from chroma_LUT_BURST to phase[*].u used
+# to sit here, retained from the old bridge. It was never valid -- the burst LUT
+# index is recomputed from the free-running phase accumulator every clk_114
+# cycle -- and its source register is gone: sys/yc_out.sv now registers the
+# sine values rather than the indices (see the comment there), which closes the
+# path as a plain single-cycle one.
 
 # emu PLL cross-clock: counter[1]→counter[0] marginal path
 set_multicycle_path -setup 2 -from [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[1\].output_counter|divclk"] -to [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[0\].output_counter|divclk"]

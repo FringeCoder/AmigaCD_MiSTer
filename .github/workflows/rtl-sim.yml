@@ -296,6 +296,22 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # sys/yc_out.sv carries a local retiming: the chroma sine ROM moved in
+      # front of the register feeding the U/V multipliers, without which the
+      # 114 MHz fit missed setup by 1.0-1.4 ns on every seed. This proves the
+      # output identical to upstream's module on every clock (NTSC and PAL,
+      # burst and active chroma both exercised and counted), and stops building
+      # if a sys/ resync reverts the change -- which would bring the setup
+      # failure back with nothing else to say so. Falsified on 2026-10-16: a
+      # cos offset of 63, a one-clock-early sine and a PAL burst offset of 161
+      # each fail it. Verilator because Icarus 12 cannot parse yc_out.
+      - name: yc_out retiming matches upstream (tb_yc_out_equiv.sv)
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq verilator >/dev/null
+          cd rtl/sim/yc
+          ./run.sh
+
       # HBSTRT and HBSTOP carry half-a-colour-clock position in bit 10, which the
       # core used to drop. Also asserts that bits 9:8 stay dropped -- they are 35 ns
       # resolution and hpos cannot express them, so a future change that folds them
