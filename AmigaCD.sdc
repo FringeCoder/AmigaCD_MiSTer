@@ -144,6 +144,14 @@ set_false_path -from {*ss_serdes*|state_out[*]} -to $ss_clksys
 # clk_sys. Same vector, same freeze, carried on its own bus.
 set_false_path -from {*ss_ctrl*|shadow_ld_data[*]} -to $ss_clksys
 
+# Capture: the CIA words' clk_114 retiming registers (AmigaCD.sv, ss_cia_a /
+# ss_cia_b). They were added to move the CIAs' crossing off the shifter, and
+# they take the same coincident-edge hold check the shifter did: -0.569 at
+# seed 4 after upstream 26eb46a moved the placement, CIAA1|sdr_latch[5] ->
+# ss_cia_a[25]. Their only consumer is the state vector (ss_state.vh), read
+# inside the freeze, so the argument above covers them word for word.
+set_false_path -from $ss_clksys -to {emu|ss_cia_a[*] emu|ss_cia_b[*]}
+
 set_false_path -from {emu|cpu_wrapper|z3ram_*}
 set_false_path -from {emu|cpu_wrapper|z2ram_*}
 # Upstream 26eb46a: the SDRAM-backed Zorro III windows are set by autoconfig
