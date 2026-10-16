@@ -42,7 +42,7 @@ module tb_cpu_wrapper_park;
 	reg         clk = 0;
 	reg         reset = 0;          // active low
 	reg         ph1 = 0, ph2 = 0;
-	reg  [4:0]  cpucfg = 5'b00001;  // [1:0] non-zero selects TG68K; see check 4 for the rest
+	reg  [2:0]  cpucfg = 3'b001;    // [1:0] non-zero selects TG68K; see check 4 for the rest
 	reg  [2:0]  fastramcfg = 3'd0;
 	reg  [2:0]  cachecfg = 3'd0;
 	reg         bootrom = 1'b0;
@@ -66,7 +66,7 @@ module tb_cpu_wrapper_park;
 		.reset(reset), .reset_out(),
 		.clk(clk), .ph1(ph1), .ph2(ph2),
 		.cpucfg(cpucfg), .fastramcfg(fastramcfg), .cachecfg(cachecfg),
-		.bootrom(bootrom), .ntsc(1'b0), .sdram_big(1'b0), .sdram_dual(1'b0),
+		.bootrom(bootrom), .sdram_big(1'b0), .sdram_dual(1'b0),
 		.chip32_en(1'b0), .chip_long(), .chip_din2(), .chip_dout2(16'd0),
 		.ramlong1(), .ramdin_lo(), .ramdout_hi(16'd0), .ramready_l(1'b0),
 		.z3sdr_base0(), .z3sdr_ena0(), .z3sdr_base1(), .z3sdr_ena1(),
@@ -247,7 +247,7 @@ module tb_cpu_wrapper_park;
 		// live in this bench at all -- and the 68020 must not.
 		dut.cpu_inst_p.r_busstate = 2'd2;
 		ramready = 1'b1;
-		cpucfg = 5'b00111;
+		cpucfg = 3'b111;
 		repeat (8) @(posedge clk);
 		max_gap(60, gap);
 		if (gap > 0) $display("ok:   68EC020 at A1200 speed: held for up to %0d cycles", gap);
@@ -255,7 +255,7 @@ module tb_cpu_wrapper_park;
 			$display("FAIL: 68EC020 at A1200 speed was never held -- the cycle model is not live here");
 			errors = errors + 1;
 		end
-		cpucfg = 5'b00011;
+		cpucfg = 3'b011;
 		repeat (8) @(posedge clk);
 		max_gap(60, gap);
 		check("68020, Turbo On: runs free", gap, 0);
@@ -264,14 +264,14 @@ module tb_cpu_wrapper_park;
 		repeat (4) @(posedge clk);
 
 		// The park has to hold whatever the cycle model is doing: 68010,
-		// 68020, 68EC020 at A1200 speed, and the 68030 at its lowest and its
-		// unlimited clock. (The 68030 cannot save -- AmigaCD.sv refuses it --
+		// 68020, 68EC020 at A1200 speed, and the 68030 with and without its MMU
+		// (upstream a5f1637 left the 68030 one clock). (The 68030 cannot save -- AmigaCD.sv refuses it --
 		// but the park is cpu_wrapper's and must not depend on that.)
 		begin : modes
-			reg [4:0] m [0:4];
+			reg [2:0] m [0:4];
 			integer k;
-			m[0] = 5'b00001; m[1] = 5'b00011; m[2] = 5'b00111;
-			m[3] = 5'b00010; m[4] = 5'b11110;
+			m[0] = 3'b001; m[1] = 3'b011; m[2] = 3'b111;
+			m[3] = 3'b010; m[4] = 3'b110;
 			for (k = 0; k < 5; k = k + 1) begin
 				cpucfg = m[k];
 				repeat (8) @(posedge clk);
@@ -285,7 +285,7 @@ module tb_cpu_wrapper_park;
 				repeat (4) @(posedge clk);
 			end
 		end
-		cpucfg = 5'b00001;
+		cpucfg = 3'b001;
 		repeat (8) @(posedge clk);
 
 		// ---- 5. the chip-slot guard -----------------------------------------

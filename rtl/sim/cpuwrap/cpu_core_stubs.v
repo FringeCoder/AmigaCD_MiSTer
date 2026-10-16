@@ -48,12 +48,13 @@ module TG68KdotC_Kernel
 
 	input       [1:0] cpu,
 	input             cpu030,
+	input             mmu030,
 	output            opc_start,
 	output     [15:0] opc_out,
 	output            opc_cond,
 	output     [15:0] opc_snd,
 	output            opc_dbx,
-	output     [13:0] opc_cacr,
+	output      [1:0] opc_cacr,
 	output            mmu_busy,
 	output      [1:0] busstate,
 	output      [3:0] cacr_out,
@@ -109,7 +110,7 @@ module TG68KdotC_Kernel
 	assign opc_cond       = 1'b0;
 	assign opc_snd        = 16'd0;
 	assign opc_dbx        = 1'b0;
-	assign opc_cacr       = 14'd0;
+	assign opc_cacr       = 2'd0;
 	assign mmu_busy       = 1'b0;
 	assign cacr_out       = 4'd0;
 	assign d_cache_out    = 1'b1;

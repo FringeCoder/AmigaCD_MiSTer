@@ -98,14 +98,14 @@ assign sel_chipram   = !cpu_addr[31:21] && cchip;
 // -------------------------------------------------------------------------
 // Address remap (verbatim from cpu_wrapper.v:128-147)
 //
-//       Main  DDx  RTG  8M  64M/128M  256M
-//       ----  ---  ---  --  --------  ----
-//        SDR  DDR  RTG  Z2    Z3_0    Z3_1
-// 28      0    0    0   1      0       1
-// 27      0    0    0   0      1       X
-// 26      0    1    1   0      X       X
-// 25-23   0   111  110  0      X       X
-// supported configs: SDR + (Z2, Z3_0, Z3_1, Z3_0+Z3_1)
+//       Main  DDx  RTG  8M  128M  256M
+//       ----  ---  ---  --  ----  ----
+//        SDR  DDR  RTG  Z2  Z3_0  Z3_1
+// 28      0    0    0   1    0     1
+// 27      0    0    0   1    1     X
+// 26      0    1    1   0    X     X
+// 25-23   0   111  110  0    X     X
+// supported configs: SDR + (Z2, Z3_1, Z3_0+Z3_1)
 //
 // This is the mapping to the sram
 // map 00-1f to 00-1f (chipram), a0-ff to 20-7f. All non-fastram goes into

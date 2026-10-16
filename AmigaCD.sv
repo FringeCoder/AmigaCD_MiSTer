@@ -1107,7 +1107,6 @@ cpu_wrapper cpu_wrapper
 	.fastchip_lw     (fastchip_lw     ),
 
 	.cpucfg       (cpucfg          ),
-	.ntsc         (ntsc            ),
 	.cachecfg     (cachecfg        ),
 	.sdram_big    (sdram_big       ),
 	.sdram_dual   (sdram_dual      ),
@@ -1698,7 +1697,7 @@ assign UART_TXD = (hps_mpu & mt32_use) | uart_tx;
 
 //// minimig top ////
 // [1:0] CPU, [2] 68EC020 / 68030 clock, [4:3] 68030 clock (upstream 26eb46a).
-wire  [4:0] cpucfg;
+wire  [2:0] cpucfg;
 wire  [2:0] cachecfg;
 wire  [6:0] memcfg;
 wire        bootrom;   
@@ -1984,9 +1983,12 @@ wire       ss_load_req_osd = status[54];
 // restore. Same answer as fx68k: refused, not silently partial. Its Zorro III
 // fast RAM, which the payload has no section for, would be a second reason.
 //
-// cpucfg[1:0] and not |cpucfg: bit 2 is the 68EC020 / 68030-clock bit and
-// bits 4:3 the 68030 clock, none of which says which core is running.
-// cpu_wrapper runs fx68k exactly when cpucfg[1:0] == 0.
+// "68030 no MMU" (upstream a5f1637) is refused as well: it has no MMU state,
+// but the rest of the list -- upper CACR, CAAR, MSP, ISP, Zorro III -- stands.
+//
+// cpucfg[1:0] and not |cpucfg: bit 2 is the 68EC020 bit, or on the 68030 the
+// no-MMU bit, and says nothing about which core is running. cpu_wrapper runs
+// fx68k exactly when cpucfg[1:0] == 0.
 wire ss_supported   = (cpucfg[1:0] != 2'b00) & (cpucfg[1:0] != 2'b10);
 // *** the request is an EDGE, and it is made one HERE, not in userspace ***
 // ss_ctrl re-arms out of S_IDLE on any clock where save_req is high, and it
