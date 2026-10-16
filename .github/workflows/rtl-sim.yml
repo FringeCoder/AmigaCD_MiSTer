@@ -19,6 +19,9 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  # release.yml calls this, so a release is gated on the same syntax gate and
+  # benches as every push. Being callable publishes nothing by itself.
+  workflow_call:
 
 jobs:
   sim:
