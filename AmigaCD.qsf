@@ -28,15 +28,7 @@ set_global_assignment -name TIMEQUEST_MULTICORNER_ANALYSIS OFF
 set_global_assignment -name OPTIMIZE_POWER_DURING_FITTING OFF
 set_global_assignment -name FINAL_PLACEMENT_OPTIMIZATION ALWAYS
 set_global_assignment -name FITTER_EFFORT "STANDARD FIT"
-# Not upstream (upstream: HIGH PERFORMANCE EFFORT). With the 68030 merge the
-# design sits at 83% of the ALMs, and 24 seeds missed setup by 0.15-1.5 ns on a
-# different ordinary path each: chipset -> SDRAM address, the CPU caches' RAM
-# reads, the save-state shifter. That is congestion, not one deep path.
-# AGGRESSIVE PERFORMANCE trades area for speed in synthesis and fit; it changes
-# no constraint. (PLACEMENT_EFFORT_MULTIPLIER and ROUTER_TIMING_OPTIMIZATION_LEVEL
-# were tried first and left every seed's slack identical to the picosecond:
-# this Quartus does not act on them for Cyclone V.)
-set_global_assignment -name OPTIMIZATION_MODE "AGGRESSIVE PERFORMANCE"
+set_global_assignment -name OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"
 set_global_assignment -name ALLOW_POWER_UP_DONT_CARE ON
 set_global_assignment -name QII_AUTO_PACKED_REGISTERS "SPARSE AUTO"
 set_global_assignment -name ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION ON
