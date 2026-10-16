@@ -116,7 +116,7 @@ Everything here is someone else's work. Where we changed it, the row says so.
 
 | From | What | How it arrived |
 |---|---|---|
-| [MiSTer-devel/Minimig-AGA_MiSTer](https://github.com/MiSTer-devel/Minimig-AGA_MiSTer) | The core itself — the Amiga, and the CD32/CDTV chipset support including Akiko, the CDTV bridge and the host sector transport | Merged; synced through `da7632e`, then on 2026-10-16 through `cbf17d2`: the 2026-10-16 sync took `3c5d2ea`, `56ba962`, `d241338`, `61d3f02`, `16227ac`, `6b82678` as they are; hand-ported `691c2b7`, `e187420` and `cbf17d2` (with its host half in FringeCoder/AmigaCD); took only the CIA start-up delay from `2bddf21` (not its CNT count source -- see the CI guard); did not take `430209e` (HBSTRT/HBSTOP fine bits; reverses the 2026-09-01 hardware finding); and found `83ea662` already present in this fork's own form. Owed as its own PR: `26eb46a` (68030, 68EC020, Fast RAM to 384 MB, drive sounds) with its host half `e836aea`. Upstream's real-floppy line (`c1134ac`, `e6d9262`, `a527fbb`, `16934d3`) stays out by design. Earlier: vanfanel's OCS/ECS LORES off-grid fetch fix for *Absolute Inebriation* (`7f93ed1`, `cfcc0dc`, `3c8a0ed`, merged upstream as `c5ffbf9`), the A2065 Ethernet README section (`8325735`, Nigel Shearman), and `5fea457` as a design merge |
+| [MiSTer-devel/Minimig-AGA_MiSTer](https://github.com/MiSTer-devel/Minimig-AGA_MiSTer) | The core itself — the Amiga, and the CD32/CDTV chipset support including Akiko, the CDTV bridge and the host sector transport | Merged; synced through `da7632e`, then on 2026-10-16 through `cbf17d2`: the 2026-10-16 sync took `3c5d2ea`, `56ba962`, `d241338`, `61d3f02`, `16227ac`, `6b82678` as they are; hand-ported `691c2b7`, `e187420` and `cbf17d2` (with its host half in FringeCoder/AmigaCD); took only the CIA start-up delay from `2bddf21` (not its CNT count source -- see the CI guard); did not take `430209e` (HBSTRT/HBSTOP fine bits; reverses the 2026-09-01 hardware finding); and found `83ea662` already present in this fork's own form. Then, in its own PR, `26eb46a` (68030 with MMU, 68EC020, Fast RAM to 384 MB, drive sounds) hand-ported with its host half `e836aea` in FringeCoder/AmigaCD: save states refused on the 68030 (no room for the MMU in the state vector), the drive sound volume at status[60:59] (upstream's [52:51] are the save state bits), the unthrottled 68020 kept as CPU Turbo On, and this fork's floppy decode, DDR3 command stage and save state port kept around upstream's new controllers. Upstream's real-floppy line (`c1134ac`, `e6d9262`, `a527fbb`, `16934d3`) stays out by design. Earlier: vanfanel's OCS/ECS LORES off-grid fetch fix for *Absolute Inebriation* (`7f93ed1`, `cfcc0dc`, `3c8a0ed`, merged upstream as `c5ffbf9`), the A2065 Ethernet README section (`8325735`, Nigel Shearman), and `5fea457` as a design merge |
 | [kblood/Minimig-AGA-cd32-cdtv-native-akiko](https://github.com/kblood/Minimig-AGA-cd32-cdtv-native-akiko) | This fork's parent line. Specific fixes taken: the chip-DMA slot guard (`114ab43`), the SPRxDATx write vs shift-register load ordering fix (`e6f8fbe`) | Cherry-picked with authorship preserved |
 | [kblood/Main_MiSTer-cd32-cdtv](https://github.com/kblood/Main_MiSTer-cd32-cdtv) | The CD32/CDTV userspace driver and console OSD this fork's host half grew from | Userspace repo |
 | [Anime0t4ku/Main_MiSTer_Physical_Disc](https://github.com/Anime0t4ku/Main_MiSTer_Physical_Disc) | Physical CD-ROM drive support — `support/physical_disc/` is a verbatim copy, re-extracted on each sync | Userspace repo |
@@ -151,7 +151,7 @@ Inherited from Minimig-AGA, with this fork's additions marked **+**.
 * ChipRAM : 0.5MB - 2.0MB
 * SlowRAM : 0.0MB - 1.5MB
 * FastRAM : 0.0MB - 384MB
-* CPU core : 68000, 68020
+* CPU core : 68000, 68010, 68EC020, 68030 (with MMU, no FPU)
 * Kickstart : 1.2, 1.3, 2.0, 3.0, 3.1, 3.1.4, 3.2 (256kB, 512kB & 1MB kickstart ROMs currently supported)
 * HRTmon with custom registers mirror
 * Floppy drives : 1-4 floppies (supports ADF floppy image format), with normal & turbo speeds
@@ -255,7 +255,31 @@ New video modes will appear in ScreenMode preference. For more screen modes use 
 
 **Note: RTG outputs to HDMI primarily as it uses scaler.**
 If you want to see RTG video on VGA output, then set vga_scaler=1 in MiSTer.ini.
-RTG is available only for 68020 CPU.
+RTG is available only for 68030 CPU.
+
+### 68030 CPU
+
+The CPU item of the System page offers 68000, 68010, 68020 and 68030; on the AmigaCD Settings page, the CPU row
+offers the machine's 68020 or a 68030 for the 68020 machines (CD32, CD32+, A1200).
+
+* **68020** with **CPU Turbo On**, this fork's default, runs unthrottled with 32-bit addresses, as it always has here.
+  With CPU Turbo Off it is the **68EC020** at the speed of a stock A1200, with 24-bit addresses.
+* **68030** has an MMU and runs at 25, 33, 40 or 50MHz, the clocks of the real accelerator cards, or at 56.7MHz with
+  no speed limit (the CPU Clock row). There is no FPU. **Save states are refused on the 68030**: the state vector has
+  no room for its MMU.
+
+From 25 to 50MHz the 68030 runs as fast as a real 68030 card at the same clock (checked upstream with AIBB against an
+ACA1233n). As on the real machines, chip RAM, ROM and the custom registers are always read through the bus, and the
+data cache is switched on and off by software (SetPatch, CPU, WHDLoad).
+
+FastRAM can be none, 2M, 4M or 8M, and with the 68030 or the unthrottled 68020 also 64M, 128M, 256M or 384M.
+
+### Floppy drive sounds
+
+Audio & Video > Drive Sounds plays the sounds of the floppy drives: Off, Quiet, Normal or Loud. It needs
+`drivesounds.bin` in `games/Amiga` on the SD card; the AmigaCD release package carries it there, and the row reads
+"No file" without it. The samples are by Alastair M. Robinson, from
+[MinimigAGA-MiST-TC64](https://github.com/minimig-dev/MinimigAGA-MiST-TC64) (GPL v3).
 
 ### IDE and CDROM
 By default up to 2 IDE devices are supported. For Secondary Master/Slave devices, you have to install either IDEFix97 (shareware, WB3.1/3.9) or AtapiMagic (freeware, WB 3.1.4/3.2).

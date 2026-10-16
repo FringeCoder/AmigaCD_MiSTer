@@ -32,6 +32,7 @@ module tb_ddram_readreturn;
 	localparam integer BUSY_NEVER     = 0;
 	localparam integer BUSY_ON_RETURN = 1;
 	localparam integer BUSY_RANDOM    = 2;
+	localparam integer BUSY_ALWAYS    = 3;   // the bridge taking nothing, for check 5
 
 	localparam integer RD_LATENCY = 6;   // slave read latency, sysclk cycles
 
@@ -104,21 +105,43 @@ module tb_ddram_readreturn;
 		.cpuAddr(cpuAddr), .cpuCS(cpuCS), .cpustate(cpustate),
 		.cpuL(cpuL), .cpuU(cpuU), .cpuWR(cpuWR), .cpuRD(cpuRD),
 		.ramshared(1'b0), .ramready(ramready),
+		// Long-word fast RAM cycles (upstream 26eb46a): the 68030's, not
+		// exercised here.
+		.cpuLong(1'b0), .cpuLong1(1'b0), .cpuWR_lo(16'd0), .cpuRD_hi(),
+		.ramready_l(),
 
 		.dmaAddr(dmaAddr), .dmaCS(dmaCS), .dmaWE(dmaWE),
 		.dmaL(dmaL), .dmaU(dmaU), .dmaWR(dmaWR), .dmaRD(dmaRD),
-		.dmaACK(dmaACK)
+		.dmaACK(dmaACK),
+
+		// SDRAM fast RAM (upstream 26eb46a). Nothing here decodes to it, and
+		// sdr_hi is held low so the 3'b011 window does not either.
+		.sdr_hi(1'b0), .sdr_req(), .sdr_we(), .sdr_addr(), .sdr_dqm(),
+		.sdr_wdat(), .sdr_w2(), .sdr_dqm2(), .sdr_wdat2(),
+		.sdr_ack(1'b0), .sdr_rvalid(1'b0), .sdr_rdat(16'd0)
 	);
 
 	// ---- Avalon slave model ------------------------------------------------
-	// One command in flight is all ddram_ctrl ever issues (burstcount is tied
-	// to 1 and state 1 waits), so a single scheduled return is enough.
+	// Pipelined reads with bursts. Since upstream 26eb46a ddram_ctrl issues
+	// two-beat reads (ram_bcnt = 2) and its stream buffer can have a read
+	// accepted while an earlier one is still to return, both of which Avalon
+	// allows; this model used to take one single-beat read at a time, which
+	// left the second beat of every cache miss owed forever. Accepted reads go
+	// in a queue; each returns RD_LATENCY cycles after acceptance at the
+	// earliest, one beat per cycle, beats in order, rows a, a+1, ...
 	integer busy_mode = BUSY_NEVER;
 	integer rand_seed = 32'h1234_5678;
 
 	reg [63:0] mem [0:1023];
-	integer    ret_timer = 0;         // >0 = a return is scheduled
-	reg [28:0] ret_addr = 0;
+	localparam integer QN = 16;
+	reg [28:0] q_addr [0:QN-1];
+	reg  [7:0] q_beats[0:QN-1];
+	integer    q_due  [0:QN-1];
+	integer    q_h = 0, q_t = 0, q_n = 0;
+	integer    cyc = 0;
+	reg  [7:0] beat = 0;              // beats of the head already returned
+	// "a return is coming within a cycle", for BUSY_ON_RETURN below
+	wire       ret_next = (q_n != 0) && (cyc + 1 >= q_due[q_h]);
 
 	// Data a given row returns. Distinct per address so a wrong row is visible.
 	function [63:0] row_data(input [28:0] a);
@@ -130,35 +153,45 @@ module tb_ddram_readreturn;
 	// takes commands normally so the test still makes progress.
 	always @(posedge sysclk) begin
 		case (busy_mode)
-			BUSY_ON_RETURN: DDRAM_BUSY <= (ret_timer == 1);
+			BUSY_ON_RETURN: DDRAM_BUSY <= ret_next;
 			BUSY_RANDOM: begin
 				rand_seed <= {rand_seed[30:0], rand_seed[31] ^ rand_seed[21] ^ rand_seed[1] ^ rand_seed[0]};
 				DDRAM_BUSY <= rand_seed[3] & rand_seed[7];
 			end
+			BUSY_ALWAYS: DDRAM_BUSY <= 1'b1;
 			default: DDRAM_BUSY <= 1'b0;
 		endcase
 	end
 
 	always @(posedge sysclk) begin
 		DDRAM_DOUT_READY <= 1'b0;
+		cyc = cyc + 1;
 
 		if (!reset_n) begin
-			ret_timer <= 0;
+			q_h = 0; q_t = 0; q_n = 0; beat = 0;
 		end else begin
 			// Command acceptance: only when not asserting waitrequest.
 			if (!DDRAM_BUSY && DDRAM_WE) begin
 				mem[DDRAM_ADDR[9:0]] <= DDRAM_DIN;
 			end
-			if (!DDRAM_BUSY && DDRAM_RD && ret_timer == 0) begin
-				ret_addr  <= DDRAM_ADDR;
-				ret_timer <= RD_LATENCY;
+			if (!DDRAM_BUSY && DDRAM_RD) begin
+				if (q_n == QN) $fatal(1, "slave model: more than %0d reads outstanding", QN);
+				q_addr[q_t]  = DDRAM_ADDR;
+				q_beats[q_t] = DDRAM_BURSTCNT;
+				q_due[q_t]   = cyc + RD_LATENCY;
+				q_t = (q_t + 1) % QN;
+				q_n = q_n + 1;
 			end
 
-			if (ret_timer > 1) ret_timer <= ret_timer - 1;
-			else if (ret_timer == 1) begin
-				ret_timer        <= 0;
-				DDRAM_DOUT       <= row_data(ret_addr);
+			if (q_n != 0 && cyc >= q_due[q_h]) begin
+				DDRAM_DOUT       <= row_data(q_addr[q_h] + beat);
 				DDRAM_DOUT_READY <= 1'b1;
+				if (beat + 1 >= q_beats[q_h]) begin
+					beat = 0;
+					q_h = (q_h + 1) % QN;
+					q_n = q_n - 1;
+				end
+				else beat = beat + 1;
 			end
 		end
 	end
@@ -346,6 +379,68 @@ module tb_ddram_readreturn;
 		end
 	endtask
 
+	// ---- 5. a posted CPU write is in DDR3 before the port is granted -----
+	// Since upstream 26eb46a a CPU write to fast RAM is acknowledged into a
+	// four-deep queue and reaches DDR3 later. A write still queued when the
+	// grant fires would miss a save state's snapshot, and with ram_busy pinned
+	// it would land after the dump instead. ss_ram_idle waits for the queue to
+	// be empty (~wq_any); this checks that it does.
+	//
+	// The queue has to be HELD for that to be tested: unhindered it drains in
+	// a cycle, faster than the grant can follow, and the check passes with or
+	// without ~wq_any. So the bridge takes nothing for a while: write A goes
+	// into ddr_cmd_pipe and sits there, which keeps master 0 waiting, so write
+	// B stays in the queue -- and the port is asked for then. Words at
+	// [2:1] = 0, the low lane of the beat (ram_din = {dl, dh, dl, dh}).
+	task cpu_write(input [28:1] a, input [15:0] d);
+		integer n;
+		begin
+			@(posedge sysclk);
+			cpuAddr  <= a;
+			cpuWR    <= d;
+			cpustate <= 2'b11;      // data write
+			cpuU     <= 0;
+			cpuL     <= 0;
+			cpuCS    <= 1;
+			n = 0;
+			while (!ramready && n < TIMEOUT_CYC) begin @(posedge sysclk); n = n + 1; end
+			if (!ramready) $display("FAIL: write to %07x was never acknowledged", {a, 1'b0});
+			cpuCS <= 0;
+			@(posedge sysclk);
+		end
+	endtask
+
+	task ss_after_write(input integer k, output ok);
+		integer n;
+		reg [28:1] a, b;
+		begin
+			ok = 1;
+			a = 28'h0070_000 + k*16;
+			b = a + 8;              // next 64-bit row
+			mem[a[12:3]] = 64'd0;
+			mem[b[12:3]] = 64'd0;
+			busy_mode = BUSY_ALWAYS;
+			repeat (2) @(posedge sysclk);
+			cpu_write(a, 16'hA500 + k);
+			cpu_write(b, 16'h5A00 + k);
+			ss_load_busy = 1;
+			repeat (12) @(posedge sysclk);
+			busy_mode = BUSY_NEVER;
+			n = 0;
+			while (ss_waitrequest && n < TIMEOUT_CYC) begin @(posedge sysclk); n = n + 1; end
+			if (ss_waitrequest) begin
+				$display("FAIL: write %0d: the port was never granted", k);
+				ok = 0;
+			end else if (mem[b[12:3]][15:0] !== 16'h5A00 + k) begin
+				$display("FAIL: write %0d: granted with a posted write not yet in DDR3 (row holds %016x)",
+				         k, mem[b[12:3]]);
+				ok = 0;
+			end
+			ss_load_busy = 0;
+			repeat (8) @(posedge sysclk);
+		end
+	endtask
+
 	initial begin
 		repeat (20) @(posedge sysclk);
 		reset_n = 1;
@@ -430,6 +525,19 @@ module tb_ddram_readreturn;
 			errors = errors + 1;
 		end else begin
 			$display("ok:   a read parked under ss ownership never took an ss return");
+		end
+
+		// ---- 5. posted writes drain before the grant ------------------------
+		soak_fail = 0;
+		for (i = 0; i < 16; i = i + 1) begin
+			ss_after_write(i, ok_case);
+			if (!ok_case) soak_fail = soak_fail + 1;
+		end
+		if (soak_fail) begin
+			$display("FAIL: %0d of 16 grants came with a posted write still queued", soak_fail);
+			errors = errors + 1;
+		end else begin
+			$display("ok:   16 grants, each after its posted write reached DDR3");
 		end
 
 		if (errors == 0) $display("RUN: PASS");

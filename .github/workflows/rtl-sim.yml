@@ -161,6 +161,14 @@ jobs:
       # ways on 2026-09-14: the original condition hangs both clients, the
       # unqualified fix feeds the save state payload into a CPU cache fill, and
       # the shipped form passes. Do NOT simplify the condition back to either.
+      #
+      # Since upstream 26eb46a the controller posts CPU writes into a queue and
+      # reads two-beat bursts through a stream buffer. The slave model returns
+      # every beat of a burst, and check 5 holds a posted write in the queue
+      # while the port is asked for: the grant must wait until it is in DDR3.
+      # Falsified 2026-10-16 by dropping ~wq_any from ss_ram_idle (16 of 16
+      # grants then came with the write still queued). The stream buffer's
+      # ~ss_port_own on its return is not reached by this bench.
       - name: DDR3 read return under waitrequest
         run: |
           set -euo pipefail

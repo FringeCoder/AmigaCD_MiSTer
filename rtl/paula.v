@@ -124,7 +124,10 @@ module paula
 
 	// Save state. See paula_intcontroller's ss_intreq.
 	output [14:0] ss_intreq,
-	output [14:0] ss_intena
+	output [14:0] ss_intena,
+
+	// Drive sound events, for drive_sounds.v at the top level.
+	output  [8:0] drive_snd
 );
 //--------------------------------------------------------------------------------------
 
@@ -299,7 +302,8 @@ paula_floppy pf1
 	
 	.USER_IN(USER_IN),
 	.USER_OUT(USER_OUT),
-	.mister_floppy_status(mister_floppy_status)
+	.mister_floppy_status(mister_floppy_status),
+	.drive_snd(drive_snd)
 );
 
 //instantiate audio controller

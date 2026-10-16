@@ -152,6 +152,11 @@ set_false_path -from {*ss_ctrl*|shadow_ld_data[*]} -to $ss_clksys
 
 set_false_path -from {emu|cpu_wrapper|z3ram_*}
 set_false_path -from {emu|cpu_wrapper|z2ram_*}
+# Upstream 26eb46a: the SDRAM-backed Zorro III windows are set by autoconfig
+# and the SDRAM size by the Main, both once per boot.
+set_false_path -from {emu|cpu_wrapper|z3sdr_*}
+set_false_path -from {emu|sdram_big*}
+set_false_path -from {emu|sdram_dual*}
 
 set_false_path -from {emu|minimig|USERIO1|cpu_config*}
 set_false_path -from {emu|minimig|USERIO1|ide_config*}
@@ -344,3 +349,14 @@ set_multicycle_path -setup 2 -from $sdram_launch -to [get_clocks SDRAM_CLK_out]
 set_multicycle_path -hold  2 -from $sdram_launch -to [get_clocks SDRAM_CLK_out]
 set_multicycle_path -setup 2 -from [get_clocks SDRAM_CLK_out] -to $sdram_launch
 set_multicycle_path -hold  2 -from [get_clocks SDRAM_CLK_out] -to $sdram_launch
+
+# Upstream 26eb46a: extra setup uncertainty for the FITTER only, on the clk_114
+# domain, clk_sys -> clk_114 and the HDMI clock. It makes the fitter place
+# those paths with margin; timing analysis (quartus_sta) does not see it, so
+# the reported slack is still against the real constraints. Taken as upstream
+# has it, with the SDRAM controller it was tuned for.
+if {[string equal "quartus_fit" $::TimeQuestInfo(nameofexecutable)]} {
+	set_clock_uncertainty -add -setup -from [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] -to [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] 0.4
+	set_clock_uncertainty -add -setup -from [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[1].output_counter|divclk}] -to [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] 0.4
+	set_clock_uncertainty -add -setup -from [get_clocks {pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] -to [get_clocks {pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] 0.1
+}
