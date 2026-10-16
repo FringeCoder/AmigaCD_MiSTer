@@ -22,6 +22,11 @@ foreach_in_collection oc [get_available_operating_conditions] {
 		report_timing -$kind -npaths $npath -detail summary \
 			-panel_name "$kind, $name" -file $out -append
 	}
+	# The single worst setup path, cell by cell. The summary says which path;
+	# this says why -- a multiplier in ALM logic instead of a DSP block, or a
+	# route that crosses the die, look the same in a summary row.
+	report_timing -setup -npaths 1 -detail full_path \
+		-panel_name "worst setup detail, $name" -file $out -append
 }
 
 delete_timing_netlist

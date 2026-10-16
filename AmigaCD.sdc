@@ -152,6 +152,14 @@ set_false_path -from {*ss_ctrl*|shadow_ld_data[*]} -to $ss_clksys
 # inside the freeze, so the argument above covers them word for word.
 set_false_path -from $ss_clksys -to {emu|ss_cia_a[*] emu|ss_cia_b[*]}
 
+# Capture: Akiko's clk_114 retiming register (AmigaCD.sv, ss_akiko), the same
+# shape as the CIAs' and added for the same reason. It took the same hold check
+# once 26eb46a moved the placement: -0.198 at seed 1 and -0.077 at seed 8,
+# akiko|g_cd.cdrom_result_buffer -> ss_akiko[718] / [671]. Its only consumer is
+# the state vector (ss_state.vh), and Akiko is required idle before the freeze
+# is granted (akiko.v ss_idle), so its state is static while the vector is read.
+set_false_path -from $ss_clksys -to {emu|ss_akiko[*]}
+
 set_false_path -from {emu|cpu_wrapper|z3ram_*}
 set_false_path -from {emu|cpu_wrapper|z2ram_*}
 # Upstream 26eb46a: the SDRAM-backed Zorro III windows are set by autoconfig
