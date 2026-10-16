@@ -652,6 +652,24 @@ function in_buf(input [28:3] a);
 	in_buf = ((sb_v | sb_wait) && (sb_a == a)) || ((sc_v | sc_wait) && (sc_a == a));
 endfunction
 
+// in_buf of every write-queue entry, so the drain below can pick its head's
+// answer with wq_h instead of muxing the head's address out first and then
+// comparing it 26 bits wide against both lines. Same value -- a pure function
+// of an indexed entry -- one mux level earlier: wq_a -> sb_kill / sc_kill was
+// one of the paths that missed setup after 26eb46a.
+// Written out rather than calling in_buf from an always @*: an implicit
+// sensitivity list does not see the module signals a function reads in its
+// body (sb_v, sb_a, ...), so simulation would hold a stale value that
+// synthesis does not.
+wire [WQN-1:0] wq_inbuf;
+genvar qb;
+generate
+	for (qb = 0; qb < WQN; qb = qb + 1) begin : g_wq_inbuf
+		assign wq_inbuf[qb] = ((sb_v | sb_wait) && (sb_a == wq_a[qb][28:3])) ||
+		                      ((sc_v | sc_wait) && (sc_a == wq_a[qb][28:3]));
+	end
+endgenerate
+
 // Since upstream 26eb46a this controller also holds work of its own that is
 // not a master-0 request: a four-entry posted write queue (wq, and the staged
 // high half of a long write in stg), the two-line read stream buffer (sb/sc)
@@ -869,7 +887,7 @@ always @ (posedge sysclk) begin
 							ram_din  <= {wh_dl, wh_dh, wh_dl, wh_dh};
 							ram_bcnt <= 8'd1;
 							ram_we   <= 1;
-							e_drop    = in_buf(wh_a[28:3]);
+							e_drop    = wq_inbuf[wq_h];
 						end
 					end
 					if(rd_sel) begin

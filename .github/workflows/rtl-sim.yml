@@ -190,6 +190,28 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # ddram_ctrl's write-queue drain takes e_drop from a per-entry precompute
+      # (wq_inbuf[wq_h]) instead of in_buf() on the muxed-out head, one mux
+      # level off wq_a -> sb_kill / sc_kill (a setup miss after 26eb46a). The
+      # step above never makes in_buf true, so it cannot show the two agree.
+      # This writes random stream-buffer and write-queue state straight into
+      # the module, with colliding addresses, and compares its own wq_inbuf
+      # against the old formula: 100k states, ~44k true. Falsified on
+      # 2026-10-16: sc compared against sb_a, and sb_wait dropped, each fail.
+      # Also guards the form: an always @* calling in_buf held stale values in
+      # simulation (an implicit sensitivity list does not look inside a
+      # function), which is why the RTL spells the compare out.
+      - name: DDR3 write-drain buffer check matches in_buf (tb_wq_inbuf.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/ddram
+          iverilog -g2012 -o tbw ../../ddram_ctrl.v ../../ddr_cmd_pipe.v \
+            ../../cpu_cache_new.v \
+            ../../A2065/a2065_ddram_arbiter.v ../cache/dpram_sim.v \
+            tb_wq_inbuf.sv
+          vvp -n tbw | tee out_wq.log
+          grep -q "RUN: PASS" out_wq.log
+
       # ddr_cmd_pipe on its own. The module is there for timing -- it holds one
       # Avalon command for a cycle on its way to the HPS bridge -- so what this
       # proves is that it is invisible to the protocol: 203 commands issued
