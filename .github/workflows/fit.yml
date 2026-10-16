@@ -1,0 +1,186 @@
+# Fit the core with Quartus, so every build of the default branch is a real
+# bitstream and a release can be made without a local Quartus at all.
+#
+# Quartus 17.0.2 Lite for Cyclone V, from the theypsilon/quartus-lite-c5 image
+# the MiSTer nightly builds use -- the version AmigaCD.qsf was last saved with. The
+# tag is pinned: a different Quartus is a different fit.
+#
+# One job per placement seed, in parallel, each in its own checkout, so fits
+# never share db/ or output_files/. scripts/ci-fit.sh runs one and writes both
+# worst-case slacks. A seed is only GOOD when setup AND hold are both positive
+# (seed_sweep_both.sh in FringeCoder/AmigaCD_MiSTer has why). The pick job
+# takes the good seed with the largest worst slack.
+#
+# On a push or pull request this fits the .qsf's own seed and reports timing without failing
+# on it -- a slack regression is a finding, not a broken build. release.yml
+# calls it with several seeds and require_timing, and then a build that does
+# not close timing is not published.
+name: fit
+
+on:
+  push:
+    branches: [cd32-native-mvp]
+  # A pull request is fitted too: a change that breaks the fit or timing is
+  # found before it merges, not at the next release.
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: 'Comma-separated placement seeds. Empty: the seed in AmigaCD.qsf.'
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      seeds:
+        type: string
+        required: false
+        default: ''
+      require_timing:
+        description: 'Fail unless a seed closes timing (setup and hold both > 0)'
+        type: boolean
+        required: false
+        default: false
+    outputs:
+      seed:
+        value: ${{ jobs.pick.outputs.seed }}
+      setup:
+        value: ${{ jobs.pick.outputs.setup }}
+      hold:
+        value: ${{ jobs.pick.outputs.hold }}
+      rbf:
+        value: ${{ jobs.pick.outputs.rbf }}
+
+# A newer push makes an older fit pointless; a release call is never cancelled.
+concurrency:
+  group: fit-${{ github.workflow_ref }}-${{ (github.event_name == 'push' || github.event_name == 'pull_request') && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      seeds: ${{ steps.s.outputs.seeds }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: s
+        env:
+          SEEDS: ${{ inputs.seeds }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SEEDS" ]; then
+            SEEDS="$(sed -nE 's/^set_global_assignment -name SEED ([0-9]+).*/\1/p' AmigaCD.qsf | head -1)"
+          fi
+          json="$(python3 -c 'import json,sys; s=[x.strip() for x in sys.argv[1].split(",") if x.strip()]; assert s and all(x.isdigit() for x in s), "seeds must be numbers"; print(json.dumps(s))' "$SEEDS")"
+          echo "seeds=$json" >> "$GITHUB_OUTPUT"
+          echo "Seeds: $json"
+
+  fit:
+    needs: plan
+    runs-on: ubuntu-latest
+    # A full fit is minutes for the menu and the better part of an hour for a
+    # big core; 4 h leaves room for a slow runner without letting a hung one
+    # burn the 6 h job limit.
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: ${{ fromJSON(needs.plan.outputs.seeds) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pull Quartus
+        run: docker pull theypsilon/quartus-lite-c5:17.0.2.docker1
+
+      - name: Fit seed ${{ matrix.seed }}
+        run: ./scripts/ci-fit.sh AmigaCD "${{ matrix.seed }}"
+
+      # The reports are what a timing failure is read from, so they travel
+      # with the bitstream even when the fit fails.
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fit-seed-${{ matrix.seed }}
+          path: |
+            fit.json
+            fit_${{ matrix.seed }}.log
+            output_files/AmigaCD.rbf
+            output_files/*.rpt
+            output_files/*.summary
+          if-no-files-found: warn
+          # Every push fits; fourteen days covers anything still being looked
+          # at, and keeps a public repository's storage from growing forever.
+          retention-days: 14
+
+  pick:
+    needs: [plan, fit]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      seed: ${{ steps.pick.outputs.seed }}
+      setup: ${{ steps.pick.outputs.setup }}
+      hold: ${{ steps.pick.outputs.hold }}
+      rbf: ${{ steps.pick.outputs.rbf }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fit-seed-*
+          path: fits
+
+      - name: Pick the best seed
+        id: pick
+        env:
+          REQUIRE: ${{ inputs.require_timing }}
+          BASE: AmigaCD_DATE.rbf
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, json, os, shutil, time
+          rows = []
+          for d in sorted(glob.glob('fits/fit-seed-*')):
+              try:
+                  r = json.load(open(os.path.join(d, 'fit.json')))
+              except Exception:
+                  r = {'seed': d.rsplit('-', 1)[1], 'setup': None, 'hold': None, 'ok': False}
+              r['dir'] = d
+              rows.append(r)
+          good = [r for r in rows if r.get('ok')]
+          best = max(good, key=lambda r: min(r['setup'], r['hold'])) if good else None
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as s:
+              s.write('| seed | setup | hold | |\n|---|---|---|---|\n')
+              for r in rows:
+                  mark = 'picked' if r is best else ('good' if r.get('ok') else 'no')
+                  s.write('| %s | %s | %s | %s |\n' % (r['seed'], r['setup'], r['hold'], mark))
+          out = open(os.environ['GITHUB_OUTPUT'], 'a')
+          if best is None:
+              msg = 'No seed closed timing (setup and hold both > 0): %s' % ', '.join(
+                  '%s: %s/%s' % (r['seed'], r['setup'], r['hold']) for r in rows)
+              print(('::error::' if os.environ['REQUIRE'] == 'true' else '::warning::') + msg)
+              # Not a release: still hand on the bitstream of the least-bad
+              # fit that produced one, so a push build can be tried.
+              have = [r for r in rows if r['setup'] is not None and r['hold'] is not None
+                      and os.path.exists(os.path.join(r['dir'], 'output_files', 'AmigaCD.rbf'))]
+              best = max(have, key=lambda r: min(r['setup'], r['hold'])) if have else None
+              if os.environ['REQUIRE'] == 'true' or best is None:
+                  raise SystemExit(1)
+          date = time.strftime('%Y%m%d', time.gmtime())
+          name = os.environ['BASE'].replace('DATE', date)
+          os.makedirs('core', exist_ok=True)
+          shutil.copy(os.path.join(best['dir'], 'output_files', 'AmigaCD.rbf'), os.path.join('core', name))
+          json.dump(dict(best, rbf=name, dir=None), open('core/fit.json', 'w'))
+          for k in ('seed', 'setup', 'hold'):
+              out.write('%s=%s\n' % (k, best[k]))
+          out.write('rbf=%s\n' % name)
+          print('Picked seed %s: setup %s, hold %s -> %s' % (best['seed'], best['setup'], best['hold'], name))
+          PY
+
+      - name: Upload the picked core
+        uses: actions/upload-artifact@v4
+        with:
+          name: core
+          path: core/
+          if-no-files-found: error
+          retention-days: 14

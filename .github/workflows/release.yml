@@ -7,7 +7,7 @@
 #
 # The core is only one of three things a working AmigaCD needs, so the release
 # carries all three, each at its latest published release:
-#   AmigaCD_<date>.rbf  this repository: the fit committed under releases/
+#   AmigaCD_<date>.rbf  this repository, fitted by fit.yml from this commit
 #   MiSTer_AmigaCD      FringeCoder/AmigaCD, the userspace binary
 #   menu.rbf            FringeCoder/Menu_MiSTer, the menu core with the SNAC reader
 # "Latest" is GitHub's: the newest release that is not a draft or a
@@ -15,15 +15,18 @@
 # no release, nothing is published -- an incomplete package is the thing this
 # exists to stop.
 #
-# The .rbf is not built here -- Quartus is not in CI, and the fit needs the
-# seed sweeps in seed_sweep.sh to close timing. It is the fit you commit as
-# releases/AmigaCD_YYYYMMDD.rbf.
+# The core is fitted here, from the commit being released, over several
+# placement seeds in parallel -- the CI form of seed_sweep_both.sh. Only a seed
+# with BOTH worst-case slacks positive is released; if none closes timing,
+# nothing is published.
 #
-#   guard    default branch only; the newest releases/AmigaCD_*.rbf; the tag
-#            (v<that date> unless given); refuses a tag that exists, and an rbf
-#            the previous release already shipped
+#   guard    default branch only; the tag (v<today, UTC> unless given), refused
+#            if it exists; refused if nothing was committed since the previous
+#            release, unless allow_unchanged (to re-package a newer userspace
+#            or menu with the same core)
 #   ci       rtl-sim.yml itself, called: the syntax gate and every bench must
 #            pass, or nothing is published
+#   fit      fit.yml with the seeds below and require_timing
 #   publish  fetches the other two releases, builds the package, writes the
 #            changelog, and creates the tag and the release
 #
@@ -34,9 +37,17 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag, e.g. v20261016. Empty: v<date of the newest releases/AmigaCD_*.rbf>. Must not exist yet.'
+        description: 'Tag, e.g. v20261016. Empty: v<today, UTC>. Must not exist yet.'
         required: false
         default: ''
+      seeds:
+        description: 'Placement seeds to fit, in parallel; the best that closes timing is released'
+        required: false
+        default: '4,1,16,18,7,2,11,15'
+      allow_unchanged:
+        description: 'Release even if no commit landed since the last release (new userspace/menu, same core source)'
+        type: boolean
+        default: false
       amigacd_tag:
         description: 'FringeCoder/AmigaCD release to bundle. Empty: its latest.'
         required: false
@@ -62,7 +73,6 @@ permissions:
   contents: read
 
 env:
-  RBF_PREFIX: AmigaCD_
   USERSPACE_REPO: FringeCoder/AmigaCD
   MENU_REPO: FringeCoder/Menu_MiSTer
 
@@ -70,8 +80,7 @@ jobs:
   guard:
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.pick.outputs.tag }}
-      rbf: ${{ steps.pick.outputs.rbf }}
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,31 +97,14 @@ jobs:
           fi
 
       # Inputs reach the shell through env only, so they cannot inject.
-      - name: Pick the core and the tag
-        id: pick
+      - name: Work out the tag
+        id: tag
         env:
           TAG_IN: ${{ inputs.tag }}
+          ALLOW_UNCHANGED: ${{ inputs.allow_unchanged }}
         run: |
           set -euo pipefail
-          # Dated names sort by date, and a glob expands sorted: the last match
-          # is the newest.
-          rbf=""
-          for f in releases/"$RBF_PREFIX"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].rbf; do
-            [ -e "$f" ] && rbf="${f#releases/}"
-          done
-          if [ -z "$rbf" ]; then
-            echo "::error::No releases/${RBF_PREFIX}YYYYMMDD.rbf is committed. Commit the fit first."
-            exit 1
-          fi
-          # A Git LFS pointer or a truncated copy is a few hundred bytes; a real
-          # bitstream is megabytes.
-          size="$(stat -c %s "releases/$rbf")"
-          if [ "$size" -lt 500000 ]; then
-            echo "::error::releases/$rbf is only $size bytes; that is not a fitted core."
-            exit 1
-          fi
-          date="${rbf#"$RBF_PREFIX"}"; date="${date%.rbf}"
-          tag="${TAG_IN:-v$date}"
+          tag="${TAG_IN:-v$(date -u +%Y%m%d)}"
           if ! printf '%s' "$tag" | grep -Eq '^v[0-9A-Za-z._-]+$'; then
             echo "::error::Tag '$tag' must start with v and use only letters, digits, . _ -"
             exit 1
@@ -121,24 +113,28 @@ jobs:
             echo "::error::Tag $tag already exists. Pass another, e.g. $tag.1"
             exit 1
           fi
-          # Re-releasing the same bitstream under a new tag would read as an
-          # update and be none. (To ship a new userspace or menu with the same
-          # core, re-release those; the next core release picks them up.)
           prev="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2>/dev/null || true)"
-          if [ -n "$prev" ] && git cat-file -e "$prev:releases/$rbf" 2>/dev/null; then
-            echo "::error::releases/$rbf was already in $prev. Commit a new fit to release."
+          if [ -n "$prev" ] && [ "$ALLOW_UNCHANGED" != "true" ] \
+             && [ "$(git rev-parse "$prev^{commit}")" = "$(git rev-parse HEAD)" ]; then
+            echo "::error::Nothing has been committed since $prev. Tick allow_unchanged to re-package newer userspace or menu releases with the same core."
             exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "rbf=$rbf" >> "$GITHUB_OUTPUT"
-          echo "Releasing $tag: releases/$rbf ($size bytes), previous ${prev:-none}"
+          echo "Releasing $tag from $(git rev-parse --short HEAD), previous ${prev:-none}"
 
   ci:
     needs: guard
     uses: ./.github/workflows/rtl-sim.yml
 
+  fit:
+    needs: guard
+    uses: ./.github/workflows/fit.yml
+    with:
+      seeds: ${{ inputs.seeds }}
+      require_timing: true
+
   publish:
-    needs: [guard, ci]
+    needs: [guard, ci, fit]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -146,6 +142,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Fetch the fitted core
+        uses: actions/download-artifact@v4
+        with:
+          name: core
+          path: core
 
       # Both repositories are public, so this run's own token reads their
       # releases. AMIGACD_RELEASE_TOKEN is used instead when set: a read-only
@@ -187,14 +189,14 @@ jobs:
       - name: Build the package
         env:
           TAG: ${{ needs.guard.outputs.tag }}
-          RBF: ${{ needs.guard.outputs.rbf }}
+          RBF: ${{ needs.fit.outputs.rbf }}
           US_TAG: ${{ steps.deps.outputs.userspace }}
           MENU_TAG: ${{ steps.deps.outputs.menu }}
         run: |
           set -euo pipefail
           pkg="pkg/AmigaCD_$TAG"
           mkdir -p "$pkg/_Computer" dist
-          cp "releases/$RBF" "$pkg/_Computer/$RBF"
+          cp "core/$RBF" "$pkg/_Computer/$RBF"
           cp deps/userspace/MiSTer_AmigaCD "$pkg/MiSTer_AmigaCD"
           chmod +x "$pkg/MiSTer_AmigaCD"
           cp deps/menu/menu.rbf "$pkg/menu.rbf"
@@ -218,7 +220,7 @@ jobs:
           TXT
           (cd pkg && zip -r -X "../dist/AmigaCD_${TAG}.zip" "AmigaCD_$TAG")
           # The parts on their own too, for updating one piece.
-          cp "releases/$RBF" "dist/$RBF"
+          cp "core/$RBF" "dist/$RBF"
           cp deps/userspace/MiSTer_AmigaCD dist/MiSTer_AmigaCD
           cp deps/menu/menu.rbf dist/menu.rbf
           (cd dist && sha256sum -- * > SHA256SUMS)
@@ -228,11 +230,14 @@ jobs:
       - name: Write the changelog
         env:
           TAG: ${{ needs.guard.outputs.tag }}
-          RBF: ${{ needs.guard.outputs.rbf }}
+          RBF: ${{ needs.fit.outputs.rbf }}
           NOTES: ${{ inputs.notes }}
           REPO: ${{ github.repository }}
           US_TAG: ${{ steps.deps.outputs.userspace }}
           MENU_TAG: ${{ steps.deps.outputs.menu }}
+          SEED: ${{ needs.fit.outputs.seed }}
+          SETUP: ${{ needs.fit.outputs.setup }}
+          HOLD: ${{ needs.fit.outputs.hold }}
         run: |
           set -euo pipefail
           prev="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2>/dev/null || true)"
@@ -250,7 +255,8 @@ jobs:
             printf 'Unzip `AmigaCD_%s.zip` and copy its contents to the root of the SD card, then add\n' "$TAG"
             printf '`[AmigaCD]` / `main=MiSTer_AmigaCD` to `MiSTer.ini`; `INSTALL.txt` in the zip has the steps. '
             printf 'Keep your old `menu.rbf`. Kickstart ROMs are not included.\n\n'
-            printf 'Core built from %s.\n' "$GITHUB_SHA"
+            printf 'Core fitted in CI from %s with Quartus 17.0.2 Lite, seed %s: worst setup slack %s ns, hold %s ns.\n' \
+              "$GITHUB_SHA" "$SEED" "$SETUP" "$HOLD"
           } > dist/NOTES.md
           cat dist/NOTES.md
 
@@ -258,7 +264,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.guard.outputs.tag }}
-          RBF: ${{ needs.guard.outputs.rbf }}
+          RBF: ${{ needs.fit.outputs.rbf }}
           PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail

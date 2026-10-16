@@ -10,7 +10,7 @@ anything.
 
 | File | From | How it gets there |
 |---|---|---|
-| `_Computer/AmigaCD_<date>.rbf` | this repository | the fit you commit as `releases/AmigaCD_YYYYMMDD.rbf` |
+| `_Computer/AmigaCD_<date>.rbf` | this repository | fitted in CI by `fit.yml`, from the commit being released |
 | `MiSTer_AmigaCD` | [FringeCoder/AmigaCD](https://github.com/FringeCoder/AmigaCD/releases) | that repository's latest release (its own release workflow) |
 | `menu.rbf` | [FringeCoder/Menu_MiSTer](https://github.com/FringeCoder/Menu_MiSTer/releases) | that repository's latest release (its own release workflow) |
 
@@ -20,41 +20,50 @@ Either can be pinned with the `amigacd_tag` and `menu_tag` inputs.
 If either repository has no release yet, nothing is published: the package
 has to be complete. Release them first.
 
-The core is not built in CI. Quartus is not installed there, and the fit
-needs the seed sweeps in `seed_sweep.sh` to close timing. So the release
-takes the bitstream you fitted and checked, committed under `releases/` the
-way MiSTer cores ship theirs. Upstream's `Minimig_*.rbf` files in that
-directory are never picked up: only `AmigaCD_*.rbf` is.
+## How the core is fitted
+
+`.github/workflows/fit.yml` runs Quartus 17.0.2 Lite for Cyclone V, from the
+`theypsilon/quartus-lite-c5:17.0.2.docker1` image that the MiSTer nightly
+builds use. That is the version `AmigaCD.qsf` was last saved with, and the
+tag is pinned. Each placement seed is fitted in a job of its own, all in
+parallel. `scripts/ci-fit.sh` runs one seed and reads both worst-case slacks
+from the timing report.
+
+- **On every push to `cd32-native-mvp`:** it fits the `.qsf`'s own seed. The
+  run summary shows the slacks, and the bitstream is kept as the `core`
+  artifact for 14 days. Missing timing is a warning there, not a failure.
+- **In a release:** it fits every seed in the `seeds` input. Only a seed with
+  setup **and** hold slack both positive can be released. `seed_sweep_both.sh`
+  explains why setup alone is not enough. The best such seed is published. If
+  no seed qualifies, nothing is published: try other seeds, or the change
+  does not fit.
+- **By hand:** Actions -> **fit** -> Run workflow, with any seeds.
+
+The release notes record the seed and both slacks.
 
 ## Making one
 
-1. Fit the core, then commit it as `releases/AmigaCD_YYYYMMDD.rbf` on
-   `cd32-native-mvp`. Date it from the fit, as `stage-output.sh` in
-   FringeCoder/AmigaCD names it.
-2. Release FringeCoder/AmigaCD and FringeCoder/Menu_MiSTer first if either
+1. Release FringeCoder/AmigaCD and FringeCoder/Menu_MiSTer first if either
    has changes you want in the package.
-3. Go to Actions -> **release** -> **Run workflow**.
+2. Go to Actions -> **release** -> **Run workflow**, on `cd32-native-mvp`.
 
 | Input | Meaning |
 |---|---|
-| `tag` | Empty means `v<date of the newest releases/AmigaCD_*.rbf>`. Must not exist yet |
+| `tag` | Empty means `v<today, UTC>`. Must not exist yet |
+| `seeds` | Placement seeds to fit in parallel. The default is the order the local sweeps ranked best |
+| `allow_unchanged` | Release with no new commit since the last release, to re-package a newer userspace or menu release |
 | `amigacd_tag`, `menu_tag` | The userspace and menu releases to bundle. Empty means the latest of each |
 | `prerelease` | Tick for a build meant for testing |
 | `notes` | Optional text shown above the changelog |
 
 The run refuses in any of these cases:
 - the branch is not the default branch;
-- no `releases/AmigaCD_*.rbf` is committed;
-- the file is under 500 KB (a Git LFS pointer or a truncated copy);
 - the tag already exists;
-- the newest `.rbf` was already in the previous release.
+- nothing was committed since the previous release (unless `allow_unchanged`);
+- no seed closes timing.
 
-To ship a new userspace or menu with an unchanged core, release those two and
-fit or tag the core the next time. A core release always names exactly which
-userspace and menu releases it carries.
-
-`rtl-sim.yml` runs as part of the release: if the syntax gate or any bench
-fails, nothing is published.
+`rtl-sim.yml` runs as part of the release, beside the fit. If the syntax gate
+or any bench fails, nothing is published.
 
 ## What is published
 
