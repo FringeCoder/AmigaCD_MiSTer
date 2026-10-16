@@ -117,7 +117,10 @@ jobs:
 
   pick:
     needs: [plan, fit]
-    if: always() && needs.plan.result == 'success'
+    # !cancelled(), not always(): a seed whose fit FAILED still has to be
+    # judged, but a run cancelled by a newer push has nothing to judge, and
+    # picking over it only paints the superseded commit red.
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       seed: ${{ steps.pick.outputs.seed }}
