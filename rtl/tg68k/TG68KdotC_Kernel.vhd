@@ -737,7 +737,7 @@ PROCESS (clk, regfile, RDindex_A, RDindex_B, exec)
 			-- inside rising_edge(clk). cpu_wrapper holds the CPU clock enable
 			-- low for the whole time the savestate controller has the core
 			-- parked (ss_cpu_hold gates clkena_p), and clkena_lw is
-			-- clkena_in AND memmaskmux(3), so clkena_lw is low across exactly
+			-- clkena_i (clkena_in AND NOT mmu_stall) AND memmaskmux(3), so clkena_lw is low across exactly
 			-- the window in which a restore drives ss_wr_en. A savestate write
 			-- placed inside the guard would silently never happen.
 			--
@@ -1339,7 +1339,7 @@ PROCESS (clk, IPL, setstate, addrvalue, state, exec_write_back, set_direct_data,
 						TG68_PC <= TG68_PC_add;
 					END IF;	
 				END IF;	
-				-- Save state restore: PC. Outside the clkena_in guard above for
+				-- Save state restore: PC. Outside the clkena_i guard above for
 				-- the same reason the register file write is outside clkena_lw:
 				-- the CPU clock enable is held low for the whole restore window.
 				-- This is the last assignment to TG68_PC in the process, so it
@@ -1538,7 +1538,7 @@ PROCESS (clk, IPL, setstate, addrvalue, state, exec_write_back, set_direct_data,
 			--   state="01"   no bus cycle this clock. The fetch address is not
 			--                TG68_PC but memaddr_delta_rega, which is loaded from
 			--                TG68_PC_add one clock earlier (and only while
-			--                clkena_in is high, so the restore window cannot have
+			--                clkena_i is high, so the restore window cannot have
 			--                loaded it). Spending a clock in "01" is what gives it
 			--                time to be recomputed from the restored PC. Reset
 			--                spends its first clock in "01" for exactly this.

@@ -559,9 +559,15 @@ assign step_ena = step_ena_cnt[8];
 // It differs from upstream's only when two drives are mapped to the same real
 // one, which the menu does not offer. no_drives stands in for upstream's
 // floppy_zero_active: a machine with no floppy makes no floppy sounds.
+// A drive counts as mapped for a field of 1-4, the real drives _exsel above
+// decodes; 5-7 select nothing there, so they do not mute the sound either.
+function ext_mapped(input [2:0] f);
+  ext_mapped = (f != 3'd0) && (f <= 3'd4);
+endfunction
 reg  [3:0] exsel_any;
 always @(posedge clk)
-  exsel_any <= {4{enable_mister_floppy}} & {|floppy_ext_drive[11:9], |floppy_ext_drive[8:6], |floppy_ext_drive[5:3], |floppy_ext_drive[2:0]};
+  exsel_any <= {4{enable_mister_floppy}} & {ext_mapped(floppy_ext_drive[11:9]), ext_mapped(floppy_ext_drive[8:6]),
+                                            ext_mapped(floppy_ext_drive[5:3]),  ext_mapped(floppy_ext_drive[2:0])};
 wire [3:0] drive_emu = {drives == 2'd3, drives[1], |drives, 1'b1} & ~exsel_any & {4{~no_drives}};
 always @(posedge clk) begin
   drive_snd[8:1] <= {reset, disk_present & drive_emu, |(motor_on[3:1] & drive_emu[3:1]), motor_on[0] & drive_emu[0], |sel};
