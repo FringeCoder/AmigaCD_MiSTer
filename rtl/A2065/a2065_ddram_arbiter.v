@@ -99,6 +99,13 @@ module a2065_ddram_arbiter #(
     wire [BURST_W:0] m0_more = (owner == M0 && owner_is_read && m0_read && !s_waitrequest)
                              ? {1'b0, m0_burstcount} : {(BURST_W+1){1'b0}};
 
+    // One bit wider than beats_left: the compare it replaces was sized to 32
+    // bits by its literal, so beats_left + m0_more never wrapped there either
+    // (at most 511 + 255).
+    wire [BURST_W+1:0] beats_add     = beats_left + m0_more;
+    wire               beats_add_is0 = (beats_add == {(BURST_W+2){1'b0}});
+    wire               beats_add_is1 = (beats_add == {{(BURST_W+1){1'b0}}, 1'b1});
+
     always @(posedge clk or posedge rst) begin
         if (rst) begin
             busy          <= 1'b0;
@@ -125,8 +132,13 @@ module a2065_ddram_arbiter #(
             end
         end
         else begin
-            beats_left <= beats_left + m0_more - beat_done;
-            if (beats_left + m0_more - beat_done == 0) busy <= 1'b0;
+            beats_left <= beats_add - beat_done;
+            // beats_add - beat_done == 0, with the late beat_done (it comes
+            // straight off the f2sdram port) taken out of the subtract: both
+            // compares settle on early signals and beat_done only picks one.
+            // Same modular arithmetic, same result; -0.91 ns at one seed
+            // before, with the HPS readdatavalid at the bottom of the adder.
+            if (beat_done ? beats_add_is1 : beats_add_is0) busy <= 1'b0;
         end
     end
 

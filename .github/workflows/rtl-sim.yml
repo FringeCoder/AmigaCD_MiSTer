@@ -296,6 +296,23 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # a2065_ddram_arbiter's busy-clear compare was rewritten to take the late
+      # f2sdram readdatavalid out of the adder in front of it (-0.91 ns at one
+      # seed). This proves every output, plus busy / beats_left / owner,
+      # cycle-identical to the previous version (frozen as
+      # a2065_ddram_arbiter_ref.v) against a slave driven at random, so
+      # beats_left also visits the wrapped values a real slave never produces.
+      # Falsified on 2026-10-16: the two compares swapped, the select dropped,
+      # and a sum one bit too narrow (the original compare is 32 bits wide, so
+      # it never wrapped) each fail it.
+      - name: A2065 DDR3 arbiter matches its previous version (tb_a2065_arbiter_equiv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/a2065arb
+          iverilog -g2012 -o tb ../../A2065/a2065_ddram_arbiter.v a2065_ddram_arbiter_ref.v tb_a2065_arbiter_equiv.sv
+          vvp -n tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # ss_serdes became a real shift register (it was addressed by count) to
       # take a ~50-way word mux and a per-word count decode off two clk_114
       # paths that missed setup after the 68030 merge. This proves every output
