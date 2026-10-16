@@ -274,6 +274,15 @@ reg        dma_read_ack;
 reg [28:1] dmaReadAddr;
 reg  [1:0] dmaReadBA;       // word selector inside the 64-bit DDR beat
 reg        dma_read_in_flight; // 1 = DDR read issued, waiting for DOUT_READY
+// A CPU write to Fast RAM is posted: write_ena releases the CPU before the
+// write reaches DDR3, and state 0 serves DMA ahead of it. A DMA request that
+// arrives AFTER a pending CPU write must let that write go first, or a DMA
+// write is lost under the older CPU word and a DMA read returns the stale
+// one. A request that arrived before the CPU write keeps its priority.
+// Upstream 691c2b7 (#255), hand-ported: this file's request latch and state
+// 0 are this fork's (the split read path), the rule is upstream's.
+reg        dma_after_wr;
+wire       wr_first = dma_after_wr & write_req & ~write_ack;
 
 assign dmaACK = dmaACK_r;
 
@@ -284,7 +293,10 @@ always @ (posedge sysclk) begin
 		dma_write_req <= 0;
 		dma_read_req  <= 0;
 		dmaACK_r      <= 0;
+		dma_after_wr  <= 0;
 	end else begin
+		if (write_ack) dma_after_wr <= 0;
+
 		// Latch a new request on the synchronized CS rising edge.
 		// Data has been stable in chipdma_arb's registers since arm_now,
 		// many sysclk cycles ago, so sampling here is safe regardless of
@@ -292,6 +304,7 @@ always @ (posedge sysclk) begin
 		// z2-read-fix: split write vs read paths on the same
 		// latching edge. dmaWE is the latched (and stable) WE bit.
 		if (dmaCS_rise & ~dma_write_req & ~dma_read_req & ~dmaACK_r) begin
+			dma_after_wr <= write_req & ~write_ack;
 			if (dmaWE) begin
 			dmaWriteAddr  <= dmaAddr;
 			dmaWriteDat   <= dmaWR;
@@ -506,7 +519,7 @@ always @ (posedge sysclk) begin
 					// tiny (one byte per ~150 KB/s sector), so this never
 					// starves the CPU in practice, but it does guarantee no
 					// head-of-line wait behind a slow CPU cache fill.
-					if(~dma_write_ack & dma_write_req) begin
+					if(~dma_write_ack & dma_write_req & ~wr_first) begin
 						ram_addr      <= {3'b001, dmaWriteAddr[28:3]};
 						ram_be        <= {6'b000000,dmaWriteBE}<<{dmaWriteAddr[2:1],1'b0};
 						ram_din       <= {dmaWriteDat,dmaWriteDat,dmaWriteDat,dmaWriteDat};
@@ -518,7 +531,7 @@ always @ (posedge sysclk) begin
 					// write already in flight completes first; above CPU
 					// write/cache to keep bridge latency low, since the BIOS
 					// waits synchronously for this.
-					else if(~dma_read_ack & dma_read_req & ~dma_read_in_flight) begin
+					else if(~dma_read_ack & dma_read_req & ~dma_read_in_flight & ~wr_first) begin
 						ram_addr           <= {3'b001, dmaReadAddr[28:3]};
 						ram_be             <= 8'hFF;
 						ram_rd             <= 1;
