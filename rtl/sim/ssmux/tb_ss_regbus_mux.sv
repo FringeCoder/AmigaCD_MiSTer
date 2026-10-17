@@ -118,6 +118,7 @@ amiga_clk amiga_clock
 	.c3       (c3             ),
 	.cck      (cck            ),
 	.eclk     (eclk           ),
+	.eclk_n   (eclk_n         ),   // CIA-B's port B lookahead (ciab.v)
 	.ce       (~ss_freeze_7m  ),
 	.reset_n  (rst_n          )
 );

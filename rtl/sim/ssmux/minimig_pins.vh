@@ -39,6 +39,7 @@ wire         c1;
 wire         c3;
 wire         cck;
 wire [9:0]   eclk;
+wire [9:0]   eclk_n;
 wire         rxd;
 wire         txd;
 wire         cts;
@@ -447,6 +448,7 @@ minimig dut (
 	.c3(c3),
 	.cck(cck),
 	.eclk(eclk),
+	.eclk_n(eclk_n),
 	.rxd(rxd),
 	.txd(txd),
 	.cts(cts),

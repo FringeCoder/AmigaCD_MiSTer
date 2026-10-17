@@ -37,7 +37,7 @@ DIRECTIONS = ("input", "output", "inout")
 # Inputs the bench drives from other RTL, not procedurally: the Amiga-side
 # clock generator's outputs and ss_regshadow's replay bus.
 EXTERNAL = {
-    "clk", "clk7_en", "clk7n_en", "c1", "c3", "cck", "eclk",
+    "clk", "clk7_en", "clk7n_en", "c1", "c3", "cck", "eclk", "eclk_n",
     "ss_replay_we", "ss_replay_addr", "ss_replay_data", "ss_replay_tick",
 }
 
