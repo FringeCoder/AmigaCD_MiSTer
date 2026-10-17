@@ -169,6 +169,15 @@ set_false_path -from {emu|sdram_big*}
 set_false_path -from {emu|sdram_dual*}
 
 set_false_path -from {emu|minimig|USERIO1|cpu_config*}
+# chipset_config and memory_config (all but bit 6) are latched only while reset
+# is asserted -- userio.v, "configuration changes only while reset is active" --
+# the same reason cpu_config above is a false path. Measured as a source into
+# sdram_ctrl sd_addr at -0.64 ns on seed 8 of the 68030 netlist, through the
+# chipset decodes (a1k / ecs / aga) and the memory map. memory_config[6] is
+# copied every clock (userio.v, outside the reset branch) and stays timed, as
+# do floppy_config and floppy_ext_drive, which the OSD writes while running.
+set_false_path -from {emu|minimig|USERIO1|chipset_config[*]}
+set_false_path -from {emu|minimig|USERIO1|memory_config[0] emu|minimig|USERIO1|memory_config[1] emu|minimig|USERIO1|memory_config[2] emu|minimig|USERIO1|memory_config[3] emu|minimig|USERIO1|memory_config[4] emu|minimig|USERIO1|memory_config[5] emu|minimig|USERIO1|memory_config[7]}
 set_false_path -from {emu|minimig|USERIO1|ide_config*}
 set_false_path -from {emu|minimig|USERIO1|bootrom}
 set_false_path -from {emu|minimig|CPU1|halt}
