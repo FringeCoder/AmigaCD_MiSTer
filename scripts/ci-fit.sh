@@ -39,6 +39,12 @@ tail -40 "fit_$seed.log"
 # own source usually means the fitter ran out of something -- DSP blocks most
 # of all, which turns a hard multiplier into ALM logic -- and only this says so.
 cat "output_files/$proj.fit.summary" 2>/dev/null || echo "no fit summary"
+# Where the SDRAM address and bank pins sit on the die. The chipset -> sd_addr
+# family ends in the I/O cell of each pin, and its last hop is a fixed route
+# of several ns to whichever pins are farthest from the logic -- so which pins
+# those are, and where, is what a placement constraint would be built from.
+echo "== SDRAM address/bank pins: name ; pin ; bank ; X ; Y =="
+grep -E '^; SDRAM_(A|BA)\[' "output_files/$proj.fit.rpt" 2>/dev/null | awk -F';' '!seen[$2]++ {print $2";"$3";"$4";"$5";"$6}' || true
 
 rpt="output_files/$proj.sta.rpt"
 slack() {   # the worst of every corner's figure, so no corner hides a failure
