@@ -335,6 +335,23 @@ jobs:
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # drive_sounds registers the DDR3 read data (dd_q) before its 4:1 sample
+      # select, because the HPS port's readdata straight into smp missed setup
+      # in 4 of 58 seeds. That costs one clock per read; this proves the module
+      # identical, on every output and every clock, to the previous one (frozen
+      # as drive_sounds_ref.v) behind a DDR3 port one clock slower -- a latency
+      # the port never fixed. Falsified on 2026-10-17: reading the select or the
+      # line cache from the live port instead of dd_q, and a wrong word, each
+      # fail it (the model drives garbage outside its ready cycle, which is what
+      # makes the first two visible).
+      - name: drive_sounds matches its previous version a DDR3 clock later (tb_drive_sounds_equiv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/dsnd
+          iverilog -g2012 -o tb ../../drive_sounds.v drive_sounds_ref.v tb_drive_sounds_equiv.sv
+          vvp -n tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # ss_serdes became a real shift register (it was addressed by count) to
       # take a ~50-way word mux and a per-word count decode off two clk_114
       # paths that missed setup after the 68030 merge. This proves every output
