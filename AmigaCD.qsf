@@ -327,6 +327,14 @@ set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to SDIO_DAT[*]
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to SD_SPI*
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to USER_IO[*]
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to VGA_EN
+# The save-state freeze and peek-scan registers: synthesis duplicates them so no
+# copy drives more than MAX_FANOUT loads. freeze drives ~145 loads across the
+# design, and from there through ss_port_own and the SDRAM CPU port mux into
+# sdram_ctrl's sd_addr and cpu_cache -- a clk_114 path that missed setup in 20
+# of 58 seeds of the 68030 netlist (-0.54 median, -1.05 worst), most of it
+# routing. Duplication changes no logic: every copy is the same register.
+set_instance_assignment -name MAX_FANOUT 24 -to "*ss_quiesce:quiesce|freeze"
+set_instance_assignment -name MAX_FANOUT 24 -to "*ss_ctrl:savestate|peek_scan"
 set_global_assignment -name QIP_FILE rtl/A2065/a2065.qip
 set_global_assignment -name QIP_FILE rtl/akiko.qip
 set_global_assignment -name QIP_FILE rtl/cdtv.qip
