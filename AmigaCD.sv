@@ -791,7 +791,11 @@ wire [31:0] ss_clut_wr_data;
 // assertion is what makes this safe to delete, and it must keep passing: if a
 // future change lets a scan run unfrozen again, the term has to come back
 // here at the same time.
-wire        ss_port_own = ss_freeze | ss_peek_scan;
+// ss_freeze | ss_peek_scan, delivered as ss_ctrl's own register port_own:
+// loaded with the next values of both, so it is the same OR on every clock
+// but leaves a flop instead of a gate on freeze's ~145-load net. The proof is
+// rtl/sim/ssown, which checks port_own against the OR on every clock.
+wire        ss_port_own;
 
 // Where the Kickstart ROM physically lives in SDRAM, as the CPU port's own
 // word address -- DERIVED, not assumed. Amiga $F80000 goes through
@@ -2392,6 +2396,7 @@ ss_ctrl #(.STATE_W(`SS_STATE_W), .CHIP_WORDS(24'h100000)) savestate
 	.peek_valid(ss_peek_valid),
 	.peek_busy(ss_peek_busy),
 	.peek_scan(ss_peek_scan),
+	.port_own(ss_port_own),
 	.cpu_pc(ss_pc),
 	.pc_snapshot(ss_pc_snapshot),
 	.kick_pair(ss_kick_pair),

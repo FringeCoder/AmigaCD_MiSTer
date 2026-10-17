@@ -335,6 +335,24 @@ jobs:
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # The SDRAM CPU port claim (freeze | peek_scan) is now ss_ctrl's own
+      # register, port_own, loaded with the next values of both, so it leaves a
+      # flop instead of a gate on freeze's ~145-load net -- that path into
+      # sdram_ctrl's sd_addr was the worst family after the chipset one. This
+      # proves port_own equals the OR on every clock and ss_ctrl's outputs equal
+      # the previous version's (frozen as ss_ctrl_ref.v / ss_quiesce_ref.v):
+      # 1.5M clocks of random saves, loads and peeks, busy stretches that make
+      # the freeze time out and SDRAM stalls that make a peek scan time out.
+      # Falsified on 2026-10-17: port_own from the current freeze, from the
+      # current peek_scan, a peek-scan release forced high, and the freeze
+      # granted after a timeout each fail it.
+      - name: Save-state port claim register matches freeze | peek_scan (tb_ss_port_own.sv)
+        run: |
+          set -euo pipefail
+          bash rtl/sim/check-icarus-warnings.sh -g2012 -o tb_ss_port_own rtl/sim/ssown/tb_ss_port_own.sv rtl/ss_ctrl.v rtl/ss_quiesce.v rtl/ss_serdes.v rtl/ss_dma.v rtl/ss_crc32.v rtl/sim/ssown/ss_ctrl_ref.v rtl/sim/ssown/ss_quiesce_ref.v
+          vvp -n tb_ss_port_own | tee out_ss_port_own.log
+          grep -q "RUN: PASS" out_ss_port_own.log
+
       # CIA-B's port B pins (drive select, motor) now come straight off a
       # register loaded with their NEXT value: the port expression applied to
       # the next-state logic of DDRB, PRB and both timers, and amiga_clk's next

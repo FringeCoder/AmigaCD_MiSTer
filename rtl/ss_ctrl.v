@@ -378,6 +378,13 @@ module ss_ctrl
 	// AmigaCD.sv ORs the two into the port mux instead, which costs nothing.
 	output reg                peek_scan,
 
+	// freeze | peek_scan -- the SDRAM CPU port claim AmigaCD.sv muxes on -- as
+	// a register of its own, loaded with the NEXT values of both. It equals the
+	// OR on every clock (rtl/sim/ssown proves it) but leaves straight off a flop,
+	// instead of through a gate fed by freeze's ~145-load net; that path into
+	// sdram_ctrl's sd_addr was the design's worst family after the chipset one.
+	output reg                port_own,
+
 	// ---------------------------------------------------- restore post-mortem
 	//
 	// Four samples of the CPU's PC taken after the freeze drops, and the two
@@ -708,6 +715,9 @@ reg restore_busy;
 // wedged-machine cases there have to drive the limit to a timeout, and pulsing
 // 120 frames per case to do it would buy nothing but simulation time.
 
+wire freeze_n;
+reg  peek_scan_d;   // peek_scan's next value, built up in the FSM block below
+
 ss_quiesce quiesce
 (
 	.clk(clk), .rst_n(rst_n),
@@ -723,7 +733,7 @@ ss_quiesce quiesce
 	.frame_limit((save_busy || peek_busy) ? SAVE_FRAMES : LOAD_FRAMES),
 	.blit_busy(blit_busy), .disk_busy(disk_busy), .audio_busy(audio_busy),
 	.cpu_boundary(cpu_boundary), .frame_tick(frame_tick),
-	.freeze(freeze), .quiesced(quiesced), .timeout(timeout)
+	.freeze(freeze), .freeze_n(freeze_n), .quiesced(quiesced), .timeout(timeout)
 );
 
 // ---------------------------------------------------------------- serdes
@@ -1233,6 +1243,9 @@ always @(posedge clk) begin
 end
 
 always @(posedge clk) begin
+	// peek_scan is assigned through peek_scan_d so its next value is known at the
+	// end of the block, where port_own is loaded from it.
+	peek_scan_d = peek_scan;
 	if (!rst_n) begin
 		state            <= S_IDLE;
 		save_busy        <= 1'b0;
@@ -1257,7 +1270,7 @@ always @(posedge clk) begin
 		peek_data        <= 128'd0;
 		peek_valid       <= 1'b0;
 		peek_busy        <= 1'b0;
-		peek_scan        <= 1'b0;
+		peek_scan_d       = 1'b0;
 		peek_timeout     <= 1'b0;
 		peek_ack_cnt     <= 8'd0;
 		peek_words       <= 4'd0;
@@ -1461,7 +1474,7 @@ always @(posedge clk) begin
 		// bound and the only one needed.
 		S_PEEK_FREEZE: begin
 			if (quiesced) begin
-				peek_scan <= 1'b1;   // borrow the SDRAM CPU port
+				peek_scan_d  = 1'b1;   // borrow the SDRAM CPU port
 				scan_wd   <= 24'd0;
 				state     <= S_PEEK_ISSUE;
 			end
@@ -1498,7 +1511,7 @@ always @(posedge clk) begin
 			if (sd_ready && peek_ack_cnt != 8'hFF) peek_ack_cnt <= peek_ack_cnt + 8'd1;
 
 			if (scan_wd > SCAN_TIMEOUT) begin
-				peek_scan    <= 1'b0;
+				peek_scan_d   = 1'b0;
 				peek_busy    <= 1'b0;
 				peek_timeout <= 1'b1;
 				state        <= S_IDLE;
@@ -1518,7 +1531,7 @@ always @(posedge clk) begin
 					              dma_word_out[7:0], dma_word_out[15:8]};
 					peek_low_held <= 1'b0;
 					if (peek_words == 4'd6) begin
-						peek_scan  <= 1'b0;
+						peek_scan_d   = 1'b0;
 						peek_busy  <= 1'b0;
 						peek_valid <= 1'b1;
 						state      <= S_IDLE;
@@ -2651,6 +2664,9 @@ always @(posedge clk) begin
 		default: state <= S_IDLE;
 		endcase
 	end
+
+	peek_scan <= peek_scan_d;
+	port_own  <= freeze_n | peek_scan_d;
 end
 
 endmodule
