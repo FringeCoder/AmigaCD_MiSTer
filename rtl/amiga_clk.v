@@ -10,6 +10,7 @@ module amiga_clk
   output reg   c3,         // clk28m clock domain signal synchronous with clk signal delayed by 90 degrees
   output reg   cck,        // colour clock output (3.54 MHz)
   output [9:0] eclk,       // 0.709379 MHz clock enable output (clk domain pulse)
+  output [9:0] eclk_n,     // eclk as it will be after this clock edge (lookahead for ciab)
   // Timebase enable. Low holds the whole 7 MHz phase generator -- clk7_en,
   // clk7n_en, c1, c3, cck and eclk all stop where they are. c1/c3/cck/eclk
   // are Gray-coded phase LEVELS, not one-cycle pulses, so a consumer cannot
@@ -79,5 +80,15 @@ always @(posedge clk_28) if (ce) c1 <= ~c3;
 
 // 0.709379 MHz clock enable output (clk domain pulse)
 assign eclk = shifter;
+// The shifter's next-state logic as a wire, for ciab's port B lookahead. It
+// mirrors the always block above branch for branch; rtl/sim/ciab checks it
+// against eclk one clock later, on every clock. The asynchronous reset
+// appears as its level: held in reset, the next value is the reset value.
+wire       shift_now = ce & (clk7_cnt == 2'b01);
+wire [9:0] shifter_rot = {shifter[8:0],shifter[9]};
+assign eclk_n = !reset_n  ? 10'd1 :
+                !shift_now ? shifter :
+                !shifter   ? 10'd1 :
+                             shifter_rot;
 
 endmodule

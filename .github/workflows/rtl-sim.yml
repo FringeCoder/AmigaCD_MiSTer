@@ -335,6 +335,27 @@ jobs:
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # CIA-B's port B pins (drive select, motor) now come straight off a
+      # register loaded with their NEXT value: the port expression applied to
+      # the next-state logic of DDRB, PRB and both timers, and amiga_clk's next
+      # eclk. Through Paula's floppy DMA request, Agnus and Gary those pins reach
+      # sdram_ctrl's sd_addr inside half a 7 MHz cycle, and CIA-B was the worst
+      # source of that path in the 68030 netlist (-1.45 ns on seed 8). This
+      # proves the module identical to the previous one (frozen as ciab_ref.v,
+      # with its timers) on every output and every clock: 2M clocks of random
+      # CPU traffic biased to PRB/DDRB/timers with PBON/OUTMODE/cascade, CIA
+      # resets, amiga_clk's async reset, the freeze's ce, and save-state loads.
+      # Falsified on 2026-10-17: stale eclk, a stale OUTMODE, a stale PRB, a
+      # stale cascade select, a stale zero test and a wrong eclk shift condition
+      # each fail it.
+      - name: CIA-B port B lookahead matches its previous version (tb_ciab_lookahead_equiv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/ciab
+          iverilog -g2012 -o tb tb_ciab_lookahead_equiv.sv ../../amiga_clk.v ../../ciab.v ../../cia_timera.v ../../cia_timerb.v ../../cia_int.v ../../cia_timerd.v ciab_ref.v cia_timera_ref.v cia_timerb_ref.v
+          vvp -n tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # drive_sounds registers the DDR3 read data (dd_q) before its 4:1 sample
       # select, because the HPS port's readdata straight into smp missed setup
       # in 4 of 58 seeds. That costs one clock per read; this proves the module

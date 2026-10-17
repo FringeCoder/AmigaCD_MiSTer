@@ -26,6 +26,13 @@ module cia_timera
   // toggles on every underflow.
   output  pb_on,
   output  pb_val,
+  // Lookahead: what tmra_ovf, pb_on and pb_val will be after this clock edge,
+  // given eclk_n, the value eclk will have then. ciab registers its port B
+  // pins from these so the pins come straight off a flop (see ciab.v).
+  input   eclk_n,
+  output  tmra_ovf_n,
+  output  pb_on_n,
+  output  pb_val_n,
 
   // Save state. {tmr, tmlh, tmll, tmcr} -- the counter, both latch
   // bytes and the control register. Exported rather than read over the
@@ -65,21 +72,20 @@ assign count = eclk & start_delay[1];
 // the delay, as the running timer it was saved from, not as one just started.
 reg   [1:0] start_delay;
 
-always @(posedge clk)
-  if (ss_ld)
-    start_delay <= {2{ss_ld_data[0]}};
-  else if (clk7_en) begin
-    if (reset)
-      start_delay <= 2'b00;
-    else if (!start)
-      start_delay <= 2'b00;
-    else if (thi_load && oneshot)
-      start_delay <= 2'b00;
-    else if (tcr && wr && !data_in[0])
-      start_delay <= 2'b00;
-    else if (eclk)
-      start_delay <= {start_delay[0],1'b1};
-  end
+// Every register the port B pins depend on is written as `X <= X_n`, with X_n
+// its next-state logic -- unchanged, only spelled as a wire -- so the lookahead
+// outputs below are computed from the very logic that loads the registers,
+// not from a copy of it that could drift.
+wire [1:0] start_delay_n =
+  ss_ld                     ? {2{ss_ld_data[0]}} :
+  !clk7_en                  ? start_delay :
+  reset                     ? 2'b00 :
+  !start                    ? 2'b00 :
+  (thi_load && oneshot)     ? 2'b00 :
+  (tcr && wr && !data_in[0])? 2'b00 :
+  eclk                      ? {start_delay[0],1'b1} :
+                              start_delay;
+always @(posedge clk) start_delay <= start_delay_n;
 
 // Timer Control Register (CRA) bit definitions:
 // Bit 0: START - Start/stop timer (1=start, 0=stop)
@@ -92,22 +98,15 @@ always @(posedge clk)
 // Bit 7: Unused (TOD clock select on CRB register only)
 
 // Write to control register
-always @(posedge clk)
-  if (ss_ld)
-    tmcr[6:0] <= ss_ld_data[6:0];
-  else if (clk7_en) begin
-    if (reset)
-      tmcr[6:0] <= 7'd0;
-    else if (tcr && wr)
-      // Load control register, bit 4 (LOAD strobe) is not stored
-      tmcr[6:0] <= {data_in[6:5],1'b0,data_in[3:0]};
-    else if (thi_load && oneshot)
-      // In one-shot mode, writing to timer high byte starts the timer
-      tmcr[0] <= 1'd1;
-    else if (underflow && oneshot)
-      // In one-shot mode, timer stops automatically on underflow
-      tmcr[0] <= 1'd0;
-  end
+wire [6:0] tmcr_n =
+  ss_ld                  ? ss_ld_data[6:0] :
+  !clk7_en               ? tmcr[6:0] :
+  reset                  ? 7'd0 :
+  (tcr && wr)            ? {data_in[6:5],1'b0,data_in[3:0]} :  // bit 4 (LOAD strobe) is not stored
+  (thi_load && oneshot)  ? {tmcr[6:1],1'b1} :                   // one-shot: writing the high byte starts it
+  (underflow && oneshot) ? {tmcr[6:1],1'b0} :                   // one-shot: underflow stops it
+                           tmcr[6:0];
+always @(posedge clk) tmcr[6:0] <= tmcr_n;
 
 // Capture force load strobe (bit 4 of control register write)
 always @(posedge clk)
@@ -164,17 +163,14 @@ always @(posedge clk)
 assign reload = thi_load_eclk | forceload | underflow;
 
 // 16-bit down counter
-always @(posedge clk)
-  if (ss_ld)
-    tmr[15:0] <= ss_ld_data[38:23];
-  else if (clk7_en) begin
-    if (reset)
-      tmr[15:0] <= 16'hFF_FF;  // Reset to maximum value
-    else if (reload)
-      tmr[15:0] <= {tmlh[7:0],tmll[7:0]};  // Load from latches
-    else if (start && count)
-      tmr[15:0] <= tmr[15:0] - 16'd1;     // Count down
-  end
+wire [15:0] tmr_n =
+  ss_ld            ? ss_ld_data[38:23] :
+  !clk7_en         ? tmr[15:0] :
+  reset            ? 16'hFF_FF :              // reset to maximum value
+  reload           ? {tmlh[7:0],tmll[7:0]} :  // load from latches
+  (start && count) ? tmr[15:0] - 16'd1 :      // count down
+                     tmr[15:0];
+always @(posedge clk) tmr[15:0] <= tmr_n;
 
 // Timer state detection
 assign zero = ~|tmr;                    // Timer equals zero
@@ -189,11 +185,16 @@ assign irq = underflow;       // Interrupt request on underflow
 // capturing it would push the state section past the padding it currently
 // fits in and invalidate every save file on disk.
 reg pb_tgl;
-always @(posedge clk)
-  if (clk7_en) begin
-    if (reset)          pb_tgl <= 1'b0;
-    else if (underflow) pb_tgl <= ~pb_tgl;
-  end
+wire pb_tgl_n = !clk7_en ? pb_tgl : reset ? 1'b0 : underflow ? ~pb_tgl : pb_tgl;
+always @(posedge clk) pb_tgl <= pb_tgl_n;
+
+// The lookahead: underflow, pb_on and pb_val as they will be after this edge,
+// from the next-state values above and the next eclk.
+wire count_n     = eclk_n & start_delay_n[1];
+wire underflow_n = ~|tmr_n & tmcr_n[0] & count_n;
+assign tmra_ovf_n = underflow_n;
+assign pb_on_n  = tmcr_n[1];
+assign pb_val_n = tmcr_n[2] ? pb_tgl_n : underflow_n;
 
 assign pb_on  = tmcr[1];
 assign pb_val = tmcr[2] ? pb_tgl : underflow;

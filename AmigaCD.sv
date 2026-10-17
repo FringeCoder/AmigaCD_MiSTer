@@ -471,6 +471,7 @@ wire        am_c1;
 wire        am_c3;
 wire        am_cck;
 wire  [9:0] am_eclk;
+wire  [9:0] am_eclk_n;      // am_eclk after this edge, for CIA-B's port B lookahead (ciab.v)
 
 // The freeze's two clk_sys-domain signals: the enable that stops the Amiga's
 // timebase, and the register-decode tick a replay needs while it is stopped.
@@ -505,6 +506,7 @@ amiga_clk amiga_clk_am
 	.c3       ( am_c3         ),
 	.cck      ( am_cck        ),
 	.eclk     ( am_eclk       ),
+	.eclk_n   ( am_eclk_n     ),
 	.ce       ( ~ss_freeze_7m ),
 	.reset_n  ( ~reset_d      )  // same synchronous release as the master copy
 );
@@ -1765,6 +1767,7 @@ minimig minimig
 	.c3           (am_c3            ), // clk28m clock domain signal synchronous with clk signal delayed by 90 degrees
 	.cck          (am_cck           ), // colour clock output (3.54 MHz)
 	.eclk         (am_eclk          ), // 0.709379 MHz clock enable output (clk domain pulse)
+	.eclk_n       (am_eclk_n        ), // the same, after this edge (CIA-B port B lookahead)
 
 	//rs232 pins
 	.rxd          (uart_rx          ), // RS232 receive

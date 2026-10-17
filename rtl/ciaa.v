@@ -441,6 +441,11 @@ cia_timera tmra
   .irq(ta),
   .pb_on(ta_pb_on),
   .pb_val(ta_pb_val),
+  // lookahead, used only by CIA-B's port B (ciab.v); unused here
+  .eclk_n(1'b0),
+  .tmra_ovf_n(),
+  .pb_on_n(),
+  .pb_val_n(),
   .ss_state(ss_tmra),
   .ss_ld(ss_ld),
   .ss_ld_data(ss_ld_data[76:38])
@@ -463,6 +468,11 @@ cia_timerb tmrb
   .irq(tb),
   .pb_on(tb_pb_on),
   .pb_val(tb_pb_val),
+  // lookahead, used only by CIA-B's port B (ciab.v); unused here
+  .eclk_n(1'b0),
+  .tmra_ovf_n(1'b0),
+  .pb_on_n(),
+  .pb_val_n(),
   .ss_state(ss_tmrb),
   .ss_ld(ss_ld),
   .ss_ld_data(ss_ld_data[115:77])
