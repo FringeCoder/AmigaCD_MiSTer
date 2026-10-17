@@ -341,6 +341,17 @@ set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to VGA_EN
 # routing. Duplication changes no logic: every copy is the same register.
 set_instance_assignment -name MAX_FANOUT 24 -to "*ss_quiesce:quiesce|freeze"
 set_instance_assignment -name MAX_FANOUT 24 -to "*ss_ctrl:savestate|peek_scan"
+# The SDRAM controller's CPU-side activate select, act_cpu = st0_cpu &
+# (write_req | cache_req): three registers into row_new and on to the sd_addr
+# I/O registers, a single clk_114 cycle with ~5 ns of it the route to the far
+# pins. In panel 2 (run 39054803706) this was negative in 17 of 20 seeds
+# (-0.39 median) and the worst path of seeds 9 and 13, which start with
+# 1.4-2.1 ns of routing from write_req (fanout 19) or sdr_read_req placed among
+# their other loads. Duplicating them lets a copy sit beside the mux; every copy
+# is the same register.
+set_instance_assignment -name MAX_FANOUT 6 -to "*sdram_ctrl:ram1|write_req"
+set_instance_assignment -name MAX_FANOUT 6 -to "*sdram_ctrl:ram1|st0_cpu"
+set_instance_assignment -name MAX_FANOUT 6 -to "*sdram_ctrl:ram1|cpu_cache_new:cpu_cache|sdr_read_req"
 set_global_assignment -name QIP_FILE rtl/A2065/a2065.qip
 set_global_assignment -name QIP_FILE rtl/akiko.qip
 set_global_assignment -name QIP_FILE rtl/cdtv.qip
