@@ -56,6 +56,9 @@ set families {
 	{H.ddram_ctrl         {emu|ram2|*}                     {emu|ram2|*}}
 	{J.f2sdram_to_ddram   {sysmem|*}                       {emu|ram2|*}}
 	{K.to_drive_sounds    ""                               {emu|drive_sounds|*}}
+	{L.ss_ctrl_internal   {emu|savestate|*}                {emu|savestate|*}}
+	{N.a2065_arb_to_ddram {emu|ram2|arbiter|*}             {emu|ram2|*}}
+	{P.ascal_palette      {ascal|pal_*}                    {ascal|*}}
 	{M.ascal              ""                               {ascal|*}}
 	{all_setup            ""                               ""}
 }
