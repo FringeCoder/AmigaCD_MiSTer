@@ -55,6 +55,12 @@ set_global_assignment -name FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION ALWAYS
 set_global_assignment -name SEED 39
 set_global_assignment -name VERILOG_MACRO "MISTER_FB=1"
 set_global_assignment -name VERILOG_MACRO "MISTER_FB_PALETTE=1"
+# EXPERIMENT (seed-lottery Phase 3): drop ascal's adaptive polyphase filter.
+# Its luma path (o_poly_lum, o_h/v_lum_pix) was a failing family on clk_hdmi in
+# 13 of 58 seeds, and the mode costs ALMs and M10Ks in a design at 82%. The
+# Main menu then stops offering adaptive filter files for this core; ordinary
+# polyphase filters are unaffected. Kept only if the panel shows it pays.
+set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_ADAPTIVE=1"
 
 source sys/sys.tcl
 source sys/sys_analog.tcl
