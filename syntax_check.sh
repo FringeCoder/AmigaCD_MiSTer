@@ -61,7 +61,9 @@ unknown_only=0
 bad=0
 
 for f in "${FILES[@]}"; do
-  out=$("$IVERILOG" -g2012 -t null -o "$NULLOUT" "$f" 2>&1)
+  # -I the file's own directory: Quartus resolves `include there first, and
+  # cpu_cycles.v includes rtl/tg68k/*.vh by a path relative to rtl/.
+  out=$("$IVERILOG" -g2012 -t null -o "$NULLOUT" -I "$(dirname "$f")" "$f" 2>&1)
   if [ -z "$out" ]; then
     clean=$((clean + 1))
     continue

@@ -188,9 +188,21 @@ hps_io #(.CONF_STR(CONF_STR), .CONF_STR_BRAM(0)) hps_io
 
 	.RTC(RTC),
 	.gamma_bus(gamma_bus),
+	.sdram_sz(sdram_sz),
 
 	.EXT_BUS(EXT_BUS)
 );
+
+// SDRAM module size from the Main (upstream 26eb46a). A big (64 MB) or dual
+// (128 MB) module carries Zorro III fast RAM above the chip RAM region; see
+// memory_router.v. Quasi-static: false paths in AmigaCD.sdc.
+wire [15:0] sdram_sz;
+reg         sdram_big = 0;
+reg         sdram_dual = 0;
+always @(posedge clk_sys) begin
+	sdram_big  <= sdram_sz[15] & sdram_sz[1];
+	sdram_dual <= sdram_sz[15] & (sdram_sz[1:0] == 2'd3);
+end
 
 wire [15:0] ide_din;
 wire [15:0] ide_dout;
@@ -507,6 +519,9 @@ wire [31:0] ss_reg_data;
 // code. That is what the restores that ended in a reset were doing.
 wire [31:0] ss_pc;
 wire        ss_cpu_at_boundary;
+// Declared here because ram2 (ddram_ctrl) takes it; assigned with the park
+// logic further down.
+wire        ss_cpu_parked;
 wire        ss_cpu_bus_settled;
 wire [15:0] ss_sr;
 wire [31:0] ss_usp;
@@ -932,6 +947,8 @@ wire        ss_fanout_ack;
 
 
 wire cpu_type = cpucfg[1];
+// cpu_wrapper's ec020, for the save state's fast RAM decode below.
+wire ss_ec020 = (cpucfg[1:0] == 2'b11) & cpucfg[2];
 reg  cpu_ph1;
 reg  cpu_ph2;
 reg  ram_cs;
@@ -1002,6 +1019,15 @@ wire        chip_rw;
 wire [15:0] chip_dout;
 wire [15:0] chip_din;
 wire [23:1] chip_addr;
+// 32-bit chip RAM cycles with AGA and long-word fast RAM cycles on the 68030
+// (upstream 26eb46a).
+wire        chip32_en;
+wire        chip_long;
+wire [15:0] chip_din2;
+wire [15:0] chip_rd2;
+wire        ram_long;
+wire        arb_chip_long;
+wire [15:0] arb_chip_wr2;
 
 wire [28:1] ram_addr;
 wire        ram_sel;
@@ -1011,6 +1037,10 @@ wire [15:0] ram_din;
 wire [15:0] ram_dout  = zram_sel ? ram_dout2  : ram_dout1;
 wire        ram_ready = zram_sel ? ram_ready2 : ram_ready1;
 wire        zram_sel  = |ram_addr[28:26];
+wire        ram_l1;
+wire [15:0] ram_din_lo;
+wire [15:0] ram_dout2_hi;
+wire        ram_ready2_l;
 wire        ramshared;
 
 wire [7:0] toccata_base;
@@ -1056,6 +1086,10 @@ cpu_wrapper cpu_wrapper
 	.chip_rw      (chip_rw         ),
 	.chip_dtack   (chip_dtack      ),
 	.chip_ipl     (chip_ipl        ),
+	.chip32_en    (chip32_en       ),
+	.chip_long    (chip_long       ),
+	.chip_din2    (chip_din2       ),
+	.chip_dout2   (chip_rd2        ),
 
 	.fastchip_dout   (fastchip_dout   ),
 	.fastchip_sel    (fastchip_sel    ),
@@ -1067,7 +1101,10 @@ cpu_wrapper cpu_wrapper
 	.fastchip_lw     (fastchip_lw     ),
 
 	.cpucfg       (cpucfg          ),
+	.ntsc         (ntsc            ),
 	.cachecfg     (cachecfg        ),
+	.sdram_big    (sdram_big       ),
+	.sdram_dual   (sdram_dual      ),
 
 	// Save state export, and the park request that makes it meaningful.
 	//
@@ -1134,6 +1171,10 @@ cpu_wrapper cpu_wrapper
 	.ramdin       (ram_din         ),
 	.ramready     (ram_ready       ),
 	.ramshared    (ramshared       ),
+	.ramlong1     (ram_l1          ),
+	.ramdin_lo    (ram_din_lo      ),
+	.ramdout_hi   (ram_dout2_hi    ),
+	.ramready_l   (zram_sel & ram_ready2_l),
 
 	//custom CPU signals
 	.cpustate     (cpu_state       ),
@@ -1146,9 +1187,22 @@ cpu_wrapper cpu_wrapper
 	.z3ram_ena0_out  (z3ram_ena0_w    ),
 	.z3ram_base1_out (z3ram_base1_w   ),
 	.z3ram_ena1_out  (z3ram_ena1_w    ),
-	// D-cache software toggle from TG68K CACR bit 8.
+	.z3sdr_base0  (z3sdr_base0     ),
+	.z3sdr_ena0   (z3sdr_ena0      ),
+	.z3sdr_base1  (z3sdr_base1     ),
+	.z3sdr_ena1   (z3sdr_ena1      ),
+	.z3sdr_base2  (z3sdr_base2     ),
+	.z3sdr_ena2   (z3sdr_ena2      ),
+	// Constant 1 since upstream 26eb46a; see cpu_wrapper.
 	.dcache_sw_en    (dcache_sw_en_w  )
 );
+
+wire  [7:0] z3sdr_base0;
+wire        z3sdr_ena0;
+wire  [7:0] z3sdr_base1;
+wire        z3sdr_ena1;
+wire  [7:0] z3sdr_base2;
+wire        z3sdr_ena2;
 
 wire dcache_sw_en_w;
 
@@ -1181,6 +1235,22 @@ wire [15:0] dma_ddr_rd_w;
 wire [15:0] ram_dout1;
 wire        ram_ready1;
 
+// ddram_ctrl's way into SDRAM fast RAM (upstream 26eb46a).
+wire        sdr_req;
+wire        sdr_we;
+wire [26:1] sdr_addr;
+wire  [1:0] sdr_dqm;
+wire [15:0] sdr_wdat;
+wire        sdr_ack;
+wire        sdr_rvalid;
+wire [15:0] sdr_rdat;
+wire        sdr_w2;
+wire  [1:0] sdr_dqm2;
+wire [15:0] sdr_wdat2;
+
+reg         sdram_big_114 = 0;
+always @(posedge clk_114) sdram_big_114 <= sdram_big;
+
 sdram_ctrl ram1
 (
 	.sysclk       (clk_114         ),
@@ -1190,6 +1260,7 @@ sdram_ctrl ram1
 	.cache_rst    (cpu_rst         ),
 	.cpu_cache_ctrl(ss_cache_ctrl),
 	.dcache_sw_en (dcache_sw_en_w  ),
+	.sdram_big    (sdram_big_114   ),
 
 	.sd_data      (SDRAM_DQ        ),
 	.sd_addr      (SDRAM_A         ),
@@ -1243,7 +1314,22 @@ sdram_ctrl ram1
 	.chipRD       (ramdata_in      ),
 	.chipRD_dma   (chipRD_dma      ),
 	.sdram_ready  (sdram_ready     ),
-	.chip48       (chip48          )
+	.chip48       (chip48          ),
+	.chip32       (arb_chip_long   ),
+	.chipWR2      (arb_chip_wr2    ),
+	.chipRD2      (chip_rd2        ),
+
+	.fast_req     (sdr_req         ),
+	.fast_we      (sdr_we          ),
+	.fast_addr    (sdr_addr        ),
+	.fast_dqm     (sdr_dqm         ),
+	.fast_wdat    (sdr_wdat        ),
+	.fast_w2      (sdr_w2          ),
+	.fast_dqm2    (sdr_dqm2        ),
+	.fast_wdat2   (sdr_wdat2       ),
+	.fast_ack     (sdr_ack         ),
+	.fast_rvalid  (sdr_rvalid      ),
+	.fast_rdat    (sdr_rdat        )
 );
 
 // M5: chip-RAM master arbiter. Sits between minimig's chipset DMA signals
@@ -1264,6 +1350,8 @@ chipdma_arb chipdma_arb
 	.chip_in_rw      (_ram_we              ),
 	.chip_in_dma     (_ram_oe              ),
 	.chip_in_wr      (ram_data             ),
+	.chip_in_long    (ram_long             ),
+	.chip_in_wr2     (chip_din2            ),
 
 	// From / to akiko (via fastchip).
 	.akiko_dma_req   (akiko_dma_req_w      ),
@@ -1289,6 +1377,8 @@ chipdma_arb chipdma_arb
 	.chip_out_rw     (arb_chip_rw          ),
 	.chip_out_dma    (arb_chip_dma         ),
 	.chip_out_wr     (arb_chip_wr          ),
+	.chip_out_long   (arb_chip_long        ),
+	.chip_out_wr2    (arb_chip_wr2         ),
 	.chip_in_rd      (ramdata_in           ),
 	.chip_dma_slot   (arb_chip_dma_slot    ),
 	.chip_in_rd_dma  (chipRD_dma           ),
@@ -1302,6 +1392,13 @@ chipdma_arb chipdma_arb
 	.z3ram_ena0      (z3ram_ena0_w         ),
 	.z3ram_base1     (z3ram_base1_w        ),
 	.z3ram_ena1      (z3ram_ena1_w         ),
+	.z3sdr_base0     (z3sdr_base0          ),
+	.z3sdr_ena0      (z3sdr_ena0           ),
+	.z3sdr_base1     (z3sdr_base1          ),
+	.z3sdr_ena1      (z3sdr_ena1           ),
+	.z3sdr_base2     (z3sdr_base2          ),
+	.z3sdr_ena2      (z3sdr_ena2           ),
+	.sdram_big       (sdram_big            ),
 
 	.ddr_out_addr    (dma_ddr_addr_w       ),
 	.ddr_out_l       (dma_ddr_l_w          ),
@@ -1346,15 +1443,16 @@ ddram_ctrl ram2
 	.DDRAM_BE     (DDRAM_BE        ),
 	.DDRAM_WE     (DDRAM_WE        ),
 
-	.mem2_address      (a2065_mem_address),
-	.mem2_burstcount   (a2065_mem_burstcount),
-	.mem2_read         (a2065_mem_read),
-	.mem2_readdata     (a2065_mem_readdata),
-	.mem2_readdatavalid(a2065_mem_readdatavalid),
-	.mem2_writedata    (a2065_mem_writedata),
-	.mem2_byteenable   (a2065_mem_byteenable),
-	.mem2_write        (a2065_mem_write),
-	.mem2_waitrequest  (a2065_mem_waitrequest),
+	// The A2065 and the drive sounds, through dsnd_arb below.
+	.mem2_address      (mem2_address),
+	.mem2_burstcount   (mem2_burstcount),
+	.mem2_read         (mem2_read),
+	.mem2_readdata     (mem2_readdata),
+	.mem2_readdatavalid(mem2_readdatavalid),
+	.mem2_writedata    (mem2_writedata),
+	.mem2_byteenable   (mem2_byteenable),
+	.mem2_write        (mem2_write),
+	.mem2_waitrequest  (mem2_waitrequest),
 
 	.cpuWR        (ram_din         ),
 	.cpuAddr      (ram_addr        ),
@@ -1364,7 +1462,12 @@ ddram_ctrl ram2
 	.cpuCS        (zram_sel&ram_cs ),
 	.cpuRD        (ram_dout2       ),
 	.ramshared    (ramshared       ),
+	.cpuLong      (fastchip_lw & ~ram_addr[1]),
 	.ramready     (ram_ready2      ),
+	.cpuLong1     (ram_l1 & zram_sel),
+	.cpuWR_lo     (ram_din_lo      ),
+	.cpuRD_hi     (ram_dout2_hi    ),
+	.ramready_l   (ram_ready2_l    ),
 
 	// Save state port, muxed onto DDR3 arbiter master 0. The write side is
 	// taken while frozen; the read side is taken for the whole of a restore,
@@ -1381,6 +1484,7 @@ ddram_ctrl ram2
 	.ss_readdatavalid(ss_ddr_readdatavalid),
 	.ss_waitrequest(ss_ddr_waitrequest),
 	.ss_ram_idle  (ss_ram_idle        ),
+	.ss_cpu_parked(ss_cpu_parked      ),
 
 	// Bridge (Akiko/CDTV) DMA port — see chipdma_arb.
 	// dmaRD carries the read-return word so the
@@ -1392,7 +1496,20 @@ ddram_ctrl ram2
 	.dmaU         (dma_ddr_u_w     ),
 	.dmaWR        (dma_ddr_wr_w    ),
 	.dmaRD        (dma_ddr_rd_w    ),
-	.dmaACK       (dma_ddr_ack_w   )
+	.dmaACK       (dma_ddr_ack_w   ),
+
+	.sdr_hi       (z3sdr_ena1      ),
+	.sdr_req      (sdr_req         ),
+	.sdr_we       (sdr_we          ),
+	.sdr_addr     (sdr_addr        ),
+	.sdr_dqm      (sdr_dqm         ),
+	.sdr_wdat     (sdr_wdat        ),
+	.sdr_w2       (sdr_w2          ),
+	.sdr_dqm2     (sdr_dqm2        ),
+	.sdr_wdat2    (sdr_wdat2       ),
+	.sdr_ack      (sdr_ack         ),
+	.sdr_rvalid   (sdr_rvalid      ),
+	.sdr_rdat     (sdr_rdat        )
 );
 
 ////////////////////////////  A2065 ETHERNET  ///////////////////////////////
@@ -1407,6 +1524,53 @@ wire [7:0]  a2065_mem_burstcount, a2065_mem_byteenable;
 wire        a2065_mem_read, a2065_mem_write;
 wire [63:0] a2065_mem_writedata, a2065_mem_readdata;
 wire        a2065_mem_readdatavalid, a2065_mem_waitrequest;
+
+// The drive sounds read their samples from DDR3 too (upstream 26eb46a), so
+// the second port of ddram_ctrl is now shared between the A2065 and them.
+wire [28:0] mem2_address;
+wire [7:0]  mem2_burstcount, mem2_byteenable;
+wire        mem2_read, mem2_write;
+wire [63:0] mem2_writedata, mem2_readdata;
+wire        mem2_readdatavalid, mem2_waitrequest;
+
+wire [28:0] dsnd_addr;
+wire        dsnd_rd, dsnd_busy, dsnd_ready;
+
+a2065_ddram_arbiter dsnd_arb
+(
+	.clk             (clk_114),
+	.rst             (reset_d),
+
+	.m0_address      (a2065_mem_address),
+	.m0_burstcount   (a2065_mem_burstcount),
+	.m0_read         (a2065_mem_read),
+	.m0_readdata     (a2065_mem_readdata),
+	.m0_readdatavalid(a2065_mem_readdatavalid),
+	.m0_writedata    (a2065_mem_writedata),
+	.m0_byteenable   (a2065_mem_byteenable),
+	.m0_write        (a2065_mem_write),
+	.m0_waitrequest  (a2065_mem_waitrequest),
+
+	.m1_address      (dsnd_addr),
+	.m1_burstcount   (8'd1),
+	.m1_read         (dsnd_rd),
+	.m1_readdata     (),
+	.m1_readdatavalid(dsnd_ready),
+	.m1_writedata    (64'd0),
+	.m1_byteenable   (8'hFF),
+	.m1_write        (1'b0),
+	.m1_waitrequest  (dsnd_busy),
+
+	.s_address       (mem2_address),
+	.s_burstcount    (mem2_burstcount),
+	.s_read          (mem2_read),
+	.s_readdata      (mem2_readdata),
+	.s_readdatavalid (mem2_readdatavalid),
+	.s_writedata     (mem2_writedata),
+	.s_byteenable    (mem2_byteenable),
+	.s_write         (mem2_write),
+	.s_waitrequest   (mem2_waitrequest)
+);
 
 wire [15:0] fastchip_dout;
 wire        fastchip_sel;
@@ -1527,7 +1691,8 @@ assign UART_TXD = (hps_mpu & mt32_use) | uart_tx;
 ///////////////////////////////////////////////////////////////////////
 
 //// minimig top ////
-wire  [2:0] cpucfg;
+// [1:0] CPU, [2] 68EC020 / 68030 clock, [4:3] 68030 clock (upstream 26eb46a).
+wire  [4:0] cpucfg;
 wire  [2:0] cachecfg;
 wire  [6:0] memcfg;
 wire        bootrom;   
@@ -1556,6 +1721,8 @@ wire        ide_ena;
 wire [15:0] toccata_aud_left;
 wire [15:0] toccata_aud_right;
 
+wire  [8:0] drive_snd;
+
 minimig minimig
 (
 	//m68k pins
@@ -1567,6 +1734,9 @@ minimig minimig
 	._cpu_uds     (chip_uds         ), // M68K upper data strobe
 	._cpu_lds     (chip_lds         ), // M68K lower data strobe
 	.cpu_r_w      (chip_rw          ), // M68K read / write
+	.cpu_long     (chip_long        ),
+	.chip32_en    (chip32_en        ),
+	.ram_long     (ram_long         ),
 	._cpu_dtack   (chip_dtack       ), // M68K data acknowledge
 	._cpu_reset   (cpu_rst          ), // M68K reset
 	._cpu_reset_in(cpu_nrst_out     ), // M68K reset out
@@ -1733,6 +1903,7 @@ minimig minimig
 	.user_port_mode       (user_port_mode       ),
 	.snac_mode            (snac_mode            ),
 	.mister_floppy_status (mister_floppy_status ),
+	.drive_snd            (drive_snd            ),
 
 	.ss_blit_busy         (ss_blit_busy         ),
 	.ss_disk_busy         (ss_disk_busy         ),
@@ -1796,7 +1967,20 @@ wire       ss_load_req_osd = status[54];
 // lands save states are refused rather than silently wrong. Gating the request
 // is enough: save_busy (and therefore freeze, the CPU park and every port
 // takeover below) can only ever rise out of ss_ctrl's S_IDLE on save_req.
-wire ss_supported   = |cpucfg;
+//
+// *** 68030 lockout *** (since upstream 26eb46a). The 68030 is TG68K, but with
+// state the vector does not carry: the MMU (TC, TT0, TT1, CRP, SRP, MMUSR and
+// whatever the walker has cached), the upper CACR bits, CAAR, MSP and ISP. A
+// program that never touches the MMU would restore fine, but the save cannot
+// tell, and a restored machine with its translation tables gone is wrong in a
+// way that shows up wherever the program next takes a fault, not at the
+// restore. Same answer as fx68k: refused, not silently partial. Its Zorro III
+// fast RAM, which the payload has no section for, would be a second reason.
+//
+// cpucfg[1:0] and not |cpucfg: bit 2 is the 68EC020 / 68030-clock bit and
+// bits 4:3 the 68030 clock, none of which says which core is running.
+// cpu_wrapper runs fx68k exactly when cpucfg[1:0] == 0.
+wire ss_supported   = (cpucfg[1:0] != 2'b00) & (cpucfg[1:0] != 2'b10);
 // *** the request is an EDGE, and it is made one HERE, not in userspace ***
 // ss_ctrl re-arms out of S_IDLE on any clock where save_req is high, and it
 // drops back to S_IDLE the moment a save finishes. Feeding it status[51] as a
@@ -1909,7 +2093,7 @@ end
 // not declare it quiesced without cpu_boundary, so a peek that was not in this
 // term reached S_PEEK_FREEZE, waited, and fell back to idle with freeze still
 // low -- every peek returning "not valid yet" and never a byte of memory.
-wire ss_cpu_parked = (ss_save_busy | ss_load_busy | ss_peek_busy)
+assign ss_cpu_parked = (ss_save_busy | ss_load_busy | ss_peek_busy)
                      & ss_cpu_at_boundary & ss_cpu_settled_q;
 
 always @(posedge clk_sys) begin
@@ -2138,10 +2322,12 @@ ss_ctrl #(.STATE_W(`SS_STATE_W), .CHIP_WORDS(24'h100000)) savestate
 	// part-way through a boot, so two saves in one session could disagree
 	// about it and the second could not be restored over the first.
 	//
-	// The decode mirrors cpu_wrapper's ac_memcard. On 68020 the three bits are
-	// used as-is and bit 2 selects a Zorro III board; on 68000 a set bit 2 is
-	// folded down to the 8 MB Zorro II entry, so any non-zero value is Z2.
-	.fast_ena     (cpu_type ? (~memcfg[6] & |memcfg[5:4]) : (|memcfg[6:4])),
+	// The decode mirrors cpu_wrapper's ac_memcard. On the 68030 the three bits
+	// are used as-is and bit 2 selects a Zorro III board; on every other CPU,
+	// the 68EC020 included since upstream 26eb46a, a set bit 2 is folded down
+	// to the 8 MB Zorro II entry, so any non-zero value is Z2. (The 68030
+	// cannot save at all -- see ss_supported -- but the decode stays exact.)
+	.fast_ena     ((cpu_type & ~ss_ec020) ? (~memcfg[6] & |memcfg[5:4]) : (|memcfg[6:4])),
 
 	// Kickstart fingerprint. See SS_KICK_BASE for the derivation and
 	// ss_port_own for the mux this output drives. KICK_WORDS keeps its 512 KB
@@ -2917,6 +3103,27 @@ wire flt_en    = ~status[48] ? pwr_led : status[47];
 wire aud_1200  = status[49];
 wire paula_pwm = status[50];
 
+// Floppy drive sounds (upstream 26eb46a). Upstream reads the volume from
+// status[52:51]; here those are the save state request and slot, so it lives
+// at status[60:59] and the Main moves it there (MINIMIG_DSND_STATUS_SHIFT in
+// user_io.cpp). 0 is off, and the Main also sends 0 when drivesounds.bin was
+// not found, so the core never plays a DDR3 window nothing was written to.
+wire [15:0] dsnd_l, dsnd_r;
+drive_sounds drive_sounds
+(
+	.clk(clk_114),
+	.rst(reset_d),
+	.volume(status[60:59]),
+	.drive_snd(drive_snd),
+	.sample_l(dsnd_l),
+	.sample_r(dsnd_r),
+	.ddr_addr(dsnd_addr),
+	.ddr_rd(dsnd_rd),
+	.ddr_busy(dsnd_busy),
+	.ddr_dout(DDRAM_DOUT),
+	.ddr_dout_ready(dsnd_ready)
+);
+
 wire [15:0] paula_smp_l = (paula_pwm ? {ldata_okk[8:0], 7'b0} : {ldata[14:0], 1'b0});
 wire [15:0] paula_smp_r = (paula_pwm ? {rdata_okk[8:0], 7'b0} : {rdata[14:0], 1'b0});
 
@@ -3025,16 +3232,27 @@ always @(posedge CLK_AUDIO) begin
 	cdda_sr <= pr[25:10];
 end
 
+// The drive sound samples cross from clk_114: take a value only once it has
+// held for two CLK_AUDIO edges (upstream 26eb46a).
+reg [15:0] dsnd_al, dsnd_ar;
+always @(posedge CLK_AUDIO) begin
+	reg [31:0] old_d0, old_d1;
+
+	old_d0 <= {dsnd_l, dsnd_r};
+	old_d1 <= old_d0;
+	if(old_d0 == old_d1) {dsnd_al, dsnd_ar} <= old_d1;
+end
+
 reg [15:0] out_l, out_r;
 always @(posedge CLK_AUDIO) begin
-	reg [16:0] tmp_l, tmp_r;
+	reg [17:0] tmp_l, tmp_r;
 
-	tmp_l <= {aud_l[15],aud_l} + {toccata_aud_left[15],toccata_aud_left} + (mt32_mute ? 17'd0 : {mt32_i2s_l[15],mt32_i2s_l}) + {cdda_sl[15], cdda_sl};
-	tmp_r <= {aud_r[15],aud_r} + {toccata_aud_right[15],toccata_aud_right} + (mt32_mute ? 17'd0 : {mt32_i2s_r[15],mt32_i2s_r}) + {cdda_sr[15], cdda_sr};
+	tmp_l <= {{2{aud_l[15]}},aud_l} + {{2{toccata_aud_left[15]}},toccata_aud_left} + (mt32_mute ? 18'd0 : {{2{mt32_i2s_l[15]}},mt32_i2s_l}) + {{2{cdda_sl[15]}}, cdda_sl} + {{2{dsnd_al[15]}}, dsnd_al};
+	tmp_r <= {{2{aud_r[15]}},aud_r} + {{2{toccata_aud_right[15]}},toccata_aud_right} + (mt32_mute ? 18'd0 : {{2{mt32_i2s_r[15]}},mt32_i2s_r}) + {{2{cdda_sr[15]}}, cdda_sr} + {{2{dsnd_ar[15]}}, dsnd_ar};
 
 	// clamp the output
-	out_l <= (^tmp_l[16:15]) ? {tmp_l[16], {15{tmp_l[15]}}} : tmp_l[15:0];
-	out_r <= (^tmp_r[16:15]) ? {tmp_r[16], {15{tmp_r[15]}}} : tmp_r[15:0];
+	out_l <= (tmp_l[17:15] == 3'b000 || tmp_l[17:15] == 3'b111) ? tmp_l[15:0] : {tmp_l[17], {15{~tmp_l[17]}}};
+	out_r <= (tmp_r[17:15] == 3'b000 || tmp_r[17:15] == 3'b111) ? tmp_r[15:0] : {tmp_r[17], {15{~tmp_r[17]}}};
 end
 
 assign AUDIO_S = 1;

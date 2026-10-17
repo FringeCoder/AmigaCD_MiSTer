@@ -8,8 +8,12 @@
 //   1. The save state CPU park -- ss_bus_settled & ~ss_cpu_hold. During the
 //      74d6ce0 merge, upstream's side of the conflict carried a plainer
 //      clkena_p_base and taking theirs would have deleted the park silently.
-//   2. The stock-speed throttle's cooldown constant, which upstream 148931d
-//      had wrong by a factor of two (9 instead of 4, i.e. half A1200 speed).
+//   2. The CPU speed. This used to be the stock-speed cooldown constant
+//      (upstream 148931d had it at 9, half A1200 speed); upstream 26eb46a
+//      replaced the cooldown with a cycle model (cpu_cycles.v), whose tables
+//      Icarus cannot load from their .mif files, so its rates are not checked
+//      here. What is: the unthrottled 68020 -- CPU Turbo On, this fork's
+//      default -- runs free, and the park holds in every CPU mode.
 //   3. The chip-slot guard from 114ab43: chipreq must stay low while the
 //      fastchip or CDTV bridge is serving the access.
 //
@@ -27,7 +31,8 @@
 // ss_at_boundary.
 //
 // Runs standalone under Icarus:
-//   iverilog -g2012 -o tb ../../cpu_wrapper.v cpu_core_stubs.v tb_cpu_wrapper_park.sv
+//   iverilog -g2012 -I ../.. -o tb ../../cpu_wrapper.v ../../memory_router.v \
+//       ../../cpu_cycles.v cpu_core_stubs.v tb_cpu_wrapper_park.sv
 //   vvp tb
 
 `timescale 1ns/1ps
@@ -37,7 +42,7 @@ module tb_cpu_wrapper_park;
 	reg         clk = 0;
 	reg         reset = 0;          // active low
 	reg         ph1 = 0, ph2 = 0;
-	reg  [2:0]  cpucfg = 3'b001;    // [1:0] non-zero selects TG68K; [2] is stock speed
+	reg  [4:0]  cpucfg = 5'b00001;  // [1:0] non-zero selects TG68K; see check 4 for the rest
 	reg  [2:0]  fastramcfg = 3'd0;
 	reg  [2:0]  cachecfg = 3'd0;
 	reg         bootrom = 1'b0;
@@ -61,7 +66,11 @@ module tb_cpu_wrapper_park;
 		.reset(reset), .reset_out(),
 		.clk(clk), .ph1(ph1), .ph2(ph2),
 		.cpucfg(cpucfg), .fastramcfg(fastramcfg), .cachecfg(cachecfg),
-		.bootrom(bootrom),
+		.bootrom(bootrom), .ntsc(1'b0), .sdram_big(1'b0), .sdram_dual(1'b0),
+		.chip32_en(1'b0), .chip_long(), .chip_din2(), .chip_dout2(16'd0),
+		.ramlong1(), .ramdin_lo(), .ramdout_hi(16'd0), .ramready_l(1'b0),
+		.z3sdr_base0(), .z3sdr_ena0(), .z3sdr_base1(), .z3sdr_ena1(),
+		.z3sdr_base2(), .z3sdr_ena2(),
 
 		.ss_arm(ss_arm),
 		.ss_reg_index(4'd0), .ss_reg_data(),
@@ -226,21 +235,58 @@ module tb_cpu_wrapper_park;
 		dut.cpu_inst_p.r_busstate = 2'd1;
 		repeat (2) @(posedge clk);
 
-		// ---- 4. the stock-speed throttle ------------------------------------
-		// Four sysclk of cooldown after every tick, so one tick in five and a
-		// longest gap of exactly 4. 148931d had this at 9, which is half A1200
-		// speed, and the CD32 and A1200 presets both ride on it.
-		cpucfg = 3'b101;                 // stock speed on, TG68K still selected
+		// ---- 4. the CPU modes ------------------------------------------------
+		// cpucfg[1:0] 11 with [2] clear is the unthrottled 68020, CPU Turbo
+		// On: the cycle model must leave it alone. Upstream 26eb46a dropped it
+		// from its menu; this fork keeps it as the default, so it is pinned.
+		//
+		// Measured under bus traffic, because the cycle model charges for bus
+		// cycles as well as opcodes and this stub never starts an opcode: data
+		// reads of the stub's address (chip-bus space) answered every cycle.
+		// The 68EC020 must then be held -- which is what shows the model is
+		// live in this bench at all -- and the 68020 must not.
+		dut.cpu_inst_p.r_busstate = 2'd2;
+		ramready = 1'b1;
+		cpucfg = 5'b00111;
 		repeat (8) @(posedge clk);
-		count_ticks(50, n);
-		check("stock speed: one tick in five over 50 cycles", n, 10);
-		max_gap(50, gap);
-		check("stock speed: cooldown is 4 cycles", gap, 4);
+		max_gap(60, gap);
+		if (gap > 0) $display("ok:   68EC020 at A1200 speed: held for up to %0d cycles", gap);
+		else begin
+			$display("FAIL: 68EC020 at A1200 speed was never held -- the cycle model is not live here");
+			errors = errors + 1;
+		end
+		cpucfg = 5'b00011;
+		repeat (8) @(posedge clk);
+		max_gap(60, gap);
+		check("68020, Turbo On: runs free", gap, 0);
+		ramready = 1'b0;
+		dut.cpu_inst_p.r_busstate = 2'd1;
+		repeat (4) @(posedge clk);
 
-		cpucfg = 3'b001;                 // stock speed off
+		// The park has to hold whatever the cycle model is doing: 68010,
+		// 68020, 68EC020 at A1200 speed, and the 68030 at its lowest and its
+		// unlimited clock. (The 68030 cannot save -- AmigaCD.sv refuses it --
+		// but the park is cpu_wrapper's and must not depend on that.)
+		begin : modes
+			reg [4:0] m [0:4];
+			integer k;
+			m[0] = 5'b00001; m[1] = 5'b00011; m[2] = 5'b00111;
+			m[3] = 5'b00010; m[4] = 5'b11110;
+			for (k = 0; k < 5; k = k + 1) begin
+				cpucfg = m[k];
+				repeat (8) @(posedge clk);
+				dut.cpu_inst_p.r_at_boundary = 1'b1;
+				ss_arm = 1'b1;
+				repeat (4) @(posedge clk);
+				dut.cpu_inst_p.r_at_boundary = 1'b0;
+				count_ticks(40, n);
+				check("parked in this CPU mode", n, 0);
+				ss_arm = 1'b0;
+				repeat (4) @(posedge clk);
+			end
+		end
+		cpucfg = 5'b00001;
 		repeat (8) @(posedge clk);
-		max_gap(30, gap);
-		check("turbo: no cooldown", gap, 0);
 
 		// ---- 5. the chip-slot guard -----------------------------------------
 		// chipreq must not assert while another bridge is serving the access.

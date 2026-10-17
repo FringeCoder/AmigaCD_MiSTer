@@ -38,8 +38,23 @@ module TG68KdotC_Kernel
 	output            nlds,
 	output            nresetout,
 	output            longword,
+	// Long-word cycles and the 68030 (upstream 26eb46a). Idle levels: no
+	// candidate long cycle, no MMU stall, no opcode start for the cycle model.
+	input             s21_en,
+	output            long_cand,
+	input             long_ack,
+	input      [15:0] data_in_hi,
+	output     [15:0] data_write_lo,
 
 	input       [1:0] cpu,
+	input             cpu030,
+	output            opc_start,
+	output     [15:0] opc_out,
+	output            opc_cond,
+	output     [15:0] opc_snd,
+	output            opc_dbx,
+	output     [13:0] opc_cacr,
+	output            mmu_busy,
 	output      [1:0] busstate,
 	output      [3:0] cacr_out,
 	output            d_cache_out,
@@ -87,6 +102,15 @@ module TG68KdotC_Kernel
 	assign nlds           = 1'b1;
 	assign nresetout      = nreset;
 	assign longword       = 1'b0;
+	assign long_cand      = 1'b0;
+	assign data_write_lo  = 16'd0;
+	assign opc_start      = 1'b0;
+	assign opc_out        = 16'd0;
+	assign opc_cond       = 1'b0;
+	assign opc_snd        = 16'd0;
+	assign opc_dbx        = 1'b0;
+	assign opc_cacr       = 14'd0;
+	assign mmu_busy       = 1'b0;
 	assign cacr_out       = 4'd0;
 	assign d_cache_out    = 1'b1;
 	assign vbr_out        = 32'd0;

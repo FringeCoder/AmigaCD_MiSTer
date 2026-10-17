@@ -23,6 +23,7 @@ mkdir -p "$WORKDIR"
 "$GHDL" -a "${FLAGS[@]}" \
 	rtl/tg68k/TG68K_Pack.vhd \
 	rtl/tg68k/TG68K_ALU.vhd \
+	rtl/tg68k/TG68K_MMU030.vhd \
 	rtl/tg68k/TG68KdotC_Kernel.vhd \
 	rtl/sim/tg68k/tg68k_ss_tb.vhd
 

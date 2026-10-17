@@ -30,26 +30,19 @@ for d in hoist:
     assert n == 1, f"hoist anchor {d!r} count {n} != 1"
     c = c.replace(d + NL, "", 1)   # remove original declaration
 
-# ModelSim won't accept procedural assignment to an `inout reg`; convert the
-# tristate SDRAM data pad to a net driven by an internal reg (sd_data_o sits at
-# Z for our read-only test, so the bench's read pattern always wins).
-def sub1(old, new):
-    global c
-    assert c.count(old) == 1, f"sd_data anchor {old!r} count {c.count(old)} != 1"
-    c = c.replace(old, new, 1)
-
-sub1("\tinout  reg [15:0] sd_data," + NL, "\tinout      [15:0] sd_data," + NL)
-sub1("\t\tsd_data               <= 16'hZZZZ;" + NL, "\t\tsd_data_o             <= 16'hZZZZ;" + NL)
-sub1("\t\t\t\t\tsd_data      <= datawr;" + NL, "\t\t\t\t\tsd_data_o    <= datawr;" + NL)
+# The tristate SDRAM data pad used to be an `inout reg`, which ModelSim will
+# not drive procedurally, so it was rewritten to a net here. Since upstream
+# 26eb46a the real file already has it as a net (`assign sd_data = sd_oe ?
+# ...`), and there is nothing left to convert.
+assert c.count("\tinout      [15:0] sd_data," + NL) == 1, "sd_data is no longer the net this copy assumes"
 
 block = (
     "// --- sim-only forward declarations (hoisted for ModelSim -sv) ---" + NL
-    + "reg [15:0] sd_data_o = 16'hzzzz;" + NL
-    + "assign sd_data = sd_data_o;" + NL
     + NL.join(hoist) + NL
 )
-# insert AFTER the localparam block (slot_type's initializer references IDLE)
-anchor = "\tCPU_WRITECACHE = 3;" + NL
+# insert AFTER the localparam block (slot_type's initializer references IDLE);
+# REFRESH has closed it since upstream 26eb46a, CPU_WRITECACHE before that.
+anchor = "\tREFRESH = 4;" + NL
 assert c.count(anchor) == 1
 c = c.replace(anchor, anchor + NL + block, 1)
 

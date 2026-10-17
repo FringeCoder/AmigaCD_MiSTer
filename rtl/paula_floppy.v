@@ -127,7 +127,9 @@ module paula_floppy
 	input   [6:0] USER_IN,
 	output  [6:0] USER_OUT,
 	
-	output	[2:0]  mister_floppy_status  // bit 0=Detected, Bit1= running in IBM Drive mode (compared to Shuggart), Bit2=Swapped Cable
+	output	[2:0]  mister_floppy_status,  // bit 0=Detected, Bit1= running in IBM Drive mode (compared to Shuggart), Bit2=Swapped Cable
+
+	output reg [8:0] drive_snd
 );
 
 
@@ -549,6 +551,28 @@ always @(posedge clk) begin
 end
 
 assign step_ena = step_ena_cnt[8];
+
+// Drive sound events (upstream 26eb46a), for drive_sounds.v at the top level.
+// Upstream masks out drives mapped to a real one with the registered exsel_any
+// of its retimed decode; this fork keeps the combinational decode above (see
+// the 2026-08-03 note), so the same mask is formed here from the config alone.
+// It differs from upstream's only when two drives are mapped to the same real
+// one, which the menu does not offer. no_drives stands in for upstream's
+// floppy_zero_active: a machine with no floppy makes no floppy sounds.
+// A drive counts as mapped for a field of 1-4, the real drives _exsel above
+// decodes; 5-7 select nothing there, so they do not mute the sound either.
+function ext_mapped(input [2:0] f);
+  ext_mapped = (f != 3'd0) && (f <= 3'd4);
+endfunction
+reg  [3:0] exsel_any;
+always @(posedge clk)
+  exsel_any <= {4{enable_mister_floppy}} & {ext_mapped(floppy_ext_drive[11:9]), ext_mapped(floppy_ext_drive[8:6]),
+                                            ext_mapped(floppy_ext_drive[5:3]),  ext_mapped(floppy_ext_drive[2:0])};
+wire [3:0] drive_emu = {drives == 2'd3, drives[1], |drives, 1'b1} & ~exsel_any & {4{~no_drives}};
+always @(posedge clk) begin
+  drive_snd[8:1] <= {reset, disk_present & drive_emu, |(motor_on[3:1] & drive_emu[3:1]), motor_on[0] & drive_emu[0], |sel};
+  drive_snd[0]   <= clk7_en & !_selx & _step & !_step_del & step_ena & (!direc | _dsktrack0) & drive_emu[sel];
+end
 
 // disk change latch
 // set by reset or when the disk is removed form the drive

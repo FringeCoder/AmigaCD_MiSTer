@@ -200,12 +200,19 @@ jobs:
           cp deps/userspace/MiSTer_AmigaCD "$pkg/MiSTer_AmigaCD"
           chmod +x "$pkg/MiSTer_AmigaCD"
           cp deps/menu/menu.rbf "$pkg/menu.rbf"
+          # The floppy drive sounds (upstream 26eb46a). The Main looks for them
+          # in games/Amiga -- HomeDir() for the AmigaCD core too -- and the
+          # Drive Sounds row reads "No file" without them. From this commit,
+          # so the file always matches the drive_sounds.v it was made for.
+          mkdir -p "$pkg/games/Amiga"
+          cp releases/drivesounds.bin "$pkg/games/Amiga/drivesounds.bin"
           cat > "$pkg/INSTALL.txt" <<TXT
           AmigaCD $TAG
 
             _Computer/$RBF   the core              ($GITHUB_REPOSITORY $TAG)
             MiSTer_AmigaCD   the userspace binary  ($USERSPACE_REPO $US_TAG)
             menu.rbf         the menu core         ($MENU_REPO $MENU_TAG)
+            games/Amiga/drivesounds.bin  the floppy drive sounds
 
           1. Copy everything here to the root of the SD card (/media/fat/),
              keeping the folders. Keep a copy of your old menu.rbf first: a

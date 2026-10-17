@@ -20,7 +20,6 @@
 //                                                                          //
 //////////////////////////////////////////////////////////////////////////////
 
-
 module ddram_ctrl
 (
 	// system
@@ -68,13 +67,13 @@ module ddram_ctrl
 	// lets ss_dma borrow the SDRAM CPU port. The bridge is NOT parked; its
 	// sector DMA is driven by the HPS, which knows nothing about the freeze.
 	//
-	// What actually makes taking the port safe is ram_busy, not the CPU
-	// park. ram_busy is pinned high for the whole freeze (see its assign
-	// below), the only place a master-0 request is armed is
-	// `case(state) 0: if(~ram_busy)`, and ram_rd / ram_we are cleared only
-	// under ~ram_busy. So during the freeze no new master-0 request of
-	// either kind is generated, and anything already armed at freeze entry
-	// is held with its strobe intact and re-issued when the freeze lifts.
+	// What makes taking the port safe is ss_hold, not the CPU park: every
+	// state-0 select is gated on it (st0), and it is high from the freeze,
+	// the grant edge and the ownership on, so nothing new of either kind is
+	// generated. Anything armed before -- including on the freeze edge itself,
+	// which ss_quiesce can pick -- completes first, because the grant waits
+	// for ss_ram_idle and ram_busy is pinned only by the grant. Since upstream
+	// 26eb46a that includes the posted write queue and the stream buffer.
 	//
 	// The consequence, which is deliberate: bridge DMA to DDR3 (Zorro fast
 	// RAM) stalls for the duration of the dump, ~0.2 s. That is the same
@@ -88,8 +87,9 @@ module ddram_ctrl
 	// restore must be a no-op. Those reads are master-0 traffic issued while
 	// ss_freeze is still low, so the takeover condition here is ss_load_busy
 	// OR ss_freeze, not ss_freeze alone. AmigaCD.sv parks the CPU on the same
-	// ss_load_busy, so the port is not being fought over -- it is idle by the
-	// time the grant below fires.
+	// ss_load_busy, and the grant waits for that park (ss_cpu_parked): granted
+	// earlier, the CPU's next fast RAM access would never be served and it
+	// would never reach the boundary it is parking on.
 	//
 	// The grant (ss_port_own) is registered and waits for ss_ram_idle. That
 	// is what makes the takeover safe rather than merely convenient: it must
@@ -107,9 +107,16 @@ module ddram_ctrl
 	output     [63:0] ss_readdata,
 	output            ss_readdatavalid,
 	output            ss_waitrequest,
-	// High when no master-0 read is outstanding and nothing is queued, i.e.
-	// when it is safe to take the port away. See ss_rd_outstanding below.
+	// High when nothing is in flight or queued on this controller, i.e. when
+	// it is safe to take the port away. See ss_ram_idle below.
 	output            ss_ram_idle,
+	// The CPU is parked for the save state (AmigaCD.sv's ss_cpu_parked). A
+	// restore asks for the port with ss_load_busy, before any freeze, while
+	// the CPU is still running on to its instruction boundary; granting the
+	// port before it gets there would leave a fast RAM access of its unserved
+	// and the CPU never parked. So a restore's grant waits for this too. A
+	// save's grant does not need it: the freeze already implies it.
+	input             ss_cpu_parked,
 
 	// cpu
 	input      [28:1] cpuAddr,
@@ -120,17 +127,13 @@ module ddram_ctrl
 	input      [15:0] cpuWR,
 	output     [15:0] cpuRD,
 	input             ramshared,
+	input             cpuLong,
 	output            ramready,
+	input             cpuLong1,
+	input      [15:0] cpuWR_lo,
+	output     [15:0] cpuRD_hi,
+	output            ramready_l,
 
-	// Bridge (Akiko / CDTV) DMA port. Single-byte transfers arrive
-	// as 16-bit word + UDS/LDS so the same address mapping the CPU uses
-	// (in cpu_wrapper.v) routes them to the right DDR3 row. dmaCS is held
-	// high until dmaACK pulses; one transfer per CS edge.
-	// z2-read-fix: dmaWE is no longer hardwired 1 at chipdma_arb.
-	// dmaWE=1 → write (PBX sector data into Z2/Z3); dmaWE=0 → read
-	// (Akiko TX command fetch from Z2/Z3, returned via dmaRD). Without the
-	// read path the CD32 BIOS hangs when it allocates the Akiko CMD block
-	// in Z2 (largest free pool) — TX reads silently dropped.
 	input      [28:1] dmaAddr,
 	input             dmaCS,
 	input             dmaWE,
@@ -138,31 +141,51 @@ module ddram_ctrl
 	input             dmaU,
 	input      [15:0] dmaWR,
 	output reg [15:0] dmaRD,
-	output            dmaACK
+	output            dmaACK,
+
+	input             sdr_hi,
+	output reg        sdr_req,
+	output reg        sdr_we,
+	output reg [26:1] sdr_addr,
+	output reg  [1:0] sdr_dqm,
+	output reg [15:0] sdr_wdat,
+	output reg        sdr_w2,
+	output reg  [1:0] sdr_dqm2,
+	output reg [15:0] sdr_wdat2,
+	input             sdr_ack,
+	input             sdr_rvalid,
+	input      [15:0] sdr_rdat
 );
+
+function is_sdr(input [28:1] a, input hi);
+	is_sdr = ((a[28:26] == 3'b001) && (a[25:24] != 2'b11)) || (hi && (a[28:26] == 3'b011));
+endfunction
 
 wire ramsel = cpuCS & (~&cpustate | ~cpuU | ~cpuL);
 
 wire cache_hit;
+wire cache_hit_l;
+reg  w_l1;
 wire cache_req;
 reg  cache_fill;
 wire cache_ack;
-
-// Snoop pulse + latched address/data for the cache.
-// Fires for one sysclk when the bridge DMA write is latched into
-// dmaWriteAddr/Dat/BE below. cpu_cache_new uses "write-through" snoop —
-// updates the cached copy of the line if present, otherwise no-op.
+wire cache_idle;
 reg        dma_snoop_act;
 reg [28:1] dma_snoop_adr;
 reg [15:0] dma_snoop_dat;
 reg  [1:0] dma_snoop_bs;
+wire        kept_ok;
+wire [63:0] kept_dat;
+wire        kept_take;
 
-cpu_cache_new cpu_cache
+cpu_cache_new
+#(.LINE_TAKE(1))
+cpu_cache
 (
 	.clk              (sysclk),                 // clock
 	.rst              (~reset_n | ~cache_rst),  // cache reset
 	.cpu_cache_ctrl   (cpu_cache_ctrl),         // CPU cache control
-	.dcache_sw_en     (dcache_sw_en),           // D-cache software toggle
+	.dcache_sw_en     (dcache_sw_en),
 	.cache_inhibit    (cache_inhibit | ramshared), // cache inhibit
 	.cpu_cs           (ramsel),                 // cpu activity
 	.cpu_adr          (cpuAddr),                // cpu address
@@ -174,74 +197,144 @@ cpu_cache_new cpu_cache
 	.cpu_dat_r        (cpuRD),                  // cpu read data
 	.cpu_ack          (cache_hit),              // cpu acknowledge
 	.wb_en            (cache_ack),              // write enable
+	.cpu_idle         (cache_idle),
 	.sdr_dat_r        (ddr_swap ? {ddr_data[7:0], ddr_data[15:8]} : ddr_data), // sdram read data
 	.sdr_read_req     (cache_req),              // sdram read request from cache
 	.sdr_read_ack     (cache_fill),             // sdram read acknowledge to cache
-	.snoop_act        (dma_snoop_act),          // bridge DMA write pulse
+	.snoop_act        (dma_snoop_act),
 	.snoop_adr        (dma_snoop_adr),
 	.snoop_dat_w      (dma_snoop_dat),
 	.snoop_bs         (dma_snoop_bs)
+	,
+	.buf_ok           (kept_ok),
+	.buf_dat          (kept_dat),
+	.buf_take         (kept_take)
+	,
+	.cpu_long         (cpuLong1 & ~ramshared),
+	.cpu_dat_w_lo     (cpuWR_lo),
+	.cpu_dat_hi       (cpuRD_hi),
+	.cpu_ack_l        (cache_hit_l)
 );
 
 // write buffer, enables CPU to continue while a write is in progress
+localparam WQN = 4;
+reg  [28:2] wq_a  [0:WQN-1];
+reg  [15:0] wq_dh [0:WQN-1];
+reg  [15:0] wq_dl [0:WQN-1];
+reg   [1:0] wq_bh [0:WQN-1];
+reg   [1:0] wq_bl [0:WQN-1];
+reg [WQN-1:0] wq_vm;
+reg   [2:0] wq_n;
+reg   [1:0] wq_h, wq_t;
+reg         stg_v;
+reg  [28:2] stg_a;
+reg  [15:0] stg_d;
+reg   [1:0] stg_b;
 reg        write_ena;
-reg        write_req;
-reg        write_ack;
-reg  [1:0] writeBE;
-reg [28:1] writeAddr;
-reg [15:0] writeDat;
+wire        wq_pop;
 
+wire [15:0] w_dat  = ramshared ? {cpuWR[7:0],cpuWR[15:8]} : cpuWR;
+wire  [1:0] w_be   = ramshared ? ~{cpuL, cpuU} : ~{cpuU, cpuL};
+wire        w_new  = ramsel && (cpustate == 3) && (cache_ack | cache_idle) && ~write_ena;
+wire        w_room = (wq_n != WQN);
+wire        w_lo   = stg_v && (cpuAddr[28:2] == stg_a) && cpuAddr[1];
+wire        w_hi   = ~stg_v && cpuLong && ~cpuAddr[1] && ~ramshared;
+wire        w_l1n  = ~stg_v && cpuLong1 && ~cpuAddr[1] && ~ramshared;
+wire        stg_fl = stg_v && ramsel && ~write_ena && ~((cpustate == 3) && (cpuAddr[28:2] == stg_a) && cpuAddr[1]);
+
+wire [28:2] wh_a  = wq_a[wq_h];
+wire [15:0] wh_dh = wq_dh[wq_h];
+wire [15:0] wh_dl = wq_dl[wq_h];
+wire  [1:0] wh_bh = wq_bh[wq_h];
+wire  [1:0] wh_bl = wq_bl[wq_h];
+
+reg wq_line;
+integer qi;
+always @* begin
+	wq_line = stg_v && (stg_a[28:3] == cpuAddr[28:3]);
+	for (qi = 0; qi < WQN; qi = qi + 1)
+		if (wq_vm[qi] && (wq_a[qi][28:3] == cpuAddr[28:3])) wq_line = 1'b1;
+end
+
+integer qj;
 always @ (posedge sysclk) begin
-	reg  [1:0] write_state;
+	reg        push;
+	reg [28:2] pa;
+	reg [15:0] pdh, pdl;
+	reg  [1:0] pbh, pbl;
 
+	push = 0;
+	pa = 0; pdh = 0; pdl = 0; pbh = 0; pbl = 0;
 	if(~reset_n) begin
-		write_req   <= 0;
+		wq_n      <= 0;
+		wq_h      <= 0;
+		wq_t      <= 0;
+		wq_vm     <= 0;
+		stg_v     <= 0;
 		write_ena   <= 0;
-		write_state <= 0;
+		w_l1      <= 0;
 	end else begin
-		case(write_state)
-			default:
-				if(ramsel && cpustate == 3) begin
-					writeAddr <= cpuAddr;
-					writeDat  <= ramshared ? {cpuWR[7:0],cpuWR[15:8]} : cpuWR;
-					writeBE   <= ramshared ? ~{cpuL, cpuU} : ~{cpuU, cpuL};
-					write_req <= 1;
-					if(cache_ack) begin
-						write_ena   <= 1;
-						write_state <= 1;
-					end
+		if(stg_fl) begin
+			if(w_room) begin
+				push = 1; pa = stg_a; pdh = stg_d; pbh = stg_b;
+				stg_v <= 0;
+			end
+		end
+		else if(w_new) begin
+			if(w_lo) begin
+				if(w_room) begin
+					push = 1; pa = stg_a; pdh = stg_d; pbh = stg_b; pdl = w_dat; pbl = w_be;
+					stg_v     <= 0;
+					write_ena <= 1;
 				end
-
-			1: if(write_ack) begin
-					// The SDRAM controller has picked up the request
-					write_req   <= 0;
-					write_state <= 2;
+			end
+			else if(w_l1n) begin
+				if(w_room) begin
+					push = 1; pa = cpuAddr[28:2]; pdh = w_dat; pbh = w_be; pdl = cpuWR_lo; pbl = 2'b11;
+					write_ena <= 1;
+					w_l1      <= 1;
 				end
+			end
+			else if(w_hi) begin
+				stg_v     <= 1;
+				stg_a     <= cpuAddr[28:2];
+				stg_d     <= w_dat;
+				stg_b     <= w_be;
+				write_ena <= 1;
+			end
+			else if(~stg_v & w_room) begin
+				push = 1; pa = cpuAddr[28:2];
+				if(cpuAddr[1]) begin pdl = w_dat; pbl = w_be; end
+				else           begin pdh = w_dat; pbh = w_be; end
+				write_ena <= 1;
+			end
+		end
 
-			2: if(!write_ack) write_state <= 0;
-		endcase
+		if(push) begin
+			wq_a[wq_t]  <= pa;
+			wq_dh[wq_t] <= pdh;
+			wq_dl[wq_t] <= pdl;
+			wq_bh[wq_t] <= pbh;
+			wq_bl[wq_t] <= pbl;
+			wq_t        <= (wq_t == WQN - 1) ? 2'd0 : wq_t + 1'd1;
+		end
+		// The SDRAM controller has picked up the request
+		if(wq_pop) wq_h <= (wq_h == WQN - 1) ? 2'd0 : wq_h + 1'd1;
+		wq_n  <= wq_n + {2'd0, push} - {2'd0, wq_pop};
+		for(qj = 0; qj < WQN; qj = qj + 1) begin
+			if(push   && (wq_t == qj)) wq_vm[qj] <= 1'b1;
+			if(wq_pop && (wq_h == qj)) wq_vm[qj] <= 1'b0;
+		end
 		if(~ramsel) write_ena <= 0;
+		if(~ramsel) w_l1 <= 0;
 	end
 end
 
-assign ramready = cache_hit || write_ena;
+wire wq_any = (wq_n != 0) | stg_v;
 
-// -------------------------------------------------------------------------
-// Bridge DMA write buffer + ack handshake with proper CDC.
-//
-// chipdma_arb runs on clk_sys (28.4 MHz); we run on sysclk = clk_114
-// (113.5 MHz). dmaCS / dmaAddr / dmaWR / dmaL / dmaU all come from
-// REGISTERED outputs in chipdma_arb that stay stable for the entire
-// request (arm_now → S_ACK). We synchronize dmaCS through a 2-FF chain,
-// detect the rising edge in our domain, and on that edge latch the data
-// (which has been valid for many sysclk cycles by then). SDC false_paths
-// the data lines so Quartus is free to place them wherever it wants.
-//
-// After committing the DDR write, dmaACK_r goes high and STAYS high
-// until chipdma_arb drops dmaCS — chipdma_arb's own 2-FF sync on dmaACK
-// gives it time to latch the level safely. We release dmaACK when our
-// synchronized view of dmaCS goes low.
-// -------------------------------------------------------------------------
+assign ramready = cache_hit || write_ena;
+assign ramready_l = cache_hit_l || (write_ena && w_l1);
+
 reg dmaCS_sync1;
 reg dmaCS_sync2;
 reg dmaCS_sync3;
@@ -261,28 +354,20 @@ wire dmaCS_rise = dmaCS_sync2 & ~dmaCS_sync3;
 reg        dma_write_req;
 reg        dma_write_ack;
 reg [28:1] dmaWriteAddr;
+reg        dmaWriteSdr;
 reg [15:0] dmaWriteDat;
 reg  [1:0] dmaWriteBE;
 reg        dmaACK_r;
 
-// z2-read-fix: bridge READ request bookkeeping. Mirrors
-// dma_write_req/_ack but with no snoop pulse (reads don't change cache
-// contents). The captured 16-bit word at dma_read_done time is registered
-// in dmaRD and returned to chipdma_arb.
 reg        dma_read_req;
 reg        dma_read_ack;
 reg [28:1] dmaReadAddr;
-reg  [1:0] dmaReadBA;       // word selector inside the 64-bit DDR beat
-reg        dma_read_in_flight; // 1 = DDR read issued, waiting for DOUT_READY
-// A CPU write to Fast RAM is posted: write_ena releases the CPU before the
-// write reaches DDR3, and state 0 serves DMA ahead of it. A DMA request that
-// arrives AFTER a pending CPU write must let that write go first, or a DMA
-// write is lost under the older CPU word and a DMA read returns the stale
-// one. A request that arrived before the CPU write keeps its priority.
-// Upstream 691c2b7 (#255), hand-ported: this file's request latch and state
-// 0 are this fork's (the split read path), the rule is upstream's.
+reg        dmaReadSdr;
+reg  [1:0] dmaReadBA;
+reg        dma_read_in_flight;
 reg        dma_after_wr;
-wire       wr_first = dma_after_wr & write_req & ~write_ack;
+
+wire       wr_first = dma_after_wr & wq_any;
 
 assign dmaACK = dmaACK_r;
 
@@ -295,49 +380,37 @@ always @ (posedge sysclk) begin
 		dmaACK_r      <= 0;
 		dma_after_wr  <= 0;
 	end else begin
-		if (write_ack) dma_after_wr <= 0;
+		if (~wq_any) dma_after_wr <= 0;
 
-		// Latch a new request on the synchronized CS rising edge.
-		// Data has been stable in chipdma_arb's registers since arm_now,
-		// many sysclk cycles ago, so sampling here is safe regardless of
-		// where Quartus placed the data lines.
-		// z2-read-fix: split write vs read paths on the same
-		// latching edge. dmaWE is the latched (and stable) WE bit.
 		if (dmaCS_rise & ~dma_write_req & ~dma_read_req & ~dmaACK_r) begin
-			dma_after_wr <= write_req & ~write_ack;
+			dma_after_wr <= wq_any;
 			if (dmaWE) begin
 			dmaWriteAddr  <= dmaAddr;
+			dmaWriteSdr   <= is_sdr(dmaAddr, sdr_hi);
 			dmaWriteDat   <= dmaWR;
 			dmaWriteBE    <= ~{dmaU, dmaL};
 			dma_write_req <= 1'b1;
-				// Snoop pulse — same data going to DDR. cpu_cache_new
-				// will update any cached line covering this address
-				// with the new value (write-through coherency).
 			dma_snoop_act <= 1'b1;
 			dma_snoop_adr <= dmaAddr;
 			dma_snoop_dat <= dmaWR;
 			dma_snoop_bs  <= ~{dmaU, dmaL};
 			end else begin
 				dmaReadAddr  <= dmaAddr;
+				dmaReadSdr   <= is_sdr(dmaAddr, sdr_hi);
 				dma_read_req <= 1'b1;
 			end
 		end
 
-		// DDR FSM has committed the write — clear req, raise ack to bridge.
 		if (dma_write_ack) begin
 			dma_write_req <= 1'b0;
 			dmaACK_r      <= 1'b1;
 		end
 
-		// DDR FSM has captured the read word into dmaRD — clear req,
-		// raise ack to bridge so chipdma_arb's S_DRIVE samples dmaRD.
 		if (dma_read_ack) begin
 			dma_read_req <= 1'b0;
 			dmaACK_r     <= 1'b1;
 		end
 
-		// Bridge dropped its CS (seen via the sync chain) — release ack
-		// so the next request can latch on the next dmaCS_rise.
 		if (~dmaCS_sync2) dmaACK_r <= 1'b0;
 	end
 end
@@ -349,6 +422,7 @@ assign DDRAM_CLK = sysclk;
 reg  [28:0] ram_addr;
 reg  [63:0] ram_din;
 reg   [7:0] ram_be;
+reg   [7:0] ram_bcnt = 8'd1;
 reg         ram_rd, ram_we;
 wire        ram_busy;
 wire [63:0] ram_dout       = DDRAM_DOUT;
@@ -370,22 +444,29 @@ wire        m0_waitrequest_int;
 // grant fire.
 wire ss_port_req = ss_freeze | ss_load_busy;
 reg  ss_port_own;
+// The edge the grant lands on. Combinational so that ss_hold below can keep
+// the state machine from arming anything on that same edge: a request armed
+// there would be held, masked by the m0 mux, for the whole ownership, and
+// keep ss_ram_idle -- which is in AmigaCD.sv's cpu_boundary -- low all that
+// time, so a restore's quiesce would time out.
+wire ss_grant = ss_port_req & ~ss_port_own & ss_ram_idle & (ss_freeze | ss_cpu_parked);
 always @(posedge sysclk) begin
 	if (~reset_n)          ss_port_own <= 1'b0;
 	else if (~ss_port_req) ss_port_own <= 1'b0;
-	else if (ss_ram_idle)  ss_port_own <= 1'b1;
+	else if (ss_grant)     ss_port_own <= 1'b1;
 end
 
-// ss_freeze appears here as well as ss_port_own so that the pin goes up on
-// the same cycle the freeze does. ss_port_own is registered and can lag it by
-// a cycle, and a single unpinned cycle at the freeze instant is enough for the
-// state machine below to arm a bridge DMA write -- exactly the write this pin
-// exists to keep out of a snapshot. (At the freeze instant ss_ram_idle is
-// already true, because AmigaCD.sv puts it in cpu_boundary, so the grant
-// follows on the very next edge.) During a restore ss_freeze is low until the
-// payload has been checked, so the pin is driven by ss_port_own alone up to
-// that point, which is what lets the port go idle in the first place.
-assign ram_busy       = (ss_freeze | ss_port_own) ? 1'b1 : m0_waitrequest_int;
+// Pinned on the grant only. It used to be pinned on ss_freeze as well, so that
+// nothing could be armed in the cycle between the freeze and the grant -- but
+// ss_quiesce raises the freeze on an edge where ss_ram_idle was true BEFORE
+// it, and on that same edge the state machine can still arm (ss_hold is 0
+// before the edge too). With ram_busy pinned, that strobe could never be
+// accepted or cleared, ss_ram_idle never came back, and the save hung with the
+// machine frozen. Now the freeze stops new arms through ss_hold, a strobe
+// armed on the freeze edge completes normally, and the grant follows once it
+// has. That write landing before the dump is consistent: the dump reads fast
+// RAM through this same port, after it.
+assign ram_busy       = ss_port_own ? 1'b1 : m0_waitrequest_int;
 assign ss_waitrequest = ss_port_own ? m0_waitrequest_int : 1'b1;
 
 // Read return. Only ss can have a master-0 read outstanding while it owns the
@@ -404,13 +485,55 @@ assign ss_readdatavalid = ss_port_own & ram_dout_ready;
 // change the state machine, the freeze simply waits for the port to be
 // quiet: ss_ram_idle joins cpu_boundary in AmigaCD.sv, the same way
 // blit_busy does.
-reg ss_rd_outstanding;
+//
+// Upstream 26eb46a's stream buffer reads two beats at a time (ram_bcnt = 2),
+// so "outstanding" is a count of beats still to come, not a flag: clearing on
+// the first readdatavalid would declare the port idle with the second beat
+// still on its way.
+// Four bits: a two-beat miss with the stream buffer's single-beat refills
+// behind it can have more than three beats owed at once. Only this
+// controller's own reads are counted: while ss owns the port the strobes and
+// the returns on master 0 are ss's (ss_readdatavalid), and counting those
+// returns down underflowed the count and never let the next grant happen.
+// Nothing of ours is in flight then -- the grant waited for this to be 0 --
+// and a read armed on the grant edge is held, not accepted, until it ends.
+reg [3:0] ss_rd_beats;
+wire      ss_rd_outstanding = |ss_rd_beats;
+wire      ss_rd_acc = ~ss_port_own & ram_rd & ~m0_waitrequest_int;
+wire      ss_rd_ret = ~ss_port_own & ram_dout_ready;
 always @(posedge sysclk) begin
-	if (~reset_n)                            ss_rd_outstanding <= 1'b0;
-	else if (ram_rd & ~m0_waitrequest_int)   ss_rd_outstanding <= 1'b1;
-	else if (ram_dout_ready)                 ss_rd_outstanding <= 1'b0;
+	if (~reset_n)       ss_rd_beats <= 4'd0;
+	else if (ss_rd_acc) ss_rd_beats <= ss_rd_beats + {2'b00, ram_bcnt[1:0]} - {3'b000, ss_rd_ret};
+	else if (ss_rd_ret & ss_rd_outstanding) ss_rd_beats <= ss_rd_beats - 4'd1;
 end
-assign ss_ram_idle = ~ss_rd_outstanding & ~ram_rd & ~ram_we;
+wire [28:0] hs_address;
+wire  [7:0] hs_burstcount;
+wire        hs_read, hs_write, hs_waitrequest;
+wire [63:0] hs_writedata;
+wire  [7:0] hs_byteenable;
+
+reg         q2_v = 0;
+reg  [28:0] q2_address;
+reg   [7:0] q2_burstcount;
+reg         q2_read, q2_write;
+reg  [63:0] q2_writedata;
+reg   [7:0] q2_byteenable;
+wire        q2_wait;
+assign      mem2_waitrequest = q2_v;
+
+always @(posedge sysclk) begin
+	if(~reset_n) q2_v <= 0;
+	else if(q2_v) q2_v <= q2_wait;
+	else if(mem2_read | mem2_write) begin
+		q2_v          <= 1;
+		q2_address    <= mem2_address;
+		q2_burstcount <= mem2_burstcount;
+		q2_read       <= mem2_read;
+		q2_write      <= mem2_write;
+		q2_writedata  <= mem2_writedata;
+		q2_byteenable <= mem2_byteenable;
+	end
+end
 
 a2065_ddram_arbiter arbiter
 (
@@ -422,7 +545,7 @@ a2065_ddram_arbiter arbiter
 	// of a grant (that is what ss_ram_idle checked), so the two sides never
 	// both want the port.
 	.m0_address      (ss_port_own ? ss_address    : ram_addr),
-	.m0_burstcount   (8'd1),
+	.m0_burstcount   (ss_port_own ? 8'd1          : ram_bcnt),
 	.m0_read         (ss_port_own ? ss_read       : ram_rd),
 	.m0_readdata     (),
 	.m0_readdatavalid(ram_dout_ready),
@@ -431,53 +554,43 @@ a2065_ddram_arbiter arbiter
 	.m0_write        (ss_port_own ? ss_write      : ram_we),
 	.m0_waitrequest  (m0_waitrequest_int),
 
-	.m1_address      (mem2_address),
-	.m1_burstcount   (mem2_burstcount),
-	.m1_read         (mem2_read),
+	.m1_address      (q2_address),
+	.m1_burstcount   (q2_burstcount),
+	.m1_read         (q2_v & q2_read),
 	.m1_readdata     (),
 	.m1_readdatavalid(mem2_readdatavalid),
-	.m1_writedata    (mem2_writedata),
-	.m1_byteenable   (mem2_byteenable),
-	.m1_write        (mem2_write),
-	.m1_waitrequest  (mem2_waitrequest),
+	.m1_writedata    (q2_writedata),
+	.m1_byteenable   (q2_byteenable),
+	.m1_write        (q2_v & q2_write),
+	.m1_waitrequest  (q2_wait),
 
-	// Through the command pipeline stage rather than straight at the pins.
-	// Read return is NOT staged: DDRAM_DOUT / DDRAM_DOUT_READY still come
-	// back directly, because that direction has never appeared in a
-	// worst-path report and a cycle there is a cycle of 68k cache-fill
-	// latency. See rtl/ddr_cmd_pipe.v for what the staged direction buys.
-	.s_address       (pipe_address),
-	.s_burstcount    (pipe_burstcount),
-	.s_read          (pipe_read),
+	.s_address       (hs_address),
+	.s_burstcount    (hs_burstcount),
+	.s_read          (hs_read),
 	.s_readdata      (DDRAM_DOUT),
 	.s_readdatavalid (DDRAM_DOUT_READY),
-	.s_writedata     (pipe_writedata),
-	.s_byteenable    (pipe_byteenable),
-	.s_write         (pipe_write),
-	.s_waitrequest   (pipe_waitrequest)
+	.s_writedata     (hs_writedata),
+	.s_byteenable    (hs_byteenable),
+	.s_write         (hs_write),
+	.s_waitrequest   (hs_waitrequest)
 );
 
-wire [28:0] pipe_address;
-wire  [7:0] pipe_burstcount;
-wire        pipe_read;
-wire [63:0] pipe_writedata;
-wire  [7:0] pipe_byteenable;
-wire        pipe_write;
-wire        pipe_waitrequest;
-
+// This fork's ddr_cmd_pipe in place of upstream's ddram_hold: both sit
+// between the arbiter and the f2sdram bridge, but ddram_hold passes the
+// command through combinationally whenever it is not holding one, which puts
+// the arbiter's mux straight back on the path ddr_cmd_pipe was added to cut.
+// See rtl/ddr_cmd_pipe.v.
 ddr_cmd_pipe cmd_pipe
 (
 	.clk           (sysclk),
 	.rst           (~reset_n),
-
-	.u_address     (pipe_address),
-	.u_burstcount  (pipe_burstcount),
-	.u_read        (pipe_read),
-	.u_writedata   (pipe_writedata),
-	.u_byteenable  (pipe_byteenable),
-	.u_write       (pipe_write),
-	.u_waitrequest (pipe_waitrequest),
-
+	.u_address     (hs_address),
+	.u_burstcount  (hs_burstcount),
+	.u_read        (hs_read),
+	.u_writedata   (hs_writedata),
+	.u_byteenable  (hs_byteenable),
+	.u_write       (hs_write),
+	.u_waitrequest (hs_waitrequest),
 	.d_address     (DDRAM_ADDR),
 	.d_burstcount  (DDRAM_BURSTCNT),
 	.d_read        (DDRAM_RD),
@@ -492,10 +605,160 @@ assign mem2_readdata = DDRAM_DOUT;
 reg        ddr_swap;
 reg [15:0] ddr_data;
 
+reg  [2:0] state = 0;
+reg  [1:0] ba;
+reg [63:0] dout;
+reg  [1:0] sdr_cnt;
+
+reg        wq_line_r;
+reg        sb_on_cpu, sp_on_cpu;
+reg        cpu_sdr;
+reg [28:3] cpu_up, cpu_dn;
+reg        cpu_below_sb;
+reg        cpu_after_sp, cpu_before_sp;
+reg [28:3] cpu_up2, cpu_dn2;
+reg [28:3] sp_nx_r;
+reg        sp_n_sdr;
+reg        sp_conf_r;
+reg        cpu_wr_spn;
+
+reg        sb_v;
+reg [28:3] sb_a;
+reg [63:0] sb_d;
+reg        sb_wait;
+reg        sb_kill;
+reg        sc_v, sc_wait, sc_kill;
+reg [28:3] sc_a;
+reg [63:0] sc_d;
+wire       sb_hit = sb_v && sb_on_cpu && ~ramshared;
+wire       sb_free = ~sb_v & ~sb_wait;
+wire       sc_free = ~sc_v & ~sc_wait;
+reg        sb_up;
+reg [28:3] sb_last;
+reg        dn_first;
+assign     kept_dat = sb_d;
+assign     kept_ok  = sb_v && (sb_a == cpuAddr[28:3]) && ~ramshared && ~wq_line && ~dma_write_req && ramsel &&
+                     (cpustate == 2);
+reg        strm_on;
+reg [28:3] nx_a;
+reg [28:3] nx_a1;
+wire [28:3] nx_a_nx  ;
+wire [28:3] nx_a1_nx  ;
+assign     nx_a_nx  = sb_up ? nx_a + 1'd1 : nx_a - 1'd1;
+assign     nx_a1_nx = sb_up ? nx_a1 + 1'd1 : nx_a1 - 1'd1;
+wire       nx_sdr  = is_sdr({nx_a, 2'b00}, sdr_hi);
+wire       m2_req  = q2_v;
+function in_buf(input [28:3] a);
+	in_buf = ((sb_v | sb_wait) && (sb_a == a)) || ((sc_v | sc_wait) && (sc_a == a));
+endfunction
+
+// in_buf of every write-queue entry, so the drain below can pick its head's
+// answer with wq_h instead of muxing the head's address out first and then
+// comparing it 26 bits wide against both lines. Same value -- a pure function
+// of an indexed entry -- one mux level earlier: wq_a -> sb_kill / sc_kill was
+// one of the paths that missed setup after 26eb46a.
+// Written out rather than calling in_buf from an always @*: an implicit
+// sensitivity list does not see the module signals a function reads in its
+// body (sb_v, sb_a, ...), so simulation would hold a stale value that
+// synthesis does not.
+wire [WQN-1:0] wq_inbuf;
+genvar qb;
+generate
+	for (qb = 0; qb < WQN; qb = qb + 1) begin : g_wq_inbuf
+		assign wq_inbuf[qb] = ((sb_v | sb_wait) && (sb_a == wq_a[qb][28:3])) ||
+		                      ((sc_v | sc_wait) && (sc_a == wq_a[qb][28:3]));
+	end
+endgenerate
+
+// Since upstream 26eb46a this controller also holds work of its own that is
+// not a master-0 request: a four-entry posted write queue (wq, and the staged
+// high half of a long write in stg), the two-line read stream buffer (sb/sc)
+// and the SDRAM prefetch (sp), and SDRAM fast RAM accesses that go out on the
+// sdr_* port in states 5-7. A posted write still in the queue is a write the
+// snapshot would miss -- and with ram_busy pinned it could not drain until
+// the freeze lifted, landing after the dump. A buffer read still in flight
+// returns on ram_dout_ready, which the grant would hand to ss. So idle means
+// all of it: no master-0 strobe, no accepted read, an empty write queue, no
+// buffer read waiting, and the state machine at rest in state 0.
+assign ss_ram_idle = ~ss_rd_outstanding & ~ram_rd & ~ram_we & ~wq_any &
+                     (state == 3'd0) & ~sb_wait & ~sc_wait & ~sp_on;
+
+// While the port is held nothing new may start, including the requests that
+// do not go to DDR3 at all: the sdr_* port in state 0 does not look at
+// ram_busy, so pinning ram_busy alone would let a bridge DMA write reach SDRAM
+// fast RAM mid-dump. ss_hold gates every state-0 select below.
+// ss_grant too: see its declaration.
+wire ss_hold = ss_freeze | ss_port_own | ss_grant;
+
+wire       st0     = (state == 3'd0) & ~ss_hold;
+wire       dw_sel  = st0 & ~dma_write_ack & dma_write_req & ~wr_first;
+wire       dr_sel  = st0 & ~dw_sel & ~dma_read_ack & dma_read_req & ~dma_read_in_flight & ~wr_first;
+wire       next_sel = st0 & ~dw_sel & ~dr_sel & ~cache_req & strm_on & ~sc_wait & ~sc_v & ~m2_req;
+wire       rd_1st  = cache_req & ~wq_line_r;
+wire       rd_sel0 = st0 & ~dw_sel & ~dr_sel & rd_1st;
+reg        sp_v;
+reg [28:3] sp_a;
+reg [63:0] sp_d;
+reg        sp_go;
+reg [28:3] sp_n;
+reg        sp_on;
+reg        sp_kill;
+reg [28:3] sp_last;
+wire       sp_hit  = sp_v && sp_on_cpu && ~ramshared && ~wq_line_r;
+reg        sp_conf;
+integer    qk;
+always @* begin
+	sp_conf = stg_v && (stg_a[28:3] == sp_n);
+	for (qk = 0; qk < WQN; qk = qk + 1)
+		if (wq_vm[qk] && (wq_a[qk][28:3] == sp_n)) sp_conf = 1'b1;
+end
+wire       sp_cpu_wr = ramsel && (cpustate == 3) && (cpuAddr[28:3] == sp_a);
+wire       pf_sel  = st0 & ~dw_sel & ~dr_sel & ~rd_sel0 & sp_go & ~sp_conf_r & ~cache_req & ~next_sel & ~cpu_wr_spn;
+wire       wq_sel  = st0 & ~dw_sel & ~dr_sel & ~rd_sel0 & ~next_sel & ~pf_sel & (wq_n != 0);
+wire       rd_sel  = rd_sel0;
+wire       wh_sdr  = is_sdr({wh_a, 1'b0}, sdr_hi);
+assign     wq_pop  = wq_sel & (wh_sdr | ~ram_busy);
+wire [28:3] ra_cpu  = (~ramshared && cpu_below_sb) ? cpu_dn : cpuAddr[28:3];
+wire [28:3] ra_next = wq_sel ? wh_a[28:3] : dw_sel ? dmaWriteAddr[28:3] : dr_sel ? dmaReadAddr[28:3] :
+                      (rd_sel & ~sb_hit) ? ra_cpu : nx_a;
+
+always @(posedge sysclk) begin
+	wq_line_r     <= wq_line;
+	sb_on_cpu     <= (sb_a == cpuAddr[28:3]);
+	sp_on_cpu     <= (sp_a == cpuAddr[28:3]);
+	cpu_sdr       <= is_sdr(cpuAddr, sdr_hi);
+	cpu_up        <= cpuAddr[28:3] + 1'd1;
+	cpu_dn        <= cpuAddr[28:3] - 1'd1;
+	cpu_below_sb  <= (cpuAddr[28:3] == sb_last - 1'd1);
+	cpu_after_sp  <= (cpuAddr[28:3] == sp_last + 1'd1);
+	cpu_before_sp <= (cpuAddr[28:3] == sp_last - 1'd1);
+	cpu_up2       <= cpuAddr[28:3] + 2'd2;
+	cpu_dn2       <= cpuAddr[28:3] - 2'd2;
+	sp_nx_r       <= (sp_a == sp_last - 1'd1) ? sp_a - 1'd1 : sp_a + 1'd1;
+	sp_n_sdr      <= is_sdr({sp_n, 2'b00}, sdr_hi);
+	sp_conf_r     <= sp_conf;
+	cpu_wr_spn    <= ramsel && (cpustate == 3) && (cpuAddr[28:3] == sp_n);
+end
+
 always @ (posedge sysclk) begin
-	reg  [2:0] state = 0;
-	reg  [1:0] ba;
-	reg [63:0] dout;
+	reg        e_take;
+	reg        e_miss;
+	reg        e_reset;
+	reg        e_rs_w;
+	reg [28:3] e_rs_a;
+	reg        e_issue;
+	reg        e_drop;
+	reg        n0_v, n0_w, n0_k, n1_v, n1_w, n1_k;
+	reg [28:3] n0_a, n1_a;
+	reg [63:0] n0_d, n1_d;
+
+	e_take  = kept_take & sb_v;
+	e_miss  = 0;
+	e_reset = 0;
+	e_rs_w  = 0;
+	e_rs_a  = 0;
+	e_issue = 0;
+	e_drop  = 0;
 
 	cache_fill <= 0;
 	ddr_data <= dout[{ba, 4'b0000} +:16];
@@ -504,94 +767,250 @@ always @ (posedge sysclk) begin
 		ram_we  <= 0;
 		ram_rd  <= 0;
 	end
+	if(~(ram_rd | ram_we) | ~ram_busy) ram_addr <= {3'b001, ra_next};
 
 	if(~reset_n) begin
 		state         <= 0;
-		write_ack     <= 0;
 		dma_write_ack <= 0;
 		dma_read_ack       <= 0;
 		dma_read_in_flight <= 0;
+		sdr_req       <= 0;
+		sdr_w2        <= 0;
+		ram_bcnt      <= 8'd1;
+		sb_v          <= 0;
+		sb_wait       <= 0;
+		sb_kill       <= 0;
+		sc_v          <= 0;
+		sc_wait       <= 0;
+		sc_kill       <= 0;
+		sb_up         <= 1;
+		sb_last       <= 0;
+		dn_first      <= 0;
+		sp_v          <= 0;
+		sp_go         <= 0;
+		sp_on         <= 0;
+		sp_kill       <= 0;
+		sp_last       <= 0;
+		strm_on       <= 0;
 	end
 	else begin
+		if(kept_take) begin
+			sb_last <= sb_a;
+			if(sb_v) strm_on <= 1;
+		end
+		if(sp_cpu_wr) begin
+			sp_v <= 0;
+			if(sp_on) sp_kill <= 1;
+		end
 		case(state)
-			0: if(~ram_busy) begin
-					// Bridge DMA write has priority over CPU. Bandwidth is
-					// tiny (one byte per ~150 KB/s sector), so this never
-					// starves the CPU in practice, but it does guarantee no
-					// head-of-line wait behind a slow CPU cache fill.
-					if(~dma_write_ack & dma_write_req & ~wr_first) begin
-						ram_addr      <= {3'b001, dmaWriteAddr[28:3]};
-						ram_be        <= {6'b000000,dmaWriteBE}<<{dmaWriteAddr[2:1],1'b0};
-						ram_din       <= {dmaWriteDat,dmaWriteDat,dmaWriteDat,dmaWriteDat};
-						ram_we        <= 1;
-						dma_write_ack <= 1;
+			0: begin
+					if(dw_sel) begin
+						if(dmaWriteSdr) begin
+							sdr_req       <= 1;
+							sdr_we        <= 1;
+							sdr_w2        <= 0;
+							sdr_addr      <= {dmaWriteAddr[27], dmaWriteAddr[25:1]};
+							sdr_dqm       <= ~dmaWriteBE;
+							sdr_wdat      <= dmaWriteDat;
+							dma_write_ack <= 1;
+							if(sp_a == dmaWriteAddr[28:3]) sp_v <= 0;
+							state         <= 5;
+						end
+						else if(~ram_busy) begin
+							ram_be        <= {6'b000000,dmaWriteBE}<<{dmaWriteAddr[2:1],1'b0};
+							ram_din       <= {dmaWriteDat,dmaWriteDat,dmaWriteDat,dmaWriteDat};
+							ram_bcnt      <= 8'd1;
+							ram_we        <= 1;
+							dma_write_ack <= 1;
+							e_drop         = in_buf(dmaWriteAddr[28:3]);
+						end
 					end
-					// Bridge DMA read shares the state-1 read-return shape
-					// used by CPU cache fills. Priority below dma_write so a
-					// write already in flight completes first; above CPU
-					// write/cache to keep bridge latency low, since the BIOS
-					// waits synchronously for this.
-					else if(~dma_read_ack & dma_read_req & ~dma_read_in_flight & ~wr_first) begin
-						ram_addr           <= {3'b001, dmaReadAddr[28:3]};
-						ram_be             <= 8'hFF;
-						ram_rd             <= 1;
-						dmaReadBA          <= dmaReadAddr[2:1];
-						dma_read_in_flight <= 1;
-						state              <= 1;
+					if(dr_sel) begin
+						if(dmaReadSdr) begin
+							sdr_req            <= 1;
+							sdr_we             <= 0;
+							sdr_addr           <= {dmaReadAddr[27], dmaReadAddr[25:1]};
+							sdr_cnt            <= 0;
+							dma_read_in_flight <= 1;
+							state              <= 5;
+						end
+						else if(~ram_busy & ~sb_wait & ~sc_wait) begin
+							ram_be             <= 8'hFF;
+							ram_bcnt           <= 8'd1;
+							ram_rd             <= 1;
+							dmaReadBA          <= dmaReadAddr[2:1];
+							dma_read_in_flight <= 1;
+							state              <= 1;
+						end
 					end
-					else if(~write_ack & write_req) begin
-						ram_addr <= {3'b001, writeAddr[28:3]};
-						ram_be   <= {6'b000000,writeBE}<<{writeAddr[2:1],1'b0};
-						ram_din  <= {writeDat,writeDat,writeDat,writeDat};
-						ram_we   <= 1;
-						write_ack  <= 1;
+					if(next_sel) begin
+						if(~ram_busy) begin
+							if(~nx_sdr) begin
+								ram_be   <= 8'hFF;
+								ram_bcnt <= 8'd1;
+								ram_rd   <= 1;
+								e_issue   = 1;
+							end
+							else strm_on <= 0;
+						end
 					end
-					else if(cache_req) begin
-						ram_addr <= {3'b001, cpuAddr[28:3]};
-						ram_be   <= 8'hFF;
-						ram_rd   <= 1;
-						ba         <= cpuAddr[2:1];
-						state      <= 1;
-						ddr_swap   <= ramshared;
+					if(pf_sel) begin
+						if(sp_n_sdr) begin
+							sdr_req  <= 1;
+							sdr_we   <= 0;
+							sdr_w2   <= 0;
+							sdr_addr <= {sp_n[27], sp_n[25:3], 2'b00};
+							sdr_cnt  <= 0;
+							sp_on    <= 1;
+							sp_kill  <= 0;
+							sp_a     <= sp_n;
+							sp_v     <= 0;
+							state    <= 5;
+						end
+						sp_go <= 0;
+					end
+					if(wq_sel) begin
+						if(wh_sdr) begin
+							sdr_req   <= 1;
+							sdr_we    <= 1;
+							sdr_w2    <= |wh_bh & |wh_bl;
+							sdr_addr  <= {wh_a[27], wh_a[25:2], ~|wh_bh};
+							sdr_dqm   <= |wh_bh ? ~wh_bh : ~wh_bl;
+							sdr_wdat  <= |wh_bh ? wh_dh : wh_dl;
+							sdr_dqm2  <= ~wh_bl;
+							sdr_wdat2 <= wh_dl;
+							if(sp_a == wh_a[28:3]) sp_v <= 0;
+							state     <= 5;
+						end
+						else if(~ram_busy) begin
+							ram_be   <= {4'b0000, wh_bl, wh_bh} << {wh_a[2], 2'b00};
+							ram_din  <= {wh_dl, wh_dh, wh_dl, wh_dh};
+							ram_bcnt <= 8'd1;
+							ram_we   <= 1;
+							e_drop    = wq_inbuf[wq_h];
+						end
+					end
+					if(rd_sel) begin
+						if(sp_hit) begin
+							ddr_data   <= sp_d[{cpuAddr[2:1], 4'b0000} +:16];
+							dout       <= sp_d;
+							ba         <= cpuAddr[2:1] + 1'd1;
+							cache_fill <= 1;
+							ddr_swap   <= 0;
+							sp_v       <= 0;
+							sp_go      <= 1;
+							sp_n       <= sp_nx_r;
+							sp_last    <= sp_a;
+							state      <= 2;
+						end
+						else if(cpu_sdr) begin
+							sdr_req  <= 1;
+							sdr_we   <= 0;
+							sdr_addr <= {cpuAddr[27], cpuAddr[25:1]};
+							sdr_cnt  <= 0;
+							ddr_swap <= 0;
+							if(~ramshared && (cpu_after_sp || cpu_before_sp)) begin
+								sp_go <= 1;
+								sp_n  <= cpu_after_sp ? cpu_up : cpu_dn;
+							end
+							sp_last  <= cpuAddr[28:3];
+							state    <= 5;
+						end
+						else if(sb_hit) begin
+							ddr_data   <= sb_d[{cpuAddr[2:1], 4'b0000} +:16];
+							dout       <= sb_d;
+							ba         <= cpuAddr[2:1] + 1'd1;
+							cache_fill <= 1;
+							ddr_swap   <= 0;
+							e_take      = 1;
+							strm_on    <= 1;
+							if(~ram_busy && ~nx_sdr && ~m2_req) begin
+								ram_be   <= 8'hFF;
+								ram_bcnt <= 8'd1;
+								ram_rd   <= 1;
+								e_issue   = 1;
+							end
+							sb_last    <= sb_a;
+							state      <= 2;
+						end
+						else if(~sb_wait & ~sc_wait) begin
+							e_miss    = 1;
+							e_rs_a    = (~ramshared && cpu_below_sb) ? cpu_dn : cpu_up;
+							strm_on  <= 0;
+							if(~ram_busy) begin
+								ram_be   <= 8'hFF;
+								e_reset   = 1;
+								if(~ramshared && cpu_below_sb) begin
+									ram_bcnt <= 8'd2;
+									dn_first <= 1;
+									e_rs_w    = 1;
+									sb_up    <= 0;
+									nx_a     <= cpu_dn2;
+								end
+								else begin
+									ram_bcnt <= ramshared ? 8'd1 : 8'd2;
+									e_rs_w    = ~ramshared;
+									sb_up    <= 1;
+									nx_a     <= cpu_up2;
+								end
+								sb_last  <= cpuAddr[28:3];
+								ram_rd   <= 1;
+								ba         <= cpuAddr[2:1];
+								state      <= 1;
+								ddr_swap   <= ramshared;
+							end
+						end
 					end
 				end
-			// Avalon splits waitrequest from readdatavalid: the first gates
-			// COMMAND acceptance, the second marks returned data, and a slave
-			// may hold one while pulsing the other. Waiting for ~ram_busy here
-			// dropped any return that arrived on a busy cycle -- ram_dout is
-			// valid only during the pulse -- and wedged master 0 permanently,
-			// because state 1 then waits for a second pulse that never comes.
-			// From outside that is a 68k stalled on a fast-RAM fetch, which is
-			// what Z2 + CD "boots to a black screen" looked like. State 0's
-			// ~ram_busy gate and the strobe clearing above are the real Avalon
-			// rules and stay exactly as they were.
-			//
-			// ~ss_port_own replaces the ownership half of what ram_busy was
-			// doing here, and only that half. ss_port_own is registered behind
-			// ss_ram_idle, so the grant lands on the first idle edge -- and the
-			// state machine can arm on that same edge, since both read pre-edge
-			// values. That parks a read in state 1 with ss owning master 0, and
-			// the next ram_dout_ready is then ss's, not ours. Taking it fed the
-			// save state payload into a CPU cache fill: silent corruption, not a
-			// hang. rtl/sim/ddram/tb_ddram_readreturn.sv constructs that edge.
-			//
-			// ss_freeze is deliberately NOT in this condition. A return owed to
-			// master 0 while the freeze is up belongs to master 0 and must be
-			// consumed -- that is the "pulse arriving mid-freeze would be lost"
-			// hazard described at the top of this file, which the quiesce avoids
-			// rather than handles.
+			5: if(sdr_ack) begin
+					sdr_req <= 0;
+
+						state   <= sdr_we ? 3'd0 : (sp_on ? 3'd7 : 3'd6);
+				end
+			6: if(sdr_rvalid) begin
+					sdr_cnt <= sdr_cnt + 1'd1;
+					if(dma_read_in_flight) begin
+						if(!sdr_cnt) begin
+							dmaRD        <= sdr_rdat;
+							dma_read_ack <= 1;
+						end
+					end
+					else begin
+						ddr_data   <= sdr_rdat;
+						cache_fill <= 1;
+					end
+					if(&sdr_cnt) begin
+						dma_read_in_flight <= 0;
+						state              <= 0;
+					end
+				end
+			7: if(sdr_rvalid) begin
+					sdr_cnt <= sdr_cnt + 1'd1;
+					sp_d[{sdr_cnt, 4'b0000} +:16] <= sdr_rdat;
+					if(&sdr_cnt) begin
+						sp_on <= 0;
+						sp_v  <= ~sp_kill & ~sp_cpu_wr;
+						state <= 0;
+					end
+				end
+			// ~ss_port_own: the grant is registered behind ss_ram_idle, so it
+			// lands on the first idle edge, and state 0 can arm a read on that
+			// same edge (both read pre-edge values). The read is held, masked
+			// by the m0 mux, and the next ram_dout_ready is ss's, not ours.
+			// Taking it would feed the save state payload into a cache fill.
+			// rtl/sim/ddram/tb_ddram_readreturn.sv constructs that edge.
 			1: if(ram_dout_ready & ~ss_port_own) begin
-					// Distinguish a bridge-DMA read (single 16-bit word, no
-					// cache_fill) from a CPU cache fill (4-beat burst into
-					// cpu_cache_new). dma_read_in_flight was set at state-0
-					// issue time for DMA reads.
 					if (dma_read_in_flight) begin
 						dmaRD              <= ram_dout[{dmaReadBA, 4'b0000} +:16];
 						dma_read_ack       <= 1;
 						dma_read_in_flight <= 0;
 						state              <= 0;
-					end else begin
-					ddr_data      <= ram_dout[{ba, 4'b0000} +:16];
+					end
+						else if (dn_first) begin
+							dn_first <= 0;
+						end
+						else begin
+						ddr_data      <= ram_dout[{ba, 4'b0000} +:16];
 					dout          <= ram_dout;
 					cache_fill    <= 1;
 					ba            <= ba + 1'd1;
@@ -609,10 +1028,65 @@ always @ (posedge sysclk) begin
 				end
 		endcase
 
-		if(~write_req) write_ack <= 0;
 		if(~dma_write_req) dma_write_ack <= 0;
 		if(~dma_read_req)  dma_read_ack  <= 0;
+
+		n0_v = sb_v; n0_w = sb_wait; n0_k = sb_kill; n0_a = sb_a; n0_d = sb_d;
+		n1_v = sc_v; n1_w = sc_wait; n1_k = sc_kill; n1_a = sc_a; n1_d = sc_d;
+		// The same ~ss_port_own as state 1: a stream-buffer read armed on the
+		// grant edge must not take ss's beat either.
+		if(ram_dout_ready && ~ss_port_own && ((state != 3'd1) || dn_first)) begin
+			if(n0_w) begin
+				n0_d = ram_dout; n0_v = ~n0_k; n0_w = 0; n0_k = 0;
+			end
+			else if(n1_w) begin
+				n1_d = ram_dout; n1_v = ~n1_k; n1_w = 0; n1_k = 0;
+			end
+		end
+		if(e_take) begin
+			n0_v = n1_v; n0_w = n1_w; n0_k = n1_k; n0_d = n1_d;
+			n1_v = 0; n1_w = 0; n1_k = 0;
+		end
+		if(e_miss) begin
+			n0_v = 0; n0_w = e_reset & e_rs_w; n0_k = 0;
+			n1_v = 0; n1_w = 0; n1_k = 0;
+		end
+		if(e_issue) begin
+			if(e_take ? sc_free : sb_free) begin
+				n0_w = 1; n0_k = 0;
+			end
+			else begin
+				n1_w = 1; n1_k = 0;
+			end
+		end
+		n0_a = e_miss ? e_rs_a : e_take ? (sc_free ? nx_a : sc_a) : (sb_free ? nx_a : sb_a);
+		n1_a = (e_take | sc_free) ? nx_a : sc_a;
+		if(e_drop) begin
+			n0_v = 0; n0_k = n0_w;
+			n1_v = 0; n1_k = n1_w;
+			strm_on <= 0;
+		end
+		sb_v <= n0_v; sb_wait <= n0_w; sb_kill <= n0_k; sb_a <= n0_a; sb_d <= n0_d;
+		sc_v <= n1_v; sc_wait <= n1_w; sc_kill <= n1_k; sc_a <= n1_a; sc_d <= n1_d;
+		if(e_issue) begin
+			nx_a  <= nx_a1;
+			nx_a1 <= nx_a1_nx;
+		end
+		else nx_a1 <= nx_a_nx;
+
+		// A restore rewrites fast RAM through the port while it is held, so
+		// any line the buffers kept from before it is stale. Last, so it wins
+		// over every assignment above. Nothing is in flight to kill: the
+		// grant waited for ~sb_wait & ~sc_wait & ~sp_on (ss_ram_idle).
+		if(ss_port_own) begin
+			sb_v    <= 0;
+			sc_v    <= 0;
+			sp_v    <= 0;
+			sp_go   <= 0;
+			strm_on <= 0;
+		end
 	end
 end
 
 endmodule
+

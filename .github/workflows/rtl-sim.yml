@@ -161,6 +161,24 @@ jobs:
       # ways on 2026-09-14: the original condition hangs both clients, the
       # unqualified fix feeds the save state payload into a CPU cache fill, and
       # the shipped form passes. Do NOT simplify the condition back to either.
+      #
+      # Since upstream 26eb46a the controller posts CPU writes into a queue and
+      # reads two-beat bursts through a stream buffer. The slave model returns
+      # every beat of a burst, and check 5 holds a posted write in the queue
+      # while the port is asked for: the grant must wait until it is in DDR3.
+      # Falsified 2026-10-16 by dropping ~wq_any from ss_ram_idle (16 of 16
+      # grants then came with the write still queued). Check 8 covers the
+      # stream buffer's ~ss_port_own on its return: no input sequence reaches
+      # it any more, so it plants an owed buffer read under ss ownership.
+      # Falsified by dropping the guard (the buffer then takes ss's beat).
+      #
+      # Checks 4, 6 and 7 are the grant itself, after a review found three ways
+      # a save or restore could hang or be refused: a request armed on the
+      # freeze edge was pinned forever (check 6), one armed on the grant edge
+      # was held for the whole ownership with ss_ram_idle low (check 4), and a
+      # restore could be granted before the CPU parked (check 7). Falsified
+      # 2026-10-16 by undoing each fix: 2010 duplicate writes and no grant; 102
+      # owned cycles with idle low; a grant with the CPU still running.
       - name: DDR3 read return under waitrequest
         run: |
           set -euo pipefail
@@ -171,6 +189,28 @@ jobs:
             tb_ddram_readreturn.sv
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
+
+      # ddram_ctrl's write-queue drain takes e_drop from a per-entry precompute
+      # (wq_inbuf[wq_h]) instead of in_buf() on the muxed-out head, one mux
+      # level off wq_a -> sb_kill / sc_kill (a setup miss after 26eb46a). The
+      # step above never makes in_buf true, so it cannot show the two agree.
+      # This writes random stream-buffer and write-queue state straight into
+      # the module, with colliding addresses, and compares its own wq_inbuf
+      # against the old formula: 100k states, ~44k true. Falsified on
+      # 2026-10-16: sc compared against sb_a, and sb_wait dropped, each fail.
+      # Also guards the form: an always @* calling in_buf held stale values in
+      # simulation (an implicit sensitivity list does not look inside a
+      # function), which is why the RTL spells the compare out.
+      - name: DDR3 write-drain buffer check matches in_buf (tb_wq_inbuf.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/ddram
+          iverilog -g2012 -o tbw ../../ddram_ctrl.v ../../ddr_cmd_pipe.v \
+            ../../cpu_cache_new.v \
+            ../../A2065/a2065_ddram_arbiter.v ../cache/dpram_sim.v \
+            tb_wq_inbuf.sv
+          vvp -n tbw | tee out_wq.log
+          grep -q "RUN: PASS" out_wq.log
 
       # ddr_cmd_pipe on its own. The module is there for timing -- it holds one
       # Avalon command for a cycle on its way to the HPS bridge -- so what this
@@ -277,6 +317,57 @@ jobs:
           iverilog -g2012 -o tb ../../agnus_beamcounter.v tb_lightpen_latch.sv
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
+
+      # a2065_ddram_arbiter's busy-clear compare was rewritten to take the late
+      # f2sdram readdatavalid out of the adder in front of it (-0.91 ns at one
+      # seed). This proves every output, plus busy / beats_left / owner,
+      # cycle-identical to the previous version (frozen as
+      # a2065_ddram_arbiter_ref.v) against a slave driven at random, so
+      # beats_left also visits the wrapped values a real slave never produces.
+      # Falsified on 2026-10-16: the two compares swapped, the select dropped,
+      # and a sum one bit too narrow (the original compare is 32 bits wide, so
+      # it never wrapped) each fail it.
+      - name: A2065 DDR3 arbiter matches its previous version (tb_a2065_arbiter_equiv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/a2065arb
+          iverilog -g2012 -o tb ../../A2065/a2065_ddram_arbiter.v a2065_ddram_arbiter_ref.v tb_a2065_arbiter_equiv.sv
+          vvp -n tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
+      # ss_serdes became a real shift register (it was addressed by count) to
+      # take a ~50-way word mux and a per-word count decode off two clk_114
+      # paths that missed setup after the 68030 merge. This proves every output
+      # cycle-identical to the addressed version (frozen as ss_serdes_ref.v)
+      # under random saves, gapped and restarted loads and stray words, at one
+      # word (its own generate branch), a ragged top word, and the real vector's
+      # size. Falsified on 2026-10-16: words shifted in at the bottom, a save
+      # that does not shift, and a broken one-word branch each fail it.
+      - name: ss_serdes shift register matches the addressed version (tb_ss_serdes_equiv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/ssserdes
+          for w in 32 77 1530; do
+            iverilog -g2012 -Ptb_ss_serdes_equiv.WIDTH=$w -o tb ../../ss_serdes.v ss_serdes_ref.v tb_ss_serdes_equiv.sv
+            vvp -n tb | tee out_$w.log
+            grep -q "RUN: PASS" out_$w.log
+          done
+
+      # sys/yc_out.sv carries a local retiming: the chroma sine ROM moved in
+      # front of the register feeding the U/V multipliers, without which the
+      # 114 MHz fit missed setup by 1.0-1.4 ns on every seed. This proves the
+      # output identical to upstream's module on every clock (NTSC and PAL,
+      # burst and active chroma both exercised and counted), and stops building
+      # if a sys/ resync reverts the change -- which would bring the setup
+      # failure back with nothing else to say so. Falsified on 2026-10-16: a
+      # cos offset of 63, a one-clock-early sine and a PAL burst offset of 161
+      # each fail it. Verilator because Icarus 12 cannot parse yc_out.
+      - name: yc_out retiming matches upstream (tb_yc_out_equiv.sv)
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq verilator >/dev/null
+          cd rtl/sim/yc
+          ./run.sh
 
       # HBSTRT and HBSTOP carry half-a-colour-clock position in bit 10, which the
       # core used to drop. Also asserts that bits 9:8 stay dropped -- they are 35 ns
@@ -536,15 +627,19 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
-      # cpu_wrapper's save state park, stock-speed throttle and chip-slot guard.
+      # cpu_wrapper's save state park, CPU speed and chip-slot guard.
       # All three are things an upstream merge can remove without anyone
       # noticing, and the park came within one conflict resolution of exactly
       # that at 74d6ce0. The two CPU cores are stubbed -- see cpu_core_stubs.v.
+      # Since upstream 26eb46a the speed is cpu_cycles.v's cycle model: the
+      # bench holds the unthrottled 68020 (CPU Turbo On) to running free and
+      # requires the park in every CPU mode. Falsified 2026-10-16 by putting
+      # the 68020 on the stock-speed model (Turbo On then held 35 cycles).
       - name: CPU wrapper park and throttle
         run: |
           set -euo pipefail
           cd rtl/sim/cpuwrap
-          iverilog -g2012 -o tb             ../../cpu_wrapper.v ../../memory_router.v             cpu_core_stubs.v tb_cpu_wrapper_park.sv
+          iverilog -g2012 -I ../.. -o tb             ../../cpu_wrapper.v ../../memory_router.v ../../cpu_cycles.v             cpu_core_stubs.v tb_cpu_wrapper_park.sv
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 

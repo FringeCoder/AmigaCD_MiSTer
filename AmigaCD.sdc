@@ -35,20 +35,14 @@ set_multicycle_path -from {emu|amiga_clk|c1*} -to {emu|ram1|*} -hold 1
 set_multicycle_path -from {emu|amiga_clk|c3*} -to {emu|ram1|*} -setup 2
 set_multicycle_path -from {emu|amiga_clk|c3*} -to {emu|ram1|*} -hold 1
 
-# init_done is a one-shot: set when initstate saturates at sdram_state == 15 and
-# never cleared except by reset (sdram_ctrl.v:240-251). It is static for the
-# entire life of the design either side of that single transition, and it only
-# changes on state 15 of a 16-state machine, so anything downstream has many
-# cycles before it matters. After the sd_addr split this became the sole binding
-# path in the design (init_done -> sd_cas, -0.172 ns) with 0.34 ns of clear air
-# to the next one, purely because a static configuration signal was being held
-# to a single-cycle budget it never needs.
-#
-# setup 2 is deliberately conservative rather than a false path: the 0->1 edge
-# does change downstream behaviour, and on a memory controller "it only glitches
-# once, during init" is not an argument worth relying on.
-set_multicycle_path -from {emu|ram1|init_done} -to {emu|ram1|*} -setup 2
-set_multicycle_path -from {emu|ram1|init_done} -to {emu|ram1|*} -hold 1
+# No multicycle on init_done any more. It had a setup 2 here, added for the
+# split sd_addr this fork used to carry, on the grounds that nothing needs
+# init_done within a cycle of its 0->1 edge. Upstream 26eb46a's controller,
+# which replaced that one, does: init_n arms st0_go on the very edge init_done
+# rises, so the first state 0 issues its ACTIVATE regardless, and the same
+# state 0 picks slot_type / cas_sd_cas / casaddr by `if(!init_done)`. Seen a
+# cycle late, that frame would open a bank and never close it. Single cycle,
+# as upstream constrains it.
 
 # Bridge DMA write port on ram2 (DDR3) is a CDC handshake. chipdma_arb
 # (clk_sys) registers dma_ddr_cs_r plus the entire DDR bus (addr / wr / l / u)
@@ -150,8 +144,29 @@ set_false_path -from {*ss_serdes*|state_out[*]} -to $ss_clksys
 # clk_sys. Same vector, same freeze, carried on its own bus.
 set_false_path -from {*ss_ctrl*|shadow_ld_data[*]} -to $ss_clksys
 
+# Capture: the CIA words' clk_114 retiming registers (AmigaCD.sv, ss_cia_a /
+# ss_cia_b). They were added to move the CIAs' crossing off the shifter, and
+# they take the same coincident-edge hold check the shifter did: -0.569 at
+# seed 4 after upstream 26eb46a moved the placement, CIAA1|sdr_latch[5] ->
+# ss_cia_a[25]. Their only consumer is the state vector (ss_state.vh), read
+# inside the freeze, so the argument above covers them word for word.
+set_false_path -from $ss_clksys -to {emu|ss_cia_a[*] emu|ss_cia_b[*]}
+
+# Capture: Akiko's clk_114 retiming register (AmigaCD.sv, ss_akiko), the same
+# shape as the CIAs' and added for the same reason. It took the same hold check
+# once 26eb46a moved the placement: -0.198 at seed 1 and -0.077 at seed 8,
+# akiko|g_cd.cdrom_result_buffer -> ss_akiko[718] / [671]. Its only consumer is
+# the state vector (ss_state.vh), and Akiko is required idle before the freeze
+# is granted (akiko.v ss_idle), so its state is static while the vector is read.
+set_false_path -from $ss_clksys -to {emu|ss_akiko[*]}
+
 set_false_path -from {emu|cpu_wrapper|z3ram_*}
 set_false_path -from {emu|cpu_wrapper|z2ram_*}
+# Upstream 26eb46a: the SDRAM-backed Zorro III windows are set by autoconfig
+# and the SDRAM size by the Main, both once per boot.
+set_false_path -from {emu|cpu_wrapper|z3sdr_*}
+set_false_path -from {emu|sdram_big*}
+set_false_path -from {emu|sdram_dual*}
 
 set_false_path -from {emu|minimig|USERIO1|cpu_config*}
 set_false_path -from {emu|minimig|USERIO1|ide_config*}
@@ -238,14 +253,12 @@ set_false_path -from {*a2065_ddr3_mailbox*|cmd_clear}        -to {*a2065_regfile
 set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_valid}  -to {*a2065_ddram*|rv_sync0}
 set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_data[*]} -to {*a2065_ddram*|rd_sync0[*]}
 
-# yc_out chroma LUT: multicycle retained from the old bridge, where boardram BRAM
-# placement congestion pushed this path to -0.471ns. The flat-DDR3 design removes
-# that BRAM, so this exception may now be UNNECESSARY. Re-validate against the
-# merged fitter run (R3); keep only if report_timing still shows the path marginal.
-set_multicycle_path -from {yc_out|chroma_LUT_BURST[*]} \
-                    -to   {yc_out|phase[*].u[*]} -setup 2
-set_multicycle_path -from {yc_out|chroma_LUT_BURST[*]} \
-                    -to   {yc_out|phase[*].u[*]} -hold 1
+# yc_out: no exception. A multicycle from chroma_LUT_BURST to phase[*].u used
+# to sit here, retained from the old bridge. It was never valid -- the burst LUT
+# index is recomputed from the free-running phase accumulator every clk_114
+# cycle -- and its source register is gone: sys/yc_out.sv now registers the
+# sine values rather than the indices (see the comment there), which closes the
+# path as a plain single-cycle one.
 
 # emu PLL cross-clock: counter[1]→counter[0] marginal path
 set_multicycle_path -setup 2 -from [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[1\].output_counter|divclk"] -to [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[0\].output_counter|divclk"]
@@ -344,3 +357,14 @@ set_multicycle_path -setup 2 -from $sdram_launch -to [get_clocks SDRAM_CLK_out]
 set_multicycle_path -hold  2 -from $sdram_launch -to [get_clocks SDRAM_CLK_out]
 set_multicycle_path -setup 2 -from [get_clocks SDRAM_CLK_out] -to $sdram_launch
 set_multicycle_path -hold  2 -from [get_clocks SDRAM_CLK_out] -to $sdram_launch
+
+# Upstream 26eb46a: extra setup uncertainty for the FITTER only, on the clk_114
+# domain, clk_sys -> clk_114 and the HDMI clock. It makes the fitter place
+# those paths with margin; timing analysis (quartus_sta) does not see it, so
+# the reported slack is still against the real constraints. Taken as upstream
+# has it, with the SDRAM controller it was tuned for.
+if {[string equal "quartus_fit" $::TimeQuestInfo(nameofexecutable)]} {
+	set_clock_uncertainty -add -setup -from [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] -to [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] 0.4
+	set_clock_uncertainty -add -setup -from [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[1].output_counter|divclk}] -to [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] 0.4
+	set_clock_uncertainty -add -setup -from [get_clocks {pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] -to [get_clocks {pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}] 0.1
+}

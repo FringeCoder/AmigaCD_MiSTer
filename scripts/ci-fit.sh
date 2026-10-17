@@ -35,6 +35,10 @@ status=0
 docker run --rm -v "$PWD":/project -w /project "$IMAGE" \
 	quartus_sh --flow compile "$proj" -c "$proj" > "fit_$seed.log" 2>&1 || status=$?
 tail -40 "fit_$seed.log"
+# What the fit used. A path that slows by a nanosecond with no change to its
+# own source usually means the fitter ran out of something -- DSP blocks most
+# of all, which turns a hard multiplier into ALM logic -- and only this says so.
+cat "output_files/$proj.fit.summary" 2>/dev/null || echo "no fit summary"
 
 rpt="output_files/$proj.sta.rpt"
 slack() {   # the worst of every corner's figure, so no corner hides a failure
@@ -48,6 +52,17 @@ if [ "$status" = 0 ] && [ -n "$setup" ] && [ -n "$hold" ] && [ -s "output_files/
    && awk -v a="$setup" -v b="$hold" 'BEGIN{exit !(a>0 && b>0)}'; then
 	ok=true
 fi
+# Where it failed, when it did. The slack figures above say how much; this
+# says which paths, in the job log itself (scripts/ci-sta-paths.tcl). Seconds
+# against a 40-minute fit, and it only runs when there is something to show.
+if [ "$ok" != true ] && [ -d db ]; then
+	rm -f "paths_$seed.rpt"
+	docker run --rm -v "$PWD":/project -w /project "$IMAGE" \
+		quartus_sta -t scripts/ci-sta-paths.tcl "$proj" 25 "paths_$seed.rpt" > "paths_$seed.log" 2>&1 || true
+	if [ -s "paths_$seed.rpt" ]; then head -1500 "paths_$seed.rpt"
+	else echo "no path report; quartus_sta said:"; tail -30 "paths_$seed.log"; fi
+fi
+
 printf '{"seed": %s, "setup": %s, "hold": %s, "ok": %s, "flow_status": %s}\n' \
 	"$seed" "${setup:-null}" "${hold:-null}" "$ok" "$status" | tee fit.json
 
