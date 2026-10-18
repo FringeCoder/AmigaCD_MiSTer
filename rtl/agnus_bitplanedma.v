@@ -103,6 +103,9 @@ reg          vdiwena;             // vertical display window enable
 reg    [8:0] hdiwstrt;
 reg    [8:0] hdiwstop;
 
+wire [ 2: 0] bplptr_sel;          // bitplane pointer select
+wire [20:16] bplpth_in;
+wire [15: 1] bplptl_in;
 wire         ddfstrt_sel;
 
 wire         bp_fmode0;           // FMODE == 0
@@ -211,76 +214,54 @@ always @ (posedge clk) begin
   end
 end
 
-// The pointer write delay, for the bitplane channel.
+assign bplptr_sel = dma ? plane[2:0] : reg_address_in[4:2];
+
+// high word pointer register bank (implemented using distributed ram)
+assign bplpth_in = dma ? newpt[20:16] : data_in[4:0];
+
+// The pointer write delay. NOT a missing delay on this register -- the scope was
+// established 2026-08-31 and it is much larger than this comment implies.
 //
-// From the inherited TODO file, which has it from Toni Wilen:
+// The behaviour, from the inherited TODO file, which has it from Toni Wilen:
 //
 //     Writing to BPLxPT when exactly next cycle has DMA to matching BPLxDAT:
 //     write goes nowhere. (Same happens with sprites and blitter registers too,
 //     I assume all DMA channels have similar internal 2 cycle pipeline)
 //
-// Upstream e187420 (#262) models it for the bitplane pointers, and that is what
-// is here: a bus write to BPLxPTH/L is held for one cycle and committed in the
-// next cycle without DMA, and dropped if the DMA of the same plane comes first,
-// which writes back the old pointer plus its increment. The pointer banks keep
-// their single write port. Ported by hand -- this file is otherwise this fork's
-// -- by decision, 2026-10-16, over the note that used to stand here.
+// WinUAE models it as a four-slot RGA pipeline, not as a delay on any one
+// register: custom.cpp's rga_pipe[(slot + rga_slot_first_offset) & 3], with
+// write_rga_update() capturing the pointer INTO the pipeline ahead of the access
+// and even modelling what happens when a write collides with a capture ("DMA
+// address pointer conflict causes both old and new address to become old OR
+// new"). A write that lands after the capture is simply not seen by that access,
+// which is the "goes nowhere" the TODO describes.
 //
-// What that note said still holds for everything else: WinUAE models this as a
-// four-slot RGA pipeline (custom.cpp's rga_pipe[], write_rga_update(), and a
-// write colliding with a capture: "DMA address pointer conflict causes both old
-// and new address to become old OR new"), and the TODO says every DMA channel
-// does it. Sprite, blitter, audio and disk pointers are NOT modelled; this is
-// the bitplane channel only. The software that shows it is TLC's PowerTrax
-// demo, which cannot be checked here.
-reg  [ 2: 0] wsel_h, wsel_l;      // bitplane pointer select
-reg  [20:16] wdat_h;
-reg  [15: 1] wdat_l;
-reg          wpend_h, wpend_l;
-
-wire wr_pt = (reg_address_in[8:5]==BPLPTBASE_REG[8:5]);
-
+// Reproducing that here means giving every DMA channel -- bitplane, sprite,
+// blitter, audio, disk -- a pipelined address capture, because the TODO says the
+// same is true of all of them. That is a chipset-wide rearchitecture in the hot
+// path, on a design with 0.117 ns of setup margin, and the software that shows
+// it is the TLC PowerTrax demo, which cannot be checked here. Do not start it as
+// a one-line delay on this register: it would not reproduce the behaviour and
+// would perturb the fetch for nothing.
+//
+// (was: TODO high bitplane pointer probably needs a delay (writing to pointer
+// doesn't seem to take effect next cycle ...))
 always @ (posedge clk) begin
   if (clk7_en) begin
-    if (reset) begin
-      wpend_h <= #1 1'b0;
-      wpend_l <= #1 1'b0;
-    end
-    else begin
-      if (wr_pt && !reg_address_in[1]) begin
-        wpend_h <= #1 1'b1;
-        wsel_h  <= #1 reg_address_in[4:2];
-        wdat_h  <= #1 data_in[4:0];
-      end
-      else if (dma ? (plane[2:0] == wsel_h) : wpend_h)
-        wpend_h <= #1 1'b0;
-
-      if (wr_pt &&  reg_address_in[1]) begin
-        wpend_l <= #1 1'b1;
-        wsel_l  <= #1 reg_address_in[4:2];
-        wdat_l  <= #1 data_in[15:1];
-      end
-      else if (dma ? (plane[2:0] == wsel_l) : wpend_l)
-        wpend_l <= #1 1'b0;
-    end
-  end
-end
-
-// high word pointer register bank (implemented using distributed ram)
-always @ (posedge clk) begin
-  if (clk7_en) begin
-    if (dma || wpend_h) // if bitplane dma cycle or held bus write
-      bplpth[dma ? plane[2:0] : wsel_h] <= #1 dma ? newpt[20:16] : wdat_h;
+    if (dma || ((reg_address_in[8:5]==BPLPTBASE_REG[8:5]) && !reg_address_in[1])) // if bitplane dma cycle or bus write
+      bplpth[bplptr_sel] <= #1 bplpth_in;
   end
 end
 
 assign address_out[20:16] = bplpth[plane[2:0]];
 
 // low word pointer register bank (implemented using distributed ram)
+assign bplptl_in = dma ? newpt[15:1] : data_in[15:1];
+
 always @ (posedge clk) begin
   if (clk7_en) begin
-    if (dma || wpend_l) // if bitplane dma cycle or held bus write
-      bplptl[dma ? plane[2:0] : wsel_l] <= #1 dma ? newpt[15:1] : wdat_l;
+    if (dma || ((reg_address_in[8:5]==BPLPTBASE_REG[8:5]) && reg_address_in[1])) // if bitplane dma cycle or bus write
+      bplptl[bplptr_sel] <= #1 bplptl_in;
   end
 end
 
