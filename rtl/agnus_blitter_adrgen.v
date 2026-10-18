@@ -69,7 +69,20 @@ always @(posedge clk)
   		bltpth[bltptr_sel] <= bltptr_in[20:16];
   end
 
-assign bltpth_out = bltpth[bltptr_sel];		
+// The bank is read at ptrsel, not at the write select. The read value is used
+// in three places, and in each of them the two selects agree:
+//  - address_out, only in a cycle Agnus grants to the blitter. The blitter asks
+//    for the bus only in states A-D, F, LB, L2 and L4, and enaptr there is
+//    dma_ack or enable, both 1 in a granted cycle.
+//  - newptr, written back only when enaptr is 1.
+//  - sign_out, latched only in L1 with enable, where enaptr = enable = 1.
+// Reading at the write select put Agnus's register bus -- the output of its
+// DMA priority mux -- and dma_ack/enable, which are arbitration too, in front
+// of the bank's read port. Every arbitration input (floppy select, beam
+// compares, BPLCON0, the CPU address) then reached sdram_ctrl's sd_addr
+// through address_out, Gary and row_new (docs/seed-lottery.md, family A).
+// rtl/sim/bltrd proves agnus identical to the previous version on every clock.
+assign bltpth_out = bltpth[ptrsel];		
 		
 always @(posedge clk)
   if (clk7_en) begin
@@ -77,7 +90,7 @@ always @(posedge clk)
   		bltptl[bltptr_sel] <= bltptr_in[15:1];
   end
 
-assign bltptl_out = bltptl[bltptr_sel];
+assign bltptl_out = bltptl[ptrsel];
 
 assign bltptr_out = {bltpth_out, bltptl_out};	
 	

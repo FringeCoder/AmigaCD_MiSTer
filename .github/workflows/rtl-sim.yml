@@ -582,6 +582,24 @@ jobs:
           vvp tbbc | tee out_ch.log
           grep -q "RUN: PASS" out_ch.log
 
+      # The blitter pointer bank is read at ptrsel instead of at its write select,
+      # which followed Agnus's register bus and dma_ack -- the DMA priority mux --
+      # and put every arbitration input on the path to sdram_ctrl's sd_addr
+      # (docs/seed-lottery.md, family A). This proves the whole agnus identical
+      # to the previous version (frozen as *_ref.v) on every clock: random
+      # blits, line mode included, against disk, audio, bitplane and sprite
+      # DMA, OCS/ECS and AGA, two seeds each. It fails on zero grants, zero
+      # line-mode grants, zero L3 first-pixel cycles, zero cycles where the two
+      # selects differ, zero slots for any competing DMA, and on any X on a
+      # compared output. Falsified on 2026-10-18: the low word read from the
+      # paired channel, the high word read from channel C on modulo cycles, and
+      # channel A read as B on modulo-only cycles (line-mode L1) each fail it.
+      - name: Blitter pointer read off the DMA mux (tb_bltrd_equiv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/bltrd
+          ./run.sh
+
       # Who owns each DMA slot on a copper-busy line, in every bitplane fetch
       # mode, against Copperline's cycle trace of the same copper list. Added
       # after the Turrican 2 AGA report (copper finishing a split late): a copper
