@@ -16,6 +16,12 @@
 # what-if the plan needs: it shows how far each block's cone is from closing on
 # its own, so cutting one source shows what is left behind it.
 #
+# R.cpu_rdq_to_114 is not a timing family but a structural check, and it must
+# read "none". cpu_rdq's registers equal the RAM return they replace on clk_sys
+# edges only (rtl/cpu_rdq.v), so a clk_114 register that took them would see
+# a different value between those edges. ci-fit.sh fails the seed if it finds
+# a path. S.cpu_rdq_to_cpu is what those registers were added for.
+#
 # Output lines are "<family> <slack|none>", slack the minimum over every
 # operating corner. "none" means the collection was empty -- a pattern that no
 # longer matches anything, which is itself worth seeing.
@@ -60,6 +66,8 @@ set families {
 	{N.a2065_arb_to_ddram {emu|ram2|arbiter|*}             {emu|ram2|*}}
 	{P.ascal_palette      {ascal|pal_*}                    {ascal|*}}
 	{M.ascal              ""                               {ascal|*}}
+	{S.cpu_rdq_to_cpu     {emu|cpu_rdq|*}                  clk:sys}
+	{R.cpu_rdq_to_114     {emu|cpu_rdq|*}                  clk:114}
 	{all_setup            ""                               ""}
 }
 

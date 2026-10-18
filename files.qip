@@ -28,6 +28,7 @@ set_global_assignment -name VERILOG_FILE rtl/minimig.v
 set_global_assignment -name VERILOG_FILE rtl/cpu_wrapper.v
 set_global_assignment -name VERILOG_FILE rtl/cpu_cycles.v
 set_global_assignment -name VERILOG_FILE rtl/memory_router.v
+set_global_assignment -name VERILOG_FILE rtl/cpu_rdq.v
 # Save state framework (phase 1A). ss_state.vh is an include, not a
 # compiled file, so it is not listed here.
 set_global_assignment -name VERILOG_FILE rtl/ss_crc32.v

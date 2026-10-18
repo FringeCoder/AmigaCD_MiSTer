@@ -1354,6 +1354,44 @@ horizontal blanking never see this; mid-line writes and CPU/copper BPL1DAT
 writes do. Fixing it means a real comparator copy instead of the delay line, in
 every mode -- the general form of what c5ffbf9 did narrowly.
 
+## T29 — A bypassed read of SDRAM-forwarded Fast RAM can hand the next miss a stale fill  [SIM] — [OPEN, upstream]
+
+Found 2026-10-18 by `rtl/sim/rdq/tb_cpu_rdq_equiv.sv`, which drives both RAM
+controllers with real CPU-shaped traffic. Not caused by anything here: the same
+code is in Minimig-AGA `0bf2ab1` (`ddram_ctrl.v` states 5/6,
+`cpu_cache_new.v` `CPU_SM_FILLW`), from `26eb46a`.
+
+The path: a CPU read of Fast RAM that `ddram_ctrl` forwards to the SDRAM
+(`is_sdr`: `ram_addr[28:26] == 3'b001` with `[25:24] != 2'b11`, or `3'b011`
+with `sdr_hi`), which the cache does not keep -- `cache_inhibit`, `ramshared`,
+or a data read with the D-cache off. Then:
+
+1. `CPU_SM_FILL1` acks the CPU on the first word and goes to `CPU_SM_FILLW`,
+   which returns to idle as soon as the CPU drops its select.
+2. `sdram_ctrl`'s fast port returns that line in two halves, the second a whole
+   SDRAM slot (~16 clk_114) after the first, so `ddram_ctrl` is still in state
+   6 counting words.
+3. A cache miss started in that gap raises `sdr_read_req`, which state 6 does
+   not look at, and takes the remaining words of the OLD line as its own fill
+   (`cache_fill` is not qualified by which request it answers). The CPU gets a
+   word from the wrong address.
+4. State 6 finishes and goes to 0 with the new request's fill still owed; the
+   cache waits in `CPU_SM_FILL3` for words that never come, and the CPU hangs on
+   its next access.
+
+**Reachability on hardware: not established.** The bench reaches it with a
+CPU that issues its next access one clk_sys cycle after the last, which a
+68020/030 can do; it needs Fast RAM that `memory_router` maps into the forwarded range and
+a bypassed read there, which an MMU cache-inhibited page or D-cache-off code
+produces. Symptom would be a wrong word then a freeze. The bench now holds the
+CPU off while `ddram_ctrl` is in state 6 or 7 (`fwd_busy`), so that it tests
+what it was written for; drop that line to reproduce this.
+
+Fix candidates, neither done: keep `CPU_SM_FILLW` until the line's words are
+all in (as the cached path does), or have state 6 forward `cache_fill` only for
+the request it is serving. Either is a change to upstream's cache protocol and
+belongs upstream first.
+
 ---
 
 ## What is not on this list
