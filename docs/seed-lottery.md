@@ -142,3 +142,24 @@ cpu_rdq targets drifts the same way at each step, which reads as the fitter
 running out of room (83% ALMs before cpu_rdq) rather than as any one path.
 cpu_rdq's own register is the change with a direct cost on C and F, and its
 gain on S has already halved.
+
+### cpu_rdq reverted (1a6aea8e): back to the baseline
+
+Same panel, with the review fixes and SFC/DFC kept:
+
+| family | baseline (04f7c750) | cpu_rdq | + review fixes | reverted |
+|---|---|---|---|---|
+| D sdram data into the CPU | -0.317 (18/20) | (S) +0.079 | (S) -0.007 | -0.198 (18/20) |
+| G ddram data into the CPU | -0.223 (17/20) | +0.933 | +1.240 | -0.063 (15/20) |
+| C.sdram_cache | +0.404 | +0.131 | -0.208 | +0.176 (7/20) |
+| F.ddram_cache | +0.027 | -0.224 | -0.431 | +0.150 (6/20) |
+| H.ddram_ctrl | -0.204 | -0.426 | -0.619 | -0.009 (10/20) |
+| L.ss_ctrl_internal | -0.011 | -0.338 | -0.578 | -0.239 (13/20) |
+| M.ascal | -0.073 | -0.086 | -0.272 | -0.079 (12/20) |
+| A_sys_to_sd_addr | +0.480 | -0.120 | n/a | +0.328 (4/20) |
+| all_setup median | -0.524 | -0.661 | -1.069 | **-0.465** |
+
+0/20 close; best seeds 42 (-0.049) and 28 (-0.054). The revert recovers the
+baseline and a little more, so the review fixes and SFC/DFC cost nothing
+measurable on their own: the drift in the previous panel was cpu_rdq's.
+D and G are the CPU input wall again, as before cpu_rdq.
