@@ -1,5 +1,8 @@
 # The seed lottery, measured
 
+The ledger below lists every timing attempt and its result; check it before
+trying something, and add a row for each new one.
+
 Until 2026-10-17 a build of this core closed timing on one placement seed in
 59 (seed 39, setup +0.005 ns). Every RTL change re-rolled placement, so every
 change needed a fresh sweep and the result was luck. This records what was
@@ -25,6 +28,44 @@ The gate (`ci-fit.sh`) is the slow 100 C corner only, as in upstream
 (`TIMEQUEST_MULTICORNER_ANALYSIS OFF`). The family report takes the minimum
 over every corner, so a seed can close the gate with a family negative at the
 slow -40 C corner -- ascal's polyphase filter, usually.
+
+## Ledger: every attempt, and what it did
+
+Check here before trying something. One row per attempt, kept or not, with
+the panel that judged it. "Median" is the panel's all_setup median on the
+fixed seed list of its time (1-20,39 before the 10-17 sync; 21-38,41,42
+after). Details are in the sections below. Add a row for every attempt,
+including the ones that are reverted.
+
+| # | target | change | commit | result | verdict |
+|---|---|---|---|---|---|
+| 1 | B, K | drive_sounds DDR3 data register; MAX_FANOUT on freeze / peek_scan | 4a57b79b | median -0.854 -> -0.990 | kept (part of the set that led to row 5) |
+| 2 | A (CIA-B) | port B pins from a lookahead register; reset-only config false paths | 3805f67b | -0.990 -> -0.540; chipset family -0.99 -> +0.08 | kept |
+| 3 | M | `MISTER_DISABLE_ADAPTIVE` (no ascal adaptive filter) | -- | -0.526; moved only ascal, freed ~160 ALMs | reverted: the filter is a feature |
+| 4 | B | MAX_FANOUT on sdram_ctrl's CPU activate select | 47090495 | -0.540 -> -0.418 | kept |
+| 5 | B (ss) | ss_ctrl port claim (`port_own`) as a lookahead register | e20bf7c4 | -0.418 -> -0.280, 2/20 close | kept |
+| 6 | D, G | `cpu_rdq`: registered RAM return into the CPU | fb9559cc | -0.524 -> -0.661 (D/G improved, C/F/H/L worse); -1.069 with the review fixes on top | reverted (1a6aea8e): -0.465 |
+| 7 | -- | review fixes + SFC/DFC in the save state | 20dd657c, fa22f9d7 | no measurable cost once cpu_rdq was out | kept (correctness) |
+| 8 | -- | Template_MiSTer sys/ sync (YC #120/#114, audio pins #119) | 1219ec87 | alone: -0.465 -> -0.374; M worse (19/20) | kept |
+| 9 | -- | Flink AGA sprite fine-start fix | f9399d6c | alone: A +0.328 -> -0.024; with row 8: -0.539 | kept (correctness, hardware-confirmed) |
+| 10 | A | a lighter sprite fix | -- | not built: the fix is 5 regs + 5 LUTs per sprite, the minimum for a 0-3 clk delay | rejected; A's drop was placement, not size |
+| 11 | hold | false path a2065 `int2` -> `int2_s1` (2-FF synchroniser) | 279cc64c | removes 1 of 3 hold failures in 60 fits | kept |
+| 12 | hold | false path a2065 `csr*_out` -> `csr_shadow` | -- | not done: 16-bit word without a synchroniser; timing it is what keeps a CSR0 read coherent | rejected |
+| 13 | A | blitter pointer bank read at `ptrsel`, off Agnus's DMA priority mux | e88e57ba | A -0.136 (15/20) -> +0.845 (0/20); median -0.539 -> -0.372 | kept |
+| 14 | L | ss_ctrl restore decisions from registered compares (`pay_eq_*`, `crc_eq`) | da9174e6 | panel pending | -- |
+| 15 | H | ddram_ctrl: the paths inside the controller, not its cache (F) | -- | path reports pending | -- |
+
+Ideas recorded and not done, with the reason:
+- Registering CIA-B's pins plainly. That makes drive select one 7 MHz cycle
+  late, which is not cycle-exact; row 2 did it with a lookahead instead.
+- A timing exception on the CIA timer outputs. They are real single-cycle
+  paths.
+- Moving sdram_ctrl's chip slot later in its 16-state schedule. That is an
+  upstream redesign.
+- Restructuring the restore request (`load_req_rise`) into ss_ctrl's FSM. It
+  is the other source of seed 37's L path, and row 14 leaves it alone. It
+  needs the request's next value from AmigaCD.sv. Try it if row 14 does not
+  close L.
 
 ## What was found
 
