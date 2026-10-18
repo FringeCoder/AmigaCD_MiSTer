@@ -120,3 +120,25 @@ added to the caches' output cones -- the expected cost. A and L moved by more
 than the ~0.3 ns placement noise measured earlier, so this is not only
 re-placement. Unless the next panel says otherwise, the change does not pay
 for itself as it stands.
+
+### Review fixes on top of cpu_rdq (20dd657c): worse again
+
+Same panel. The review fixes (CIA-B reset lookahead, ss_ctrl fast_ena hold,
+save-state refusals and halted restore) are behaviour fixes, small in logic,
+yet the panel moved a long way:
+
+| family | baseline | cpu_rdq | + review fixes |
+|---|---|---|---|
+| S / D+G (CPU input) | -0.317 | +0.079 (6/20) | -0.007 (10/20) |
+| C.sdram_cache | +0.404 | +0.131 | -0.208 (18/20) |
+| F.ddram_cache | +0.027 | -0.224 | -0.431 (19/20) |
+| H.ddram_ctrl | -0.204 | -0.426 | -0.619 (20/20) |
+| L.ss_ctrl_internal | -0.011 | -0.338 | -0.578 (18/20) |
+| M.ascal | -0.073 | -0.086 | -0.272 (19/20) |
+| all_setup | -0.524 | -0.661 | -1.069 |
+
+Best seed 31 at -0.190; 0/20 close. Every family that is not the one
+cpu_rdq targets drifts the same way at each step, which reads as the fitter
+running out of room (83% ALMs before cpu_rdq) rather than as any one path.
+cpu_rdq's own register is the change with a direct cost on C and F, and its
+gain on S has already halved.
