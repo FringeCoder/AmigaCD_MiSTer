@@ -97,3 +97,26 @@ into `ae_pc`, inside one 8.8 ns clk_114 -> clk_sys relationship. It is the
 worst family (D/G) on about half the seeds. The families this document fixed
 stay fixed. Taking that path off is the next piece of work.
 
+
+### cpu_rdq (fb9559cc): the CPU input wall moves, the total does not improve
+
+`rtl/cpu_rdq.v` registers the ram1/ram2 return mux at clk_114 from the ports'
+next-state outputs, taking a level off the cache -> TG68K hop. Same panel
+(seeds 21-38, 41, 42), before -> after:
+
+| family | median before | median after | failing |
+|---|---|---|---|
+| D/G cache data into the CPU | -0.317 / -0.223 | S +0.079, G +0.933 | 18, 17 -> 6 |
+| H.ddram_ctrl | -0.204 | -0.426 | 14 -> 20 |
+| L.ss_ctrl_internal | -0.011 | -0.338 | 11 -> 19 |
+| F.ddram_cache | +0.027 | -0.224 | 7 -> 15 |
+| C.sdram_cache | +0.404 | +0.131 | 1 -> 8 |
+| A_sys_to_sd_addr | +0.480 | -0.120 | 7 -> 14 |
+| all_setup | -0.524 | -0.661 | 20 -> 20 |
+
+0/20 close before and after. The family it was aimed at is fixed (D folds into
+S, which now goes through cpu_rdq). C and F lost what the register's D input
+added to the caches' output cones -- the expected cost. A and L moved by more
+than the ~0.3 ns placement noise measured earlier, so this is not only
+re-placement. Unless the next panel says otherwise, the change does not pay
+for itself as it stands.

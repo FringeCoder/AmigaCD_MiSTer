@@ -84,6 +84,9 @@ assign eclk = shifter;
 // mirrors the always block above branch for branch; rtl/sim/ciab checks it
 // against eclk one clock later, on every clock. The asynchronous reset
 // appears as its level: held in reset, the next value is the reset value.
+// The clock on which reset_n FALLS is not covered here -- it falls after the
+// edge, so this module cannot see it coming. AmigaCD.sv covers it from
+// reset_d's next state (am_eclk_nx).
 wire       shift_now = ce & (clk7_cnt == 2'b01);
 wire [9:0] shifter_rot = {shifter[8:0],shifter[9]};
 assign eclk_n = !reset_n  ? 10'd1 :

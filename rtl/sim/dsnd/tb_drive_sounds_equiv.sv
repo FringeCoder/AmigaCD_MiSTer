@@ -88,7 +88,7 @@ drive_sounds_ref ref_i (
 
 always #4 clk = ~clk;
 
-integer cyc = 0, mism = 0, reads = 0, nonzero = 0, ends = 0, i;
+integer cyc = 0, mism = 0, reads = 0, nonzero = 0, ends = 0, resets = 0, mid_rst = 0, i;
 
 always @(negedge clk) if (!rst) begin
 	cyc = cyc + 1;
@@ -119,14 +119,24 @@ initial begin
 		if ($urandom % 400000 == 0) drive_snd[4] = ~drive_snd[4];
 		// volume, off included
 		if ($urandom % 300000 == 0) volume = $urandom;
+		// reset mid-run, now and then on the DUT's extra read cycle (state 6),
+		// where it skips the line/smp write the old module made on the ready
+		// clock -- invisible at the outputs, which is what this checks
+		if ($urandom % 100000 == 0 || (dut.p == 3'd6 && $urandom % 40 == 0)) begin
+			rst = 1;
+			if (dut.p == 3'd6) mid_rst = mid_rst + 1;
+			@(posedge clk); #1 rst = 0;
+			resets = resets + 1;
+		end
 	end
 	repeat (10) @(posedge clk);
-	$display("cycles %0d, reads %0d, nonzero samples %0d, end markers %0d, mismatches %0d",
-		cyc, reads, nonzero, ends, mism);
+	$display("cycles %0d, reads %0d, nonzero samples %0d, end markers %0d, resets %0d (%0d on the extra read cycle), mismatches %0d",
+		cyc, reads, nonzero, ends, resets, mid_rst, mism);
+	if (mid_rst == 0) $display("FAIL: no reset on the extra read cycle");
 	if (reads == 0)   $display("FAIL: no DDR3 read");
 	if (nonzero == 0) $display("FAIL: the mixer never produced a sample");
 	if (ends == 0)    $display("FAIL: no end marker met");
-	if (mism == 0 && reads > 0 && nonzero > 0 && ends > 0) $display("RUN: PASS");
+	if (mism == 0 && reads > 0 && nonzero > 0 && ends > 0 && mid_rst > 0) $display("RUN: PASS");
 	else $display("RUN: FAIL");
 	$finish;
 end

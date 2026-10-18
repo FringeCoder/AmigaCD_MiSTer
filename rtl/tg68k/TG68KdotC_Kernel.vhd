@@ -177,6 +177,15 @@ entity TG68KdotC_Kernel is
 		ss_trap_active			: out std_logic;
 		ss_sr						: out std_logic_vector(15 downto 0);
 		ss_usp					: out std_logic_vector(31 downto 0);
+		-- Sticky since reset: the master stack has been in use (the M bit set,
+		-- or MSP written by MOVEC). The state vector carries neither MSP nor
+		-- ISP, so AmigaCD.sv refuses a save once this is up. AmigaOS never sets
+		-- M, so on an ordinary machine it never rises.
+		ss_mstack_used			: out std_logic;
+		-- Halted on a double address error (ae_halt): the clock enable is off
+		-- until reset, so the CPU never reaches ss_at_boundary. AmigaCD.sv lets
+		-- a RESTORE park a halted CPU, and the ss_resume re-seed clears the halt.
+		ss_halted				: out std_logic;
 
 		-- Save state restore. Write side of the same architectural registers,
 		-- driven only while the savestate controller has the CPU frozen. Index
@@ -410,6 +419,7 @@ architecture logic of TG68KdotC_Kernel is
 	signal preSVmode			: std_logic;
 	signal preMmode			: std_logic;
 	signal a7_live				: std_logic_vector(31 downto 0);
+	signal mstack_used			: std_logic;
 	signal movec_src			: bit;
 	signal Suppress_Base		: bit;
 	signal set_Suppress_Base: bit;
@@ -881,6 +891,8 @@ ss_trap_vector <= trap_vector(9 downto 0);
 ss_trap_active <= '1' WHEN micro_state=trap0 ELSE '0';
 ss_sr       <= FlagsSR & Flags;
 ss_usp      <= USP;
+ss_mstack_used <= mstack_used;
+ss_halted   <= ae_halt;
 
 -----------------------------------------------------------------------------
 -- Write Reg
@@ -1829,6 +1841,14 @@ PROCESS (clk, IPL, setstate, addrvalue, state, exec_write_back, set_direct_data,
 				Suppress_Base   <= '0';
 				memmask         <= "111111";
 				exec_write_back <= '0';
+				-- The address error sequencer, as reset clears it. ae_halt above
+				-- all: a restore taken out of a halted CPU would otherwise come
+				-- back still halted.
+				ae_pend         <= '0';
+				ae_block        <= '0';
+				ae_halt         <= '0';
+				trap_ae         <= '0';
+				vec_load        <= '0';
 			END IF;
 		END IF;	
 	
@@ -4852,6 +4872,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		CAAR <= (others => '0');
 		MSP <= (others => '0');
 		ISP <= (others => '0');
+		mstack_used <= '0';
 		cclr <= (others => '0');
 		CACR_DC <= '1';
 		CACR_DC_owned <= '0';
@@ -4898,6 +4919,12 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		    MSP <= reg_QA;
 		  end if;
 		end if;
+	  end if;
+	  -- Not under the restore branches: a restore does not make the master
+	  -- stack unused again (see ss_mstack_used). Reset does.
+	  if Reset = '0' and (preMmode = '1' or
+	     (clkena_lw = '1' and exec(movec_wr) = '1' and brief(11 downto 0) = X"803")) then
+		mstack_used <= '1';
 	  end if;
 	end if;
 

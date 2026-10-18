@@ -26,13 +26,18 @@ module tb_ciab_lookahead_equiv;
 reg clk = 0;
 always #2 clk = ~clk;
 
-// amiga_clk timebase, as AmigaCD.sv wires the Amiga's own copy.
-reg        ce = 1, reset_n = 0;
+// amiga_clk timebase, as AmigaCD.sv wires the Amiga's own copy: its reset is
+// ~reset_d, a register, so it asserts and releases just after an edge, and
+// the eclk_n ciab sees covers that edge from the register's next state
+// (am_eclk_nx). reset_n_next is that next state.
+reg        ce = 1, reset_n = 0, reset_n_next = 0;
+always @(posedge clk) reset_n <= reset_n_next;
 wire       clk7_en, clk7n_en, c1, c3, cck;
-wire [9:0] eclk, eclk_n;
+wire [9:0] eclk, eclk_n_am;
 amiga_clk tbase (
 	.clk_28(clk), .clk7_en(clk7_en), .clk7n_en(clk7n_en), .c1(c1), .c3(c3),
-	.cck(cck), .eclk(eclk), .eclk_n(eclk_n), .ce(ce), .reset_n(reset_n));
+	.cck(cck), .eclk(eclk), .eclk_n(eclk_n_am), .ce(ce), .reset_n(reset_n));
+wire [9:0] eclk_n = !reset_n_next ? 10'd1 : eclk_n_am;
 
 reg        aen = 0, rd = 0, wr = 0, reset = 1, tick = 0, flag = 1, ss_ld = 0;
 reg  [3:0] rs = 0;
@@ -59,7 +64,7 @@ ciab_ref ref_i (
 	.porta_in(porta_in), .porta_out(pa_r),
 	.ss_state(ss_r), .ss_ld(ss_ld), .ss_ld_data(ss_ld_data), .portb_out(pb_r));
 
-integer cyc = 0, mism = 0, tmr_changes = 0, prb_changes = 0, loads = 0, i, k;
+integer cyc = 0, mism = 0, tmr_changes = 0, prb_changes = 0, loads = 0, amrst = 0, i, k;
 reg [7:0] pb_q;
 
 always @(negedge clk) begin
@@ -99,7 +104,7 @@ endfunction
 
 initial begin
 	repeat (5) @(posedge clk);
-	#1 reset_n = 1;
+	#1 reset_n_next = 1;
 	repeat (40) @(posedge clk);
 	#1 reset = 0;
 	for (i = 0; i < 2000000; i = i + 1) begin
@@ -131,16 +136,20 @@ initial begin
 		end
 		if ($urandom % 50000 == 0) reset = 1;
 		else if (reset && $urandom % 50 == 0) reset = 0;
-		// amiga_clk's reset is asynchronous; pulse it mid-run, since eclk_n has
-		// to model it as a level
-		if ($urandom % 100000 == 0) begin reset_n = 0; @(posedge clk); #1 reset_n = 1; end
+		// amiga_clk's reset is asynchronous; pulse it mid-run, rarely in the
+		// first half and often in the second, with PBON/pulse mode as above, so
+		// the assertion edge lands on a timer-driven pin (it did not, at 1 in
+		// 100000, and missed a real difference)
+		if ($urandom % ((i < 1000000) ? 100000 : 300) == 0) begin
+			reset_n_next = 0; @(posedge clk); #1 reset_n_next = 1; amrst = amrst + 1;
+		end
 		// the freeze: hold the timebase now and then
 		if ($urandom % 5000 == 0) ce = 0;
 		else if (!ce && $urandom % 200 == 0) ce = 1;
 	end
 	repeat (10) @(posedge clk);
-	$display("cycles %0d, timer-driven port B changes %0d, other port B changes %0d, ss loads %0d, mismatches %0d",
-		cyc, tmr_changes, prb_changes, loads, mism);
+	$display("cycles %0d, timer-driven port B changes %0d, other port B changes %0d, ss loads %0d, amiga_clk resets %0d, mismatches %0d",
+		cyc, tmr_changes, prb_changes, loads, amrst, mism);
 	if (tmr_changes == 0) $display("FAIL: a timer never drove port B");
 	if (prb_changes == 0) $display("FAIL: port B never changed otherwise");
 	if (loads == 0)       $display("FAIL: no save-state load");

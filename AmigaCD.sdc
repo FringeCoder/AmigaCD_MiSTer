@@ -169,9 +169,18 @@ set_false_path -from {emu|sdram_big*}
 set_false_path -from {emu|sdram_dual*}
 
 set_false_path -from {emu|minimig|USERIO1|cpu_config*}
-# chipset_config and memory_config (all but bit 6) are latched only while reset
-# is asserted -- userio.v, "configuration changes only while reset is active" --
-# the same reason cpu_config above is a false path. Measured as a source into
+# chipset_config and memory_config (all but bit 6) are latched only while
+# minimig's reset is asserted -- userio.v, "configuration changes only while
+# reset is active" -- the same reason cpu_config above is a false path. Note
+# what that reset includes: the 68k's own RESET instruction (minimig.v,
+# reset = sys_reset | ~_cpu_reset_in), which does not stop the CPU, and the OSD
+# writes the pending values (t_*) while the machine runs. So a change the OSD
+# made is taken on the next reset of any kind. Everything that reads these
+# bits is itself held in reset or idle across that pulse (Agnus, Denise,
+# Paula, the CIAs, Akiko, autoconfig, no chip request on the SDRAM address);
+# the only live readers are cosmetic (ce_pix/res, cdda_gain). An OSD write
+# landing in the last clock or two of a reset pulse is the one unchecked edge,
+# and it is exactly upstream's exposure for cpu_config. Measured as a source into
 # sdram_ctrl sd_addr at -0.64 ns on seed 8 of the 68030 netlist, through the
 # chipset decodes (a1k / ecs / aga) and the memory map. memory_config[6] is
 # copied every clock (userio.v, outside the reset branch) and stays timed, as

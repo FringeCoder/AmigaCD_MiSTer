@@ -70,6 +70,8 @@ module TG68KdotC_Kernel
 	output            ss_trap_active,
 	output     [15:0] ss_sr,
 	output     [31:0] ss_usp,
+	output            ss_mstack_used,
+	output            ss_halted,
 
 	input       [3:0] ss_wr_index,
 	input      [31:0] ss_wr_data,
@@ -122,6 +124,8 @@ module TG68KdotC_Kernel
 	assign ss_trap_active = 1'b0;
 	assign ss_sr          = 16'd0;
 	assign ss_usp         = 32'd0;
+	assign ss_mstack_used = 1'b0;
+	assign ss_halted      = 1'b0;
 
 endmodule
 

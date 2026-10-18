@@ -78,6 +78,8 @@ module cpu_wrapper
 	output            ss_bus_settled,
 	output     [15:0] ss_sr,
 	output     [31:0] ss_usp,
+	output            ss_mstack_used,  // TG68K: master stack used since reset
+	output            ss_halted,       // TG68K: halted on a double address error
 	output     [31:0] ss_vbr,
 	output      [3:0] ss_cacr,
 
@@ -414,6 +416,8 @@ cpu_inst_p
   .ss_trap_active(ss_trap_active),
   .ss_sr(ss_sr),
   .ss_usp(ss_usp),
+  .ss_mstack_used(ss_mstack_used),
+  .ss_halted(ss_halted),
 
   // Restore path -- TG68K only. fx68k has no equivalent write port and is
   // locked out of the savestate path in AmigaCD.sv.
@@ -534,7 +538,10 @@ wire stock_speed   = cpucfg[2] & (cpucfg[1:0] == 2'b11);
 reg ss_parked;
 always @(posedge clk) begin
 	if (~reset | ~ss_arm) ss_parked <= 1'b0;
-	else if (ss_at_boundary) ss_parked <= 1'b1;
+	// A CPU halted on a double address error never reaches a boundary; its
+	// clock is off until reset, so it is as parked as it will ever be. The
+	// latch is what keeps it held once the restore's re-seed clears the halt.
+	else if (ss_at_boundary | ss_halted) ss_parked <= 1'b1;
 end
 wire ss_cpu_hold   = ss_arm & (ss_at_boundary | ss_parked);
 

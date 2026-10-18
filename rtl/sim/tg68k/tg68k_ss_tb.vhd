@@ -179,6 +179,8 @@ architecture sim of tg68k_ss_tb is
 	signal ss_vbr_wr   : std_logic := '0';
 	signal ss_cacr_wr  : std_logic := '0';
 	signal ss_resume   : std_logic := '0';
+	signal ss_mstack_used : std_logic;
+	signal ss_halted      : std_logic;
 
 	-- Testbench back door into the memory model, so a scan iteration can undo
 	-- whatever the previous one's runaway CPU scribbled.
@@ -235,6 +237,8 @@ begin
 			ss_exe_pc      => ss_exe_pc,
 			ss_sr          => ss_sr,
 			ss_usp         => ss_usp,
+			ss_mstack_used => ss_mstack_used,
+			ss_halted      => ss_halted,
 			ss_wr_index    => ss_wr_index,
 			ss_wr_data     => ss_wr_data,
 			ss_wr_en       => ss_wr_en,
@@ -516,6 +520,35 @@ begin
 					exit;
 				end if;
 			end loop;
+		end procedure;
+
+		-- Write one word of memory through the back door, by byte address.
+		procedure poke_w(byteaddr : integer; w : std_logic_vector(15 downto 0)) is
+		begin
+			poke_idx  <= byteaddr / 2;
+			poke_data <= w;
+			poke_en   <= '1';
+			wait until rising_edge(clk);
+			poke_en   <= '0';
+		end procedure;
+
+		-- Hold reset, put the image back, point the reset PC at $780 and leave
+		-- the caller to poke a program there, then release with boot_go.
+		procedure boot_prep is
+		begin
+			nReset    <= '0';
+			clkena_in <= '1';
+			ss_resume <= '0';
+			step(6);
+			reload_image;
+			poke_w(16#04#, X"0000");
+			poke_w(16#06#, X"0780");
+		end procedure;
+
+		procedure boot_go is
+		begin
+			step(4);
+			nReset <= '1';
 		end procedure;
 
 		-- One complete experiment: boot, run into the main loop, freeze
@@ -906,6 +939,76 @@ begin
 			end loop;
 		end if;
 
+		-----------------------------------------------------------------------
+		note("PHASE 5 -- the master stack flag, and a restore out of a halted CPU");
+		-- ss_mstack_used is what AmigaCD.sv refuses a save on: MSP and ISP are
+		-- not in the state vector. It must stay low on a program that does not
+		-- touch the master stack, rise on MOVEC to MSP and on setting M, and
+		-- clear on reset.
+		nReset    <= '0';
+		clkena_in <= '1';
+		step(6);
+		reload_image;
+		step(4);
+		nReset <= '1';
+		wait_fetch_at(ADDR_MAIN, 400, f_opc, ok);
+		step(2000);
+		check(ok and ss_mstack_used = '0',
+		      "the test program does not raise the master stack flag");
+
+		boot_prep;
+		poke_w(16#780#, X"4E7B");		-- movec d0,msp
+		poke_w(16#782#, X"0803");
+		poke_w(16#784#, X"60FE");		-- bra.s *
+		boot_go;
+		step(300);
+		check(ss_mstack_used = '1', "MOVEC to MSP raises the master stack flag");
+
+		boot_prep;
+		poke_w(16#780#, X"007C");		-- ori.w #$1000,sr (M)
+		poke_w(16#782#, X"1000");
+		poke_w(16#784#, X"60FE");		-- bra.s *
+		boot_go;
+		step(300);
+		check(ss_mstack_used = '1', "setting M raises the master stack flag");
+		nReset <= '0';
+		step(4);
+		check(ss_mstack_used = '0', "reset clears the master stack flag");
+
+		-- A double address error halts the 68020 until reset: JMP to an odd
+		-- address, with the address error vector odd as well. A restore must
+		-- still bring the machine back -- it is the way out of a halted
+		-- machine short of a reset -- so the ss_resume re-seed clears the halt.
+		boot_prep;
+		poke_w(16#0C#, X"0000");		-- vector 3, address error -> $0781
+		poke_w(16#0E#, X"0781");
+		poke_w(16#780#, X"4EF9");		-- jmp $0901.l
+		poke_w(16#782#, X"0000");
+		poke_w(16#784#, X"0901");
+		boot_go;
+		step(400);
+		check(ss_halted = '1', "a double address error halts the CPU");
+		bcount := 0;
+		for i in 1 to 200 loop
+			wait until rising_edge(clk);
+			if clkena_in = '1' and busstate /= "01" then bcount := bcount + 1; end if;
+		end loop;
+		check(bcount = 0, "the halted CPU makes no bus cycles");
+
+		clkena_in <= '0';
+		step(4);
+		ss_write_regs;
+		ss_resume <= '1';
+		wait until rising_edge(clk);
+		ss_resume <= '0';
+		step(2);
+		clkena_in <= '1';
+		check(ss_halted = '0', "the restore re-seed clears the halt");
+		wait_fetch_at(ADDR_RESTORED, 400, f_opc, ok);
+		step(800);
+		check(ok and f_opc = OPC_RESTORED and meml(RES_D3) = EXP_D3 and
+		      meml(RES_A2) = EXP_A2 and meml(RES_TAG) = EXP_TAG,
+		      "a restore out of the halted CPU runs the restored program");
 
 		if errors = 0 then
 			note("RUN: PASS");

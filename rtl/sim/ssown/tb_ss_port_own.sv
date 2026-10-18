@@ -258,6 +258,15 @@ reg fz_q = 0, sc_q = 0, sb_q = 0, qt_q = 0, pt_q = 0;
 // SDRAM port stalled (so a peek scan times out). Without them neither timeout
 // is reached and the logic behind each goes untested.
 reg busy_phase = 0, stall_phase = 0;
+// Phase B (after the main loop): fast_ena moves on every clock, transfers
+// included, the way an OSD ApplyConfiguration can move it under a running
+// save. ss_ctrl now holds it for a whole transfer and the frozen copy does
+// not, so the two are not compared there; instead the payload length must not
+// change while a transfer is in progress.
+reg phase_b = 0;
+integer len_bad = 0, len_moves = 0, b_xfers = 0;
+reg [23:0] cw_q = 0;
+reg        busy_q = 0;
 
 always @(negedge clk) begin
 	cyc = cyc + 1;
@@ -268,11 +277,18 @@ always @(negedge clk) begin
 	if (r_peek_timeout & ~pt_q)        ptimeouts = ptimeouts + 1;
 	fz_q = ref_i.freeze; sc_q = r_peek_scan; sb_q = r_save_busy;
 	qt_q = ref_i.quiesce.timeout; pt_q = r_peek_timeout;
-	if (outs_d !== outs_r) begin
+	if (phase_b) begin
+		if (dut.state != 0 && busy_q && dut.core_words !== cw_q) len_bad = len_bad + 1;
+		if (dut.state != 0 && !busy_q) b_xfers = b_xfers + 1;
+		if (dut.state != 0 && fast_ena !== dut.fast_ena_q) len_moves = len_moves + 1;
+		busy_q = (dut.state != 0);
+		cw_q   = dut.core_words;
+	end
+	else if (outs_d !== outs_r) begin
 		if (mism < 10) $display("MISMATCH cyc %0d: an output differs from ss_ctrl_ref", cyc);
 		mism = mism + 1;
 	end
-	if (d_port_own !== (ref_i.freeze | r_peek_scan)) begin
+	if (!phase_b && d_port_own !== (ref_i.freeze | r_peek_scan)) begin
 		if (own_bad < 10) $display("PORT_OWN cyc %0d: port_own %b, freeze|peek_scan %b", cyc, d_port_own, ref_i.freeze | r_peek_scan);
 		own_bad = own_bad + 1;
 	end
@@ -297,7 +313,10 @@ initial begin
 		audio_busy = ($urandom % 8 == 0);
 		cpu_boundary = ($urandom % 4 != 0);
 		frame_tick = ($urandom % 400 == 0);
-		fast_ena   = ($urandom % 2);
+		// only between transfers, and never on a clock a request is made, so
+		// that ss_ctrl's held copy and the frozen copy's live one agree
+		if (dut.state == 0 && !save_req && !load_req && !peek_req && $urandom % 50 == 0)
+			fast_ena = ~fast_ena;
 		sd_ready   = !stall_phase && ($urandom % 3 == 0);
 		sd_rd      = $urandom;
 		ddr_waitrequest   = ($urandom % 3 == 0);
@@ -311,14 +330,35 @@ initial begin
 		if ($urandom % 200000 == 0) begin rst_n = 0; @(posedge clk); #1 rst_n = 1; end
 	end
 	repeat (10) @(posedge clk);
+	#1 phase_b = 1;
+	busy_phase = 0; stall_phase = 0;
+	for (i = 0; i < 300000; i = i + 1) begin
+		@(posedge clk); #1;
+		save_req  = ($urandom % 3000 == 0);
+		load_req  = ($urandom % 3000 == 0);
+		blit_busy = 0; disk_busy = 0; audio_busy = 0;
+		cpu_boundary = 1;
+		frame_tick = ($urandom % 400 == 0);
+		sd_ready  = ($urandom % 3 == 0);
+		ddr_waitrequest   = ($urandom % 3 == 0);
+		ddr_readdatavalid = ($urandom % 2 == 0);
+		ddr_readdata      = {$urandom, $urandom};
+		replay_done = ($urandom % 50 == 0);
+		fast_ena  = ($urandom % 2);
+	end
+	repeat (10) @(posedge clk);
 	$display("cycles %0d, freezes %0d, peek scans %0d, saves begun %0d, freeze timeouts %0d, peek timeouts %0d, output mismatches %0d, port_own mismatches %0d",
 		cyc, freezes, scans, saves, qtimeouts, ptimeouts, mism, own_bad);
+	$display("phase B: transfers %0d, clocks fast_ena differed from the held copy mid-transfer %0d, payload length changes mid-transfer %0d",
+		b_xfers, len_moves, len_bad);
+	if (b_xfers == 0 || len_moves == 0) $display("FAIL: phase B never moved fast_ena under a transfer");
 	if (freezes == 0) $display("FAIL: never froze");
 	if (scans == 0)   $display("FAIL: never scanned for a peek");
 	if (saves == 0)   $display("FAIL: never began a save");
 	if (qtimeouts == 0) $display("FAIL: the freeze never timed out");
 	if (ptimeouts == 0) $display("FAIL: a peek scan never timed out");
-	if (mism == 0 && own_bad == 0 && freezes > 0 && scans > 0 && saves > 0 && qtimeouts > 0 && ptimeouts > 0) $display("RUN: PASS");
+	if (mism == 0 && own_bad == 0 && len_bad == 0 && b_xfers > 0 && len_moves > 0 &&
+	    freezes > 0 && scans > 0 && saves > 0 && qtimeouts > 0 && ptimeouts > 0) $display("RUN: PASS");
 	else $display("RUN: FAIL");
 	$finish;
 end

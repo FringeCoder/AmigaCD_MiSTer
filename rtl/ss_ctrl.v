@@ -478,12 +478,17 @@ localparam [23:0] FAST_WORDS = FAST_BEATS * 2;
 // (or the reverse) fails the header's core_words check as FAIL_LENGTH rather
 // than being read with every section after chip RAM displaced.
 //
-// fast_ena is sampled continuously rather than latched at the start of a
-// transfer. Changing the memory configuration resets the Amiga, which aborts
-// anything in flight, so there is no window in which it can move under a
-// transfer that has already committed to a length.
-wire [23:0] core_words   = CORE_BASE_W[23:0] + (fast_ena ? FAST_WORDS : 24'd0);
-wire [23:0] fast_present = fast_ena ? FAST_BEATS : 24'd0;
+// fast_ena is latched while idle and held for the whole of a transfer. It
+// used to be sampled continuously, on the argument that changing the memory
+// configuration resets the Amiga and so aborts anything in flight -- but this
+// module is reset by reset_d, not by minimig's reset, and the OSD's
+// ApplyConfiguration halts the CPU and writes the new config without touching
+// reset_d. A save running at that moment would have changed length part-way
+// through (found 2026-10-18). Held, it finishes with the length it started
+// with, consistent in its header and its sections.
+reg fast_ena_q;   // loaded below, after state is declared
+wire [23:0] core_words   = CORE_BASE_W[23:0] + (fast_ena_q ? FAST_WORDS : 24'd0);
+wire [23:0] fast_present = fast_ena_q ? FAST_BEATS : 24'd0;
 
 localparam SS_MAGIC   = 32'h53534341;
 // 1.1: the colour table section was added between the shadow and chip RAM. A
@@ -1012,6 +1017,7 @@ wire word_busy = crc_busy || pending_valid || ddr_write;
 // ---------------------------------------------------------------- writer
 
 reg [5:0]  state;
+always @(posedge clk) if (state == S_IDLE) fast_ena_q <= fast_ena;   // see core_words
 reg [23:0] word_idx;      // 32-bit word index within the window
 reg [31:0] pending_word;
 reg        pending_valid;
@@ -1881,7 +1887,7 @@ always @(posedge clk) begin
 						chip_addr <= SLOW_BASE;
 						state     <= S_SAVE_FLUSH;
 					end
-					else if (fast_ena) begin
+					else if (fast_ena_q) begin
 						fast_idx <= 24'd0;
 						state    <= S_FAST_RD;
 					end
@@ -2009,7 +2015,7 @@ always @(posedge clk) begin
 						pair_count <= 24'd0;
 						state      <= S_CHIP_ISSUE;
 					end
-					else if (fast_ena) begin
+					else if (fast_ena_q) begin
 						fast_idx <= 24'd0;
 						state    <= S_FAST_RD;
 					end
@@ -2457,7 +2463,7 @@ always @(posedge clk) begin
 					chip_addr <= SLOW_BASE;
 					state     <= S_L_CH_FETCH;
 				end
-				else if (fast_ena) begin
+				else if (fast_ena_q) begin
 					fast_idx  <= 24'd0;
 					fast_half <= 1'b0;
 					state     <= S_L_FA_FETCH;
@@ -2540,7 +2546,7 @@ always @(posedge clk) begin
 			// CORE_BASE_W, not CORE_WORDS: the fast RAM section sits after
 			// this one and is not written through ss_dma at all.
 			if (pay_idx == CORE_BASE_W[23:0]) begin
-				if (fast_ena) begin
+				if (fast_ena_q) begin
 					fast_idx  <= 24'd0;
 					fast_half <= 1'b0;
 					state     <= S_L_FA_FETCH;

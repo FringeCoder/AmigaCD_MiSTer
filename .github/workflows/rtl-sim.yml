@@ -346,6 +346,13 @@ jobs:
       # Falsified on 2026-10-17: port_own from the current freeze, from the
       # current peek_scan, a peek-scan release forced high, and the freeze
       # granted after a timeout each fail it.
+      #
+      # Its last 300k clocks are a second check. ss_ctrl now holds fast_ena for
+      # the whole of a transfer (an OSD ApplyConfiguration can change the memory
+      # config under a running save without resetting ss_ctrl), so there it
+      # moves fast_ena on every clock and requires the payload length not to
+      # change mid-transfer. Falsified on 2026-10-18: following fast_ena live
+      # fails it ~100k times.
       - name: Save-state port claim register matches freeze | peek_scan (tb_ss_port_own.sv)
         run: |
           set -euo pipefail
@@ -365,7 +372,11 @@ jobs:
       # resets, amiga_clk's async reset, the freeze's ce, and save-state loads.
       # Falsified on 2026-10-17: stale eclk, a stale OUTMODE, a stale PRB, a
       # stale cascade select, a stale zero test and a wrong eclk shift condition
-      # each fail it.
+      # each fail it. On 2026-10-18 a review found the clock amiga_clk's reset
+      # asserts on was not exact (its eclk_n cannot see an asynchronous reset
+      # coming; AmigaCD.sv now covers it from reset_d's next state). The bench
+      # had missed it at one reset in 100000 clocks; its second half now resets
+      # every ~300, and without the fix fails 3 times in 3439 resets.
       - name: CIA-B port B lookahead matches its previous version (tb_ciab_lookahead_equiv.sv)
         run: |
           set -euo pipefail
@@ -796,6 +807,13 @@ jobs:
       # CPU comes back at the restored PC. Without ss_resume only a fifth of
       # those freeze points survive, which is the bug this covers; the run
       # prints the per-freeze-point map either way.
+      #
+      # PHASE 5 covers two refusals added 2026-10-18 from hand-poked programs:
+      # the master stack flag AmigaCD.sv refuses a save on (low on the test
+      # program, raised by MOVEC to MSP and by setting M, cleared by reset), and
+      # a restore out of a CPU halted on a double address error, which used to
+      # time out every time. Falsified: dropping either flag trigger, or the
+      # halt clear from the ss_resume re-seed, fails the check that names it.
       #
       # Runs from the repo root: the testbench opens its program image by a
       # path relative to the working directory.
