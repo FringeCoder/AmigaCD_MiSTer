@@ -90,9 +90,11 @@ foreach_in_collection oc [get_available_operating_conditions] {
 # The paths behind a number. A family's slack says how far it is from closing;
 # restructuring it needs its endpoints and the logic between, and the
 # 25-row worst-path report only ever shows whichever family is worst. So for
-# the families named here, the ten worst paths each, at the slow 100 C corner
+# the families named here -- every one that still fails on some seed -- the
+# ten worst paths each, at the slow 100 C corner
 # the gate uses, with every node on the data path.
-set detail_families {A_sys_to_sd_addr A.AGNUS A.USERIO A.CIAB}
+set detail_families {A_sys_to_sd_addr A.AGNUS A.USERIO A.CIAB L.ss_ctrl_internal H.ddram_ctrl F.ddram_cache
+	D.sdram_dat_to_cpu G.ddram_dat_to_cpu C.sdram_cache M.ascal}
 if {$detail ne ""} {
 	file delete -force $detail
 	foreach_in_collection oc [get_available_operating_conditions] {

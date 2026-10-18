@@ -99,7 +99,7 @@ jobs:
 
       # The reports are what a timing failure is read from, so they travel
       # with the bitstream even when the fit fails. family_paths lists the ten
-      # worst paths of each sd_addr family (scripts/ci-sta-families.tcl), which
+      # worst paths of each failing family (scripts/ci-sta-families.tcl), which
       # is what restructuring one needs and the 25-row report never shows.
       - name: Upload
         if: always()
