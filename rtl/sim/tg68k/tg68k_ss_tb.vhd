@@ -181,6 +181,8 @@ architecture sim of tg68k_ss_tb is
 	signal ss_resume   : std_logic := '0';
 	signal ss_mstack_used : std_logic;
 	signal ss_halted      : std_logic;
+	signal ss_sfc         : std_logic_vector(2 downto 0);
+	signal ss_dfc         : std_logic_vector(2 downto 0);
 
 	-- Testbench back door into the memory model, so a scan iteration can undo
 	-- whatever the previous one's runaway CPU scribbled.
@@ -239,6 +241,8 @@ begin
 			ss_usp         => ss_usp,
 			ss_mstack_used => ss_mstack_used,
 			ss_halted      => ss_halted,
+			ss_sfc         => ss_sfc,
+			ss_dfc         => ss_dfc,
 			ss_wr_index    => ss_wr_index,
 			ss_wr_data     => ss_wr_data,
 			ss_wr_en       => ss_wr_en,
@@ -1009,6 +1013,34 @@ begin
 		check(ok and f_opc = OPC_RESTORED and meml(RES_D3) = EXP_D3 and
 		      meml(RES_A2) = EXP_A2 and meml(RES_TAG) = EXP_TAG,
 		      "a restore out of the halted CPU runs the restored program");
+		-----------------------------------------------------------------------
+		note("PHASE 6 -- SFC and DFC in the state vector");
+		-- MOVES takes its alternate-space function code from these; before
+		-- 2026-10-18 the vector did not carry them, so a restore left the
+		-- running machine's values in place. Capture is the ss_sfc/ss_dfc
+		-- export; restore rides on the CACR strobe, bits 6:4 and 9:7.
+		boot_prep;
+		poke_w(16#780#, X"7005");		-- moveq #5,d0
+		poke_w(16#782#, X"4E7B");		-- movec d0,sfc
+		poke_w(16#784#, X"0000");
+		poke_w(16#786#, X"7003");		-- moveq #3,d0
+		poke_w(16#788#, X"4E7B");		-- movec d0,dfc
+		poke_w(16#78A#, X"0001");
+		poke_w(16#78C#, X"60FE");		-- bra.s *
+		boot_go;
+		step(400);
+		check(ss_sfc = "101" and ss_dfc = "011",
+		      "MOVEC to SFC/DFC shows on the capture export");
+		clkena_in <= '0';
+		step(4);
+		ss_wr_data <= X"00000" & "00" & "110" & "010" & "0001";	-- DFC 6, SFC 2, CACR 1
+		ss_cacr_wr <= '1';
+		wait until rising_edge(clk);
+		ss_cacr_wr <= '0';
+		step(2);
+		check(ss_sfc = "010" and ss_dfc = "110",
+		      "the restore's CACR write puts SFC and DFC back");
+		clkena_in <= '1';
 
 		if errors = 0 then
 			note("RUN: PASS");

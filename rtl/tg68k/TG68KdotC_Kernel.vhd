@@ -186,6 +186,12 @@ entity TG68KdotC_Kernel is
 		-- until reset, so the CPU never reaches ss_at_boundary. AmigaCD.sv lets
 		-- a RESTORE park a halted CPU, and the ss_resume re-seed clears the halt.
 		ss_halted				: out std_logic;
+		-- SFC and DFC (68010+), the function codes MOVES uses for its
+		-- alternate-space access. In the state vector since 2026-10-18; the
+		-- restore writes them with CACR, from ss_wr_data(6 downto 4) and
+		-- ss_wr_data(9 downto 7).
+		ss_sfc					: out std_logic_vector(2 downto 0);
+		ss_dfc					: out std_logic_vector(2 downto 0);
 
 		-- Save state restore. Write side of the same architectural registers,
 		-- driven only while the savestate controller has the CPU frozen. Index
@@ -893,6 +899,8 @@ ss_sr       <= FlagsSR & Flags;
 ss_usp      <= USP;
 ss_mstack_used <= mstack_used;
 ss_halted   <= ae_halt;
+ss_sfc      <= SFC;
+ss_dfc      <= DFC;
 
 -----------------------------------------------------------------------------
 -- Write Reg
@@ -4887,6 +4895,8 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		VBR <= ss_wr_data;
 	  elsif ss_cacr_wr = '1' then
 		CACR <= "0000000000" & ss_wr_data(3 downto 0);
+		SFC  <= ss_wr_data(6 downto 4);
+		DFC  <= ss_wr_data(9 downto 7);
 	  else
 		if cclr /= "00000" then cclr <= cclr - 1; end if;
 		if clkena_lw = '1' and exec(movec_wr) = '1' then

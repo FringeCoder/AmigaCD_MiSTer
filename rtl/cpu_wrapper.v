@@ -82,6 +82,8 @@ module cpu_wrapper
 	output            ss_halted,       // TG68K: halted on a double address error
 	output     [31:0] ss_vbr,
 	output      [3:0] ss_cacr,
+	output      [2:0] ss_sfc,          // TG68K SFC/DFC (68010+), for MOVES
+	output      [2:0] ss_dfc,
 
 	// Save state restore. Write side of the same TG68K architectural
 	// registers, taken on the CPU clock while the core is parked by ss_arm.
@@ -418,6 +420,8 @@ cpu_inst_p
   .ss_usp(ss_usp),
   .ss_mstack_used(ss_mstack_used),
   .ss_halted(ss_halted),
+  .ss_sfc(ss_sfc),
+  .ss_dfc(ss_dfc),
 
   // Restore path -- TG68K only. fx68k has no equivalent write port and is
   // locked out of the savestate path in AmigaCD.sv.

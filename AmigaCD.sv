@@ -544,6 +544,7 @@ wire        ss_mstack_used;
 wire        ss_cpu_halted;
 wire [31:0] ss_vbr;
 wire  [3:0] ss_cacr;
+wire  [2:0] ss_sfc, ss_dfc;
 reg  [31:0] ss_cpu_d0, ss_cpu_d1, ss_cpu_d2, ss_cpu_d3;
 reg  [31:0] ss_cpu_d4, ss_cpu_d5, ss_cpu_d6, ss_cpu_d7;
 reg  [31:0] ss_cpu_a0, ss_cpu_a1, ss_cpu_a2, ss_cpu_a3;
@@ -1175,6 +1176,8 @@ cpu_wrapper cpu_wrapper
 	.ss_halted    (ss_cpu_halted   ),
 	.ss_vbr       (ss_vbr          ),
 	.ss_cacr      (ss_cacr         ),
+	.ss_sfc       (ss_sfc          ),
+	.ss_dfc       (ss_dfc          ),
 
 	// Restore write port into the TG68K register file, driven by
 	// ss_state_fanout at the bottom of this file. One shared data bus and one
@@ -2761,7 +2764,7 @@ end
 // this flop becomes the only thing keeping a back-to-back restore off the
 // previous vector.
 //
-// Cost is `SS_STATE_W` flops, 2093 of them, and one clk_sys cycle of extra
+// Cost is `SS_STATE_W` flops, 2099 of them, and one clk_sys cycle of extra
 // latency on a 23-cycle sequence that is followed by a million SDRAM word
 // writes (see the ORDERING NOTE below).
 reg [`SS_STATE_W-1:0] ss_state_out_q;

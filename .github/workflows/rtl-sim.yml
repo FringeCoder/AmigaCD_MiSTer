@@ -814,6 +814,9 @@ jobs:
       # a restore out of a CPU halted on a double address error, which used to
       # time out every time. Falsified: dropping either flag trigger, or the
       # halt clear from the ss_resume re-seed, fails the check that names it.
+      # PHASE 6: SFC and DFC, in the state vector since 2026-10-18, show on the
+      # capture export after MOVEC and come back on the restore's CACR write.
+      # Falsified: SFC not restored, and SFC/DFC swapped, each fail it.
       #
       # Runs from the repo root: the testbench opens its program image by a
       # path relative to the working directory.

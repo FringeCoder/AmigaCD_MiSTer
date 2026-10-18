@@ -72,6 +72,8 @@ module TG68KdotC_Kernel
 	output     [31:0] ss_usp,
 	output            ss_mstack_used,
 	output            ss_halted,
+	output      [2:0] ss_sfc,
+	output      [2:0] ss_dfc,
 
 	input       [3:0] ss_wr_index,
 	input      [31:0] ss_wr_data,
@@ -126,6 +128,8 @@ module TG68KdotC_Kernel
 	assign ss_usp         = 32'd0;
 	assign ss_mstack_used = 1'b0;
 	assign ss_halted      = 1'b0;
+	assign ss_sfc         = 3'd0;
+	assign ss_dfc         = 3'd0;
 
 endmodule
 
