@@ -52,7 +52,7 @@ including the ones that are reverted.
 | 11 | hold | false path a2065 `int2` -> `int2_s1` (2-FF synchroniser) | 279cc64c | removes 1 of 3 hold failures in 60 fits | kept |
 | 12 | hold | false path a2065 `csr*_out` -> `csr_shadow` | -- | not done: 16-bit word without a synchroniser; timing it is what keeps a CSR0 read coherent | rejected |
 | 13 | A | blitter pointer bank read at `ptrsel`, off Agnus's DMA priority mux | e88e57ba | A -0.136 (15/20) -> +0.845 (0/20); median -0.539 -> -0.372 | kept |
-| 14 | L | ss_ctrl restore decisions from registered compares (`pay_eq_*`, `crc_eq`) | da9174e6 | panel pending | -- |
+| 14 | L | ss_ctrl restore decisions from registered compares (`pay_eq_*`, `crc_eq`) | da9174e6 | L -0.247 (17/20) -> -0.163 (15/20), under the noise line; median -0.372 -> -0.549 (D -0.301, G -0.297) | reverted (c4e0507e); the DDR3-backed restore bench `rtl/sim/ssload` is in da9174e6 for reuse |
 | 15 | H | ddram_ctrl: the paths inside the controller, not its cache (F) | -- | path reports pending | -- |
 
 Ideas recorded and not done, with the reason:
@@ -64,8 +64,10 @@ Ideas recorded and not done, with the reason:
   upstream redesign.
 - Restructuring the restore request (`load_req_rise`) into ss_ctrl's FSM. It
   is the other source of seed 37's L path, and row 14 leaves it alone. It
-  needs the request's next value from AmigaCD.sv. Try it if row 14 does not
-  close L.
+  needs the request's next value from AmigaCD.sv. Row 14 did not close L
+  (its compares were half of the cone and moving them bought 0.08 ns), so this
+  alone is unlikely to either; L's paths need re-reading on a current netlist
+  first.
 
 ## What was found
 
@@ -316,3 +318,24 @@ three quarters of the seeds:
 - L, ss_ctrl's own state machine;
 - H, ddram_ctrl;
 - D and F/G, the cache data into the CPU.
+
+### Family L from registered compares (da9174e6) -- reverted
+
+ss_ctrl's restore decisions (pay_idx against four constants, crc against
+want_crc) became flags loaded with pay_idx and a registered crc_eq. Same
+panel, run 39169155300:
+
+| family | e88e57ba | + registered compares |
+|---|---|---|
+| L.ss_ctrl_internal | -0.247 (17/20) | -0.163 (15/20) |
+| D sdram data into the CPU | -0.205 (15/20) | -0.301 (18/20) |
+| F.ddram_cache | -0.185 (14/20) | -0.095 (12/20) |
+| G ddram data into the CPU | -0.099 (12/20) | -0.297 (17/20) |
+| H.ddram_ctrl | -0.254 (15/20) | -0.248 (17/20) |
+| M.ascal | -0.017 (11/20) | -0.093 (15/20) |
+| all_setup median | **-0.372** | -0.549 |
+
+L moved 0.08 ns, under the noise line. The median fell by 0.18, carried by D
+and G, which the change does not touch: a placement re-roll, but no gain to
+set against it. Reverted in c4e0507e. Worst hold +0.199; best seed 22 at
+-0.132.
