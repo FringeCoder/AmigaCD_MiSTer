@@ -236,3 +236,42 @@ is a clk_114 register in a2065_ddr3_mailbox captured on clk_sys, with
 cmd_* and bram_* handshakes are). `int2_s1` is the first flop of a 2-FF
 synchronizer, and csr_shadow is a free-running sample of quasi-static status.
 The sprite-only panel's worst hold is +0.013.
+
+### Family A off the blitter pointer read (e88e57ba)
+
+The diagnostic fits of 088710e5 (family_paths_<seed>.rpt) showed every family A
+path ending in one structure: Agnus's DMA arbitration -> the blitter pointer
+bank's read select -> the bank -> address_out -> Gary -> row_new -> sd_addr.
+The bank is now read at ptrsel (rtl/sim/bltrd proves agnus identical on every
+clock). Same panel, run 39160702587:
+
+| family | both (f9399d6c) | + pointer read at ptrsel |
+|---|---|---|
+| A_sys_to_sd_addr | -0.136 (15/20) | **+0.845 (0/20)** |
+| A.AGNUS | -0.035 (11/20) | +1.214 (0/20) |
+| A.USERIO | +0.064 (10/20) | +1.232 (0/20) |
+| A.CIAB | +0.258 (6/20) | +1.289 (0/20) |
+| A.cpu_wrapper | +0.186 (4/20) | +0.891 (0/20) |
+| B_114_to_sd_addr | +0.326 (4/20) | +0.288 (3/20) |
+| C.sdram_cache | +0.324 (3/20) | +0.267 (5/20) |
+| D sdram data into the CPU | -0.174 (16/20) | -0.205 (15/20) |
+| F.ddram_cache | -0.088 (12/20) | -0.185 (14/20) |
+| G ddram data into the CPU | -0.164 (16/20) | -0.099 (12/20) |
+| H.ddram_ctrl | -0.188 (15/20) | -0.254 (15/20) |
+| L.ss_ctrl_internal | -0.222 (15/20) | -0.247 (17/20) |
+| M.ascal | -0.060 (12/20) | -0.017 (11/20) |
+| all_setup median | -0.539 | **-0.372** |
+
+Family A is closed on every seed. Its worst case over 20 seeds is +0.230, and
+no sub-family fails anywhere. That includes the CPU address path through
+cpu_wrapper, which shared the Gary/row_new tail. The panel median is the best
+measured since the 10-17 upstream sync. Worst hold is +0.132, so no hold
+failures in 20 fits.
+
+Still 0/20 close. Best seed 25 at -0.243, then 41 (-0.259) and 26 (-0.271): a
+tighter spread, with no lucky near-miss like the previous panel's 27
+(-0.014). The walls left are the four that predate this work, each failing in
+three quarters of the seeds:
+- L, ss_ctrl's own state machine;
+- H, ddram_ctrl;
+- D and F/G, the cache data into the CPU.
