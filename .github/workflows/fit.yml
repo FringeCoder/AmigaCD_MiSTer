@@ -98,7 +98,9 @@ jobs:
         run: ./scripts/ci-fit.sh AmigaCD "${{ matrix.seed }}"
 
       # The reports are what a timing failure is read from, so they travel
-      # with the bitstream even when the fit fails.
+      # with the bitstream even when the fit fails. family_paths lists the ten
+      # worst paths of each sd_addr family (scripts/ci-sta-families.tcl), which
+      # is what restructuring one needs and the 25-row report never shows.
       - name: Upload
         if: always()
         uses: actions/upload-artifact@v4
@@ -109,6 +111,7 @@ jobs:
             fit_${{ matrix.seed }}.log
             paths_${{ matrix.seed }}.rpt
             families_${{ matrix.seed }}.txt
+            family_paths_${{ matrix.seed }}.rpt
             output_files/AmigaCD.rbf
             output_files/*.rpt
             output_files/*.summary

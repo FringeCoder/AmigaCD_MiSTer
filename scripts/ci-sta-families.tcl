@@ -1,7 +1,7 @@
 # The worst setup slack of each recurring path family, one line per family,
 # for every fitted seed -- the ones that close timing included.
 #
-#   quartus_sta -t scripts/ci-sta-families.tcl <project> <out.txt>
+#   quartus_sta -t scripts/ci-sta-families.tcl <project> <out.txt> [detail.rpt]
 #
 # Written because the seed sweep was a lottery nobody could read: a seed that
 # closed printed nothing about its margins, a seed that failed printed its 25
@@ -21,6 +21,7 @@
 # longer matches anything, which is itself worth seeing.
 set proj [lindex $quartus(args) 0]
 set out  [lindex $quartus(args) 1]
+set detail [lindex $quartus(args) 2]
 
 project_open $proj -revision $proj
 create_timing_netlist
@@ -83,6 +84,29 @@ foreach_in_collection oc [get_available_operating_conditions] {
 			set s [get_path_info $p -slack]
 			if {![info exists worst($name)] || $s < $worst($name)} { set worst($name) $s }
 		}
+	}
+}
+
+# The paths behind a number. A family's slack says how far it is from closing;
+# restructuring it needs its endpoints and the logic between, and the
+# 25-row worst-path report only ever shows whichever family is worst. So for
+# the families named here, the ten worst paths each, at the slow 100 C corner
+# the gate uses, with every node on the data path.
+set detail_families {A_sys_to_sd_addr A.AGNUS A.USERIO A.CIAB}
+if {$detail ne ""} {
+	file delete -force $detail
+	foreach_in_collection oc [get_available_operating_conditions] {
+		if {[string match -nocase {*slow*100C*} [get_operating_conditions_info -display_name $oc]]} {
+			set_operating_conditions $oc
+			update_timing_netlist
+		}
+	}
+	foreach f $families {
+		lassign $f name from to
+		if {[lsearch -exact $detail_families $name] < 0} { continue }
+		set args [concat [spec_args from $from] [spec_args to $to]]
+		eval report_timing -setup -npaths 10 -detail path_only $args \
+			-panel_name [list $name] -file [list $detail] -append
 	}
 }
 

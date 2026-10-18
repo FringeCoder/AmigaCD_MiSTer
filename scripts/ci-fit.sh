@@ -75,9 +75,9 @@ fi
 # across the panel.
 fams='{}'
 if [ -d db ]; then
-	rm -f "families_$seed.txt"
+	rm -f "families_$seed.txt" "family_paths_$seed.rpt"
 	docker run --rm -v "$PWD":/project -w /project "$IMAGE" \
-		quartus_sta -t scripts/ci-sta-families.tcl "$proj" "families_$seed.txt" > "families_$seed.log" 2>&1 || true
+		quartus_sta -t scripts/ci-sta-families.tcl "$proj" "families_$seed.txt" "family_paths_$seed.rpt" > "families_$seed.log" 2>&1 || true
 	if [ -s "families_$seed.txt" ]; then
 		echo "== path families, worst setup slack over all corners =="
 		cat "families_$seed.txt"
