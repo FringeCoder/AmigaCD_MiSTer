@@ -163,3 +163,35 @@ Same panel, with the review fixes and SFC/DFC kept:
 baseline and a little more, so the review fixes and SFC/DFC cost nothing
 measurable on their own: the drift in the previous panel was cpu_rdq's.
 D and G are the CPU input wall again, as before cpu_rdq.
+
+### YC sync + Flink sprite fix (f9399d6c)
+
+Same panel (run 39140295506), on top of the revert. It adds the Template_MiSTer
+sys/ sync (1219ec87) and the AGA sprite fine-start fix (f9399d6c). The fix is
+three extra clk of serial pipeline per sprite, with a tap mux.
+
+| family | reverted (1a6aea8e) | + YC sync + sprite fix |
+|---|---|---|
+| D sdram data into the CPU | -0.198 (18/20) | -0.174 (16/20) |
+| G ddram data into the CPU | -0.063 (15/20) | -0.164 (16/20) |
+| C.sdram_cache | +0.176 (7/20) | +0.324 (3/20) |
+| F.ddram_cache | +0.150 (6/20) | -0.088 (12/20) |
+| H.ddram_ctrl | -0.009 (10/20) | -0.188 (15/20) |
+| L.ss_ctrl_internal | -0.239 (13/20) | -0.222 (15/20) |
+| M.ascal | -0.079 (12/20) | -0.060 (12/20) |
+| A_sys_to_sd_addr | +0.328 (4/20) | -0.136 (15/20) |
+| all_setup median | -0.465 | **-0.539** |
+
+0/20 close. The best seed is 27 at -0.014 (hold +0.167), which the pick job
+took; next is 28 at -0.146. A_sys_to_sd_addr is the one family that moved
+well beyond seed noise. Its subfamilies AGNUS (-0.035, 11/20) and USERIO
+(+0.064, 10/20) carry it. Denise has no path in A itself, so the likely cause is
+placement pressure from the sprite pipeline in the chipset region rather than a
+new path. Not yet split: a panel of each change alone would say which.
+
+Seed 22 fails hold at -0.355, from clk_114 to clk_sys, on a2065
+`csr0_out` -> `csr_shadow`. That seed's clk_sys tree reaches the capture flop
+0.75 ns late, and the fitter did not pad the path enough to cover it. No other
+seed has a negative hold (worst otherwise +0.143). The pick job rejects any
+seed with negative hold, so it cannot ship, but it is recorded here in case the
+same path recurs.

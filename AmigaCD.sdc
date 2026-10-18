@@ -275,8 +275,8 @@ set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_data[*]} -to {*a2065_ddram*
 # to sit here, retained from the old bridge. It was never valid -- the burst LUT
 # index is recomputed from the free-running phase accumulator every clk_114
 # cycle -- and its source register is gone: sys/yc_out.sv now registers the
-# sine values rather than the indices (see the comment there), which closes the
-# path as a plain single-cycle one.
+# sine values rather than the indices (local first, upstream since
+# Template_MiSTer #120), which closes the path as a plain single-cycle one.
 
 # emu PLL cross-clock: counter[1]→counter[0] marginal path
 set_multicycle_path -setup 2 -from [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[1\].output_counter|divclk"] -to [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[0\].output_counter|divclk"]
