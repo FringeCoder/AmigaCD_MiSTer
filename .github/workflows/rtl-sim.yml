@@ -360,26 +360,6 @@ jobs:
           vvp -n tb_ss_port_own | tee out_ss_port_own.log
           grep -q "RUN: PASS" out_ss_port_own.log
 
-      # ss_ctrl's restore decisions read registered flags: pay_eq_* loaded with
-      # every write of pay_idx, and crc_eq from ss_crc32's next value, where 24-
-      # and 32-bit compares used to sit in front of the FSM and load_reject (the
-      # L family, docs/seed-lottery.md). tb_ss_port_own's random DDR3 data never
-      # gets a restore past the magic word, so this bench gives the DDR3 port a
-      # memory: 60 rounds of a save then a restore of that file, against the
-      # frozen previous version (ss_ctrl_ref.v, ss_crc32_ref.v), every output
-      # on every clock, plus each flag against its compare where it is read. It
-      # fails without successful restores with fast RAM on and off, CRC
-      # refusals (a damaged word), fingerprint refusals (a changed ROM), CRC
-      # decisions and fast RAM ends. Falsified on 2026-10-18: pay_eq_core one
-      # word early, crc_eq from the current crc_value, and pay_eq_st_end never
-      # updated each fail it.
-      - name: Save-state restore decisions from registered compares (tb_ss_load_equiv.sv)
-        run: |
-          set -euo pipefail
-          bash rtl/sim/check-icarus-warnings.sh -g2012 -o tb_ss_load rtl/sim/ssload/tb_ss_load_equiv.sv rtl/ss_ctrl.v rtl/ss_quiesce.v rtl/ss_serdes.v rtl/ss_dma.v rtl/ss_crc32.v rtl/sim/ssload/ss_ctrl_ref.v rtl/sim/ssload/ss_crc32_ref.v
-          vvp -n tb_ss_load | tail -3 | tee out_ss_load.log
-          grep -q "RUN: PASS" out_ss_load.log
-
       # CIA-B's port B pins (drive select, motor) now come straight off a
       # register loaded with their NEXT value: the port expression applied to
       # the next-state logic of DDRB, PRB and both timers, and amiga_clk's next

@@ -967,9 +967,7 @@ reg        crc_wr;
 reg  [7:0] crc_byte;
 wire [31:0] crc_value;
 
-wire [31:0] crc_next;
-ss_crc32 crc (.clk(clk), .init(crc_init), .wr(crc_wr), .byte_in(crc_byte), .crc_out(crc_value),
-              .crc_next(crc_next));
+ss_crc32 crc (.clk(clk), .init(crc_init), .wr(crc_wr), .byte_in(crc_byte), .crc_out(crc_value));
 
 // A 32-bit payload word is fed to the CRC as four bytes, least significant
 // first, so the result matches crc32_compute() over the little-endian
@@ -1034,40 +1032,6 @@ reg [5:0]  rd_ret;        // state to resume in once rd_data is valid
 reg [31:0] hdr_length;
 reg [31:0] want_crc;
 reg [23:0] pay_idx;       // payload word index, 0 .. CORE_WORDS
-
-// pay_idx's comparisons, registered. They were 24-bit compares in front of the
-// FSM's next-state logic and load_reject's fan-out, on every restore decision
-// that looks at pay_idx -- the worst paths of ss_ctrl's own family (L) on most
-// seeds (docs/seed-lottery.md). Each flag is loaded alongside pay_idx with
-// that write's own outcome, so it equals the compare on every clock: every
-// write to pay_idx goes through pay_set or pay_inc below, and nothing else
-// writes it. core_words moves only in S_IDLE (fast_ena_q), and every restore
-// sets pay_idx before it first tests pay_eq_core.
-// rtl/sim/ssload proves ss_ctrl identical to the previous version.
-reg pay_eq_zero, pay_eq_st_end, pay_eq_base, pay_eq_core;
-
-task pay_set;
-	input [23:0] v;
-begin
-	pay_idx       <= v;
-	pay_eq_zero   <= (v == 24'd0);
-	pay_eq_st_end <= (v == ST_END_24);
-	pay_eq_base   <= (v == CORE_BASE_W[23:0]);
-	pay_eq_core   <= (v == CORE_WORDS_24);
-end
-endtask
-
-task pay_inc;
-	pay_set(pay_idx + 24'd1);
-endtask
-
-// The payload CRC check, registered from ss_crc32's next value: crc_eq is
-// (crc_value == want_crc) on every clock that tests it. want_crc is written
-// only in S_L_CRC_CAP, whose next state tests pay_eq_core with pay_idx just
-// set to 0, so the one clock where crc_eq would see the old want_crc is never
-// one that reads it.
-reg crc_eq;
-always @(posedge clk) crc_eq <= (crc_next == want_crc);
 
 wire load_req_rise = load_req && !load_req_d;
 
@@ -2268,7 +2232,7 @@ always @(posedge clk) begin
 		S_L_CRC_CAP: begin
 			want_crc <= rd_data[31:0];
 			crc_init <= 1'b1;
-			pay_set(24'd0);
+			pay_idx  <= 24'd0;
 			state    <= S_L_PAY_FETCH;
 		end
 
@@ -2276,14 +2240,14 @@ always @(posedge clk) begin
 		// carries two consecutive payload words: fetch on the even index,
 		// reuse the held rd_data on the odd one.
 		S_L_PAY_FETCH: begin
-			if (pay_eq_core) begin
+			if (pay_idx == CORE_WORDS_24) begin
 				// Wait for the feeder to drain before reading crc_value.
 				// The last word's final byte is still being presented to
 				// ss_crc32 while crc_wr is up, and is only folded into
 				// crc_out on the edge that clears it -- see word_busy above
 				// for the save-side bug this exact off-by-one cycle caused.
 				if (!crc_busy) begin
-					if (crc_eq) begin
+					if (crc_value == want_crc) begin
 						// The file is intact. One gate left: is it this
 						// machine's Kickstart? That one is deliberately LAST
 						// even though it is the cheaper of the two scans.
@@ -2327,9 +2291,9 @@ always @(posedge clk) begin
 				// Payload word 0 is the fingerprint the file was made under.
 				// Grabbing it here rather than with a read of its own means the
 				// scan that has to walk the whole payload anyway pays for it.
-				if (pay_eq_zero) file_kick_crc <= pay_word;
+				if (pay_idx == 24'd0) file_kick_crc <= pay_word;
 				crc_word(pay_word);
-				pay_inc;
+				pay_idx <= pay_idx + 24'd1;
 				state   <= S_L_PAY_FETCH;
 			end
 		end
@@ -2365,7 +2329,7 @@ always @(posedge clk) begin
 			// skipped: the fingerprint is metadata about the machine, not part
 			// of the state vector.
 			ser_load_start <= 1'b1;
-			pay_set(ST_FIRST_24);
+			pay_idx        <= ST_FIRST_24;
 			state          <= S_L_ST_FETCH;
 			end
 		end
@@ -2401,7 +2365,7 @@ always @(posedge clk) begin
 		// "both before the release", but this one keeps the machine's own
 		// registers correct for the whole of the much longer memory pass.
 		S_L_ST_FETCH: begin
-			if (pay_eq_st_end) state <= S_L_ST_WAIT;
+			if (pay_idx == ST_END_24) state <= S_L_ST_WAIT;
 			else if (pay_held) state <= S_L_ST_FEED;
 			else begin
 				rd_idx <= pay_win;
@@ -2417,7 +2381,7 @@ always @(posedge clk) begin
 		S_L_ST_FEED: begin
 			ser_word_in       <= pay_word;
 			ser_word_in_valid <= 1'b1;
-			pay_inc;
+			pay_idx           <= pay_idx + 24'd1;
 			state             <= S_L_ST_FETCH;
 		end
 
@@ -2472,7 +2436,7 @@ always @(posedge clk) begin
 				sh_idx  <= sh_idx + 9'd1;
 				if (sh_half) begin
 					sh_half <= 1'b0;
-					pay_inc;   // both halves consumed
+					pay_idx <= pay_idx + 24'd1;   // both halves consumed
 				end
 				else sh_half <= 1'b1;
 				state <= S_L_SH_FETCH;
@@ -2523,7 +2487,7 @@ always @(posedge clk) begin
 			if (ss_hold == SS_HOLD_MAX) begin
 				ss_hold  <= 3'd0;
 				clut_idx <= clut_idx + 9'd1;
-				pay_inc;
+				pay_idx  <= pay_idx + 24'd1;
 				state    <= S_L_CLUT_FETCH;
 			end
 			else ss_hold <= ss_hold + 3'd1;
@@ -2539,7 +2503,7 @@ always @(posedge clk) begin
 		// write is two commands at once.
 		S_L_FA_FETCH: begin
 			if (ddr_write || pending_abs) ;      // let the beat land first
-			else if (pay_eq_core) state <= S_L_REPLAY;
+			else if (pay_idx == CORE_WORDS_24) state <= S_L_REPLAY;
 			else if (pay_held) state <= S_L_FA_LOAD;
 			else begin
 				rd_idx <= pay_win;
@@ -2549,7 +2513,7 @@ always @(posedge clk) begin
 		end
 
 		S_L_FA_LOAD: begin
-			pay_inc;
+			pay_idx <= pay_idx + 24'd1;
 			if (!fast_half) begin
 				fast_dat[31:0] <= pay_word;
 				fast_half      <= 1'b1;
@@ -2581,7 +2545,7 @@ always @(posedge clk) begin
 		S_L_CH_FETCH: begin
 			// CORE_BASE_W, not CORE_WORDS: the fast RAM section sits after
 			// this one and is not written through ss_dma at all.
-			if (pay_eq_base) begin
+			if (pay_idx == CORE_BASE_W[23:0]) begin
 				if (fast_ena_q) begin
 					fast_idx  <= 24'd0;
 					fast_half <= 1'b0;
@@ -2613,7 +2577,7 @@ always @(posedge clk) begin
 			dma_base       <= chip_addr;
 			dma_start      <= 1'b1;
 			chip_wr_half   <= 1'b0;
-			pay_inc;
+			pay_idx        <= pay_idx + 24'd1;
 			state          <= S_L_CH_WAIT;
 		end
 
