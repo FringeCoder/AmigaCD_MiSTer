@@ -195,3 +195,44 @@ Seed 22 fails hold at -0.355, from clk_114 to clk_sys, on a2065
 seed has a negative hold (worst otherwise +0.143). The pick job rejects any
 seed with negative hold, so it cannot ship, but it is recorded here in case the
 same path recurs.
+
+### The split: sprite fix alone, sys sync alone
+
+Same panel, each change applied on its own to the reverted head a53d83cd:
+debug/split-sprite-only (bdd507bf, run 39146038697) and debug/split-sys-only
+(1219ec87, run 39146041521).
+
+| family | reverted | sprite fix only | sys sync only | both (f9399d6c) |
+|---|---|---|---|---|
+| A_sys_to_sd_addr | +0.328 (4/20) | -0.024 (11/20) | +0.171 (7/20) | -0.136 (15/20) |
+| A.AGNUS | n/a | +0.062 (9/20) | +0.487 (4/20) | -0.035 (11/20) |
+| A.USERIO | n/a | +0.199 (6/20) | +0.588 (4/20) | +0.064 (10/20) |
+| D sdram data into the CPU | -0.198 | -0.287 | -0.093 | -0.174 |
+| G ddram data into the CPU | -0.063 | -0.268 | -0.127 | -0.164 |
+| H.ddram_ctrl | -0.009 | -0.157 | -0.150 | -0.188 |
+| L.ss_ctrl_internal | -0.239 | -0.238 | -0.280 | -0.222 |
+| M.ascal | -0.079 | -0.023 | -0.199 (19/20) | -0.060 |
+| all_setup median | -0.465 | -0.4625 | **-0.3735** | -0.539 |
+| best seed | 42 -0.049 | 32 -0.202 | 22 -0.124 | 27 -0.014 |
+
+A follows the sprite fix. It is negative in both panels that carry the fix and
+positive in both that don't. Agnus and user I/O move with it, though Denise has
+no path in A, so this is placement pressure in the chipset region, not a new
+path. The sys sync alone leaves A positive and is the best median of the four.
+It costs ascal (M, 19/20 seeds negative), which sits next to the video
+output it changes.
+
+The two changes do not add. Together they are worse than either alone, by
+more than the sum of their single-change shifts on the median. That reads as
+placement interaction, not as a path either change creates. Per-change median
+shifts of about 0.1 ns are within what one netlist change moves a panel, so
+only A's sign flip, consistent across all four panels, is a finding.
+
+Hold: 3 of the 60 fits fail hold, all on the same structure. Seed 22 of the
+combined panel fails on a2065 `csr0_out` -> `csr_shadow`. Seeds 29 and 24 of the
+sys-only panel fail on `a2065_int2` -> `int2_s1` and `csr0_out` -> `csr_shadow`. Each
+is a clk_114 register in a2065_ddr3_mailbox captured on clk_sys, with
+0.73-0.76 ns of clock skew. None is in AmigaCD.sdc's a2065 false-path list (the
+cmd_* and bram_* handshakes are). `int2_s1` is the first flop of a 2-FF
+synchronizer, and csr_shadow is a free-running sample of quasi-static status.
+The sprite-only panel's worst hold is +0.013.
