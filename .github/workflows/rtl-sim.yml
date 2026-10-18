@@ -420,10 +420,11 @@ jobs:
             grep -q "RUN: PASS" out_$w.log
           done
 
-      # sys/yc_out.sv carries a local retiming: the chroma sine ROM moved in
-      # front of the register feeding the U/V multipliers, without which the
-      # 114 MHz fit missed setup by 1.0-1.4 ns on every seed. This proves the
-      # output identical to upstream's module on every clock (NTSC and PAL,
+      # sys/yc_out.sv registers the chroma sine values, so the sine ROM sits in
+      # front of the register feeding the U/V multipliers. Without that, the
+      # 114 MHz fit missed setup by 1.0-1.4 ns on every seed. It began as a local
+      # change and is now upstream (Template_MiSTer #120). This proves the
+      # output identical to upstream's module from before #120 on every clock (NTSC and PAL,
       # burst and active chroma both exercised and counted), and stops building
       # if a sys/ resync reverts the change -- which would bring the setup
       # failure back with nothing else to say so. Falsified on 2026-10-16: a
