@@ -82,15 +82,6 @@ if [ -d db ]; then
 		echo "== path families, worst setup slack over all corners =="
 		cat "families_$seed.txt"
 		fams=$(awk 'BEGIN{printf "{"} {v=($2=="none")?"null":$2; printf "%s\"%s\": %s", (NR>1?", ":""), $1, v} END{printf "}"}' "families_$seed.txt")
-		# cpu_rdq is only equivalent to the wiring it replaced for clk_sys
-		# users; a clk_114 one is a behaviour change no slack figure shows.
-		# S being found too is what makes R's "none" mean anything: if the
-		# instance were renamed, both would read none.
-		if ! grep -qx 'R.cpu_rdq_to_114 none' "families_$seed.txt" \
-		   || grep -qx 'S.cpu_rdq_to_cpu none' "families_$seed.txt"; then
-			echo "::error::cpu_rdq check: R.cpu_rdq_to_114 must be none and S.cpu_rdq_to_cpu must not; see rtl/cpu_rdq.v"
-			ok=false
-		fi
 	else
 		echo "no family report; quartus_sta said:"; tail -30 "families_$seed.log"
 	fi

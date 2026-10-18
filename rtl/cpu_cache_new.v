@@ -60,13 +60,7 @@ module cpu_cache_new
   input             cpu_long,
   input      [15:0] cpu_dat_w_lo,
   output reg [15:0] cpu_dat_hi,
-  output reg        cpu_ack_l,
-  // The values cpu_dat_r, cpu_ack and cpu_ack_l take at the next clock. Those
-  // three registers load from these and nothing else, so a register outside
-  // this module that loads them sees the same word on the same edge.
-  output reg [15:0] cpu_dat_r_n,
-  output reg        cpu_ack_n,
-  output reg        cpu_ack_l_n
+  output reg        cpu_ack_l
 );
 
 
@@ -317,47 +311,14 @@ wire [15:0] rd_dat    = rd_i0 ? idram0_cpu_dat_r :
 wire [15:0] rd_dat_hi = rd_d0 ? ddram0_cpu_dat_r : rd_d1 ? ddram1_cpu_dat_r : buf_word;
 wire  [3:0] rd_tw_op  = rd_i0 ? TW_I0 : rd_i1 ? TW_I1 : rd_d0 ? TW_D0 : rd_d1 ? TW_D1 : dtag_lru ? TW_DF0 : TW_DF1;
 
-// Next state of the CPU return registers, out of the state machine below so
-// AmigaCD.sv can register the two RAM ports' returns already muxed (cpu_rdq.v).
-// The branches are the state machine's own, in its order.
-always @* begin
-  cpu_dat_r_n = cpu_dat_r;
-  cpu_ack_n   = cpu_ack;
-  cpu_ack_l_n = cpu_ack_l;
-  if (rst) begin
-    cpu_ack_n   = 1'b0;
-    cpu_ack_l_n = 1'b0;
-  end else begin
-    case (cpu_sm_state)
-      CPU_SM_READ : begin
-        cpu_dat_r_n = rd_dat;
-        if (rd_i0 || rd_i1) begin
-          cpu_ack_n = 1'b1;
-        end else if (rd_d0 || rd_d1 ||
-                     (LINE_TAKE && buf_ok_r && !snoop_act && !cpu_ir && cc_den && !cache_inhibit)) begin
-          cpu_ack_l_n = long_rd;
-          cpu_ack_n   = 1'b1;
-        end
-      end
-      CPU_SM_FILL1 : begin
-        if (sdr_read_ack) begin
-          cpu_dat_r_n = sdr_dat_r;
-          cpu_ack_n   = 1'b1;
-        end
-      end
-      default : ;
-    endcase
-    if (!cpu_cs) cpu_ack_n   = 1'b0;
-    if (!cpu_cs) cpu_ack_l_n = 1'b0;
-  end
-end
-
 // cpu side state machine
 always @ (posedge clk) begin
   if (rst) begin
     fill              <= 1'b0;
     sdr_read_req      <= 1'b0;
     wb_en             <= 1'b0;
+    cpu_ack           <= 1'b0;
+    cpu_ack_l         <= 1'b0;
     cpu_sm_long       <= 1'b0;
     cpu_sm_w2         <= 1'b0;
     cpu_sm_state      <= CPU_SM_INIT;
@@ -452,24 +413,33 @@ always @ (posedge clk) begin
         tw_i   <= itram_cpu_dat_r;
         tw_d   <= dtram_cpu_dat_r;
         tw_tag <= cpu_adr_tag;
+        cpu_dat_r  <= rd_dat;
         cpu_dat_hi <= rd_dat_hi;
         tw_op      <= rd_tw_op;
         // on hit update LRU flag in tag memory
         if (rd_i0) begin
           // data is already in instruction cache way 0
+          cpu_ack <= 1'b1;
           cpu_sm_itag_we <= 1'b1;
           cpu_sm_state <= CPU_SM_WAIT;
         end else if (rd_i1) begin
           // data is already in instruction cache way 1
+          cpu_ack <= 1'b1;
           cpu_sm_itag_we <= 1'b1;
           cpu_sm_state <= CPU_SM_WAIT;
         end else if (rd_d0) begin  // data cache way 0, gated by the D-cache SW enable (cc_den)
+          cpu_ack_l  <= long_rd;
+          cpu_ack <= 1'b1;
           cpu_sm_dtag_we <= 1'b1;
           cpu_sm_state <= CPU_SM_WAIT;
         end else if (rd_d1) begin
+          cpu_ack_l  <= long_rd;
+          cpu_ack <= 1'b1;
           cpu_sm_dtag_we <= 1'b1;
           cpu_sm_state <= CPU_SM_WAIT;
         end else if (LINE_TAKE && buf_ok_r && !snoop_act && !cpu_ir && cc_den && !cache_inhibit) begin
+          cpu_ack_l  <= long_rd;
+          cpu_ack   <= 1'b1;
           buf_take  <= 1'b1;
           cpu_sm_dtag_we   <= 1'b1;
           cpu_sm_dline0_we <=  dtag_lru;
@@ -498,6 +468,8 @@ always @ (posedge clk) begin
         end else begin
           sdr_read_req <= 1'b0;
           // read data to cpu
+          cpu_dat_r <= sdr_dat_r;
+          cpu_ack <= 1'b1;
           if (cache_inhibit || (!cpu_ir && !cc_den)) begin
             // don't update cache if caching is inhibited; also bypass
             // D-cache fill when SW has disabled D-cache.
@@ -605,12 +577,10 @@ always @ (posedge clk) begin
     if (fill_active && snoop_act
         && (snoop_adr[10:3] == fill_idx) && (snoop_adr[28:11] == fill_tag))
       fill_snooped <= 1'b1;
-    // when CPU lowers its request signal, lower ack too (in the next-state
-    // block above, with the rest of the CPU return)
+    // when CPU lowers its request signal, lower ack too
+    if (!cpu_cs) cpu_ack <= 1'b0;
+    if (!cpu_cs) cpu_ack_l <= 1'b0;
   end
-  cpu_dat_r <= cpu_dat_r_n;
-  cpu_ack   <= cpu_ack_n;
-  cpu_ack_l <= cpu_ack_l_n;
 end
 
 

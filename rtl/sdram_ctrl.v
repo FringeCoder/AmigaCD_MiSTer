@@ -79,9 +79,6 @@ module sdram_ctrl
 	input      [15:0] cpuWR,
 	output     [15:0] cpuRD,
 	output            ramready,
-	// cpuRD and ramready as they will be after the next clock (cpu_rdq.v)
-	output     [15:0] cpuRD_n,
-	output            ramready_n,
 	input             fast_req,
 	input             fast_we,
 	input      [26:1] fast_addr,
@@ -142,7 +139,6 @@ reg        snoop2 = 0;
 
 // cpu cache
 wire cache_rd_ack;
-wire cache_rd_ack_n;
 wire cache_wr_ack;
 wire cache_req;
 cpu_cache_new cpu_cache
@@ -161,8 +157,6 @@ cpu_cache_new cpu_cache
 	.cpu_dat_w        (cpuWR),                 // cpu write data
 	.cpu_dat_r        (cpuRD),                 // cpu read data
 	.cpu_ack          (cache_rd_ack),          // cpu acknowledge
-	.cpu_dat_r_n      (cpuRD_n),
-	.cpu_ack_n        (cache_rd_ack_n),
 	.wb_en            (cache_wr_ack),          // write enable
 	.sdr_dat_r        (sdata_reg),             // sdram read data
 	.sdr_read_req     (cache_req),             // sdram read request from cache
@@ -199,23 +193,13 @@ reg        fwd_en = 1'b0;
 reg  [1:0] fwd_pos;
 reg [15:0] fwd_dat;
 reg  [1:0] fwd_dqm;
-reg  [1:0] write_state;
-
-// write_ena's next state, which the register below loads, for ramready_n
-reg        write_ena_n;
-always @* begin
-	write_ena_n = write_ena;
-	if(~reset_n) write_ena_n = 0;
-	else begin
-		if(write_state != 1 && write_state != 2 && ~write_ena && ramsel && cpustate == 3 && cache_wr_ack)
-			write_ena_n = 1;
-		if(~ramsel) write_ena_n = 0;
-	end
-end
 
 always @ (posedge sysclk) begin
+	reg  [1:0] write_state;
+
 	if(~reset_n) begin
 		write_req   <= 0;
+		write_ena   <= 0;
 		write_state <= 0;
 	end else begin
 		case(write_state)
@@ -226,6 +210,7 @@ always @ (posedge sysclk) begin
 					write_dqm <= {cpuU, cpuL};
 					write_req <= 1;
 					if(cache_wr_ack) begin
+						write_ena   <= 1;
 						write_state <= 1;
 					end
 				end
@@ -239,12 +224,12 @@ always @ (posedge sysclk) begin
 					write_state <= 0;
 				end
 		endcase
+
+		if(~ramsel) write_ena <= 0;
 	end
-	write_ena <= write_ena_n;
 end
 
-assign ramready   = cache_rd_ack   || write_ena;
-assign ramready_n = cache_rd_ack_n || write_ena_n;
+assign ramready = cache_rd_ack || write_ena;
 
 //// chip line read ////
 reg [15:0] chip48_1, chip48_2, chip48_3;

@@ -385,31 +385,6 @@ jobs:
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
 
-      # The CPU's RAM return comes from cpu_rdq: the ram1/ram2 mux registered at
-      # clk_114 from each port's next-state outputs, instead of the live mux of
-      # the ports' registers in front of the CPU. That mux sat inside the
-      # 8.8 ns clk_114 -> clk_sys hop from the caches into TG68K, the worst
-      # family after the 2026-10-17 upstream sync (docs/seed-lottery.md).
-      # Proves two things: cpu_cache_new, sdram_ctrl and ddram_ctrl, whose
-      # return registers now load from a next-state block, match frozen copies
-      # of their previous versions on every output and clock; and cpu_rdq
-      # equals the old mux on every clk_sys edge, with the memories on clk_114,
-      # the CPU and zram_sel on clk_sys, and AmigaCD.sv's ram_cs/cyc handshake.
-      # Fails on any path into a return register it never reached. Falsified
-      # on 2026-10-18: cpu_rdq on the live registers, the fill word dropped from
-      # the cache's next state, ack_l not cleared without cs, w_l1 never set,
-      # sdram's write state ignored, ddram's ready_l and sdram's ready taken
-      # from the current write_ena each fail it. Dropping zram_sel from ready_l
-      # does not, and cannot: ddram's select is already gated by zram_sel.
-      #
-      # fit.yml holds the other half: ci-fit.sh fails a seed on which any
-      # clk_114 register takes cpu_rdq's output, since the equivalence holds on
-      # clk_sys edges only.
-      - name: CPU RAM return register matches the mux it replaced (tb_cpu_rdq_equiv.sv)
-        run: |
-          set -euo pipefail
-          bash rtl/sim/rdq/run.sh
-
       # drive_sounds registers the DDR3 read data (dd_q) before its 4:1 sample
       # select, because the HPS port's readdata straight into smp missed setup
       # in 4 of 58 seeds. That costs one clock per read; this proves the module

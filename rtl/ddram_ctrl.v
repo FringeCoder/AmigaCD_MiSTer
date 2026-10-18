@@ -133,11 +133,6 @@ module ddram_ctrl
 	input      [15:0] cpuWR_lo,
 	output     [15:0] cpuRD_hi,
 	output            ramready_l,
-	// cpuRD, ramready and ramready_l as they will be after the next clock
-	// (cpu_rdq.v)
-	output     [15:0] cpuRD_n,
-	output            ramready_n,
-	output            ramready_l_n,
 
 	input      [28:1] dmaAddr,
 	input             dmaCS,
@@ -170,8 +165,6 @@ wire ramsel = cpuCS & (~&cpustate | ~cpuU | ~cpuL);
 
 wire cache_hit;
 wire cache_hit_l;
-wire cache_hit_n;
-wire cache_hit_l_n;
 reg  w_l1;
 wire cache_req;
 reg  cache_fill;
@@ -203,9 +196,6 @@ cpu_cache
 	.cpu_dat_w        (cpuWR),                  // cpu write data
 	.cpu_dat_r        (cpuRD),                  // cpu read data
 	.cpu_ack          (cache_hit),              // cpu acknowledge
-	.cpu_dat_r_n      (cpuRD_n),
-	.cpu_ack_n        (cache_hit_n),
-	.cpu_ack_l_n      (cache_hit_l_n),
 	.wb_en            (cache_ack),              // write enable
 	.cpu_idle         (cache_idle),
 	.sdr_dat_r        (ddr_swap ? {ddr_data[7:0], ddr_data[15:8]} : ddr_data), // sdram read data
@@ -266,34 +256,6 @@ always @* begin
 		if (wq_vm[qi] && (wq_a[qi][28:3] == cpuAddr[28:3])) wq_line = 1'b1;
 end
 
-// Next state of write_ena and w_l1, which the registers below load, for
-// ramready_n and ramready_l_n. The branches are the write path's own.
-reg write_ena_n, w_l1_n;
-always @* begin
-	write_ena_n = write_ena;
-	w_l1_n      = w_l1;
-	if(~reset_n) begin
-		write_ena_n = 0;
-		w_l1_n      = 0;
-	end else begin
-		if(~stg_fl && w_new) begin
-			if(w_lo) begin
-				if(w_room) write_ena_n = 1;
-			end
-			else if(w_l1n) begin
-				if(w_room) begin
-					write_ena_n = 1;
-					w_l1_n      = 1;
-				end
-			end
-			else if(w_hi) write_ena_n = 1;
-			else if(~stg_v & w_room) write_ena_n = 1;
-		end
-		if(~ramsel) write_ena_n = 0;
-		if(~ramsel) w_l1_n      = 0;
-	end
-end
-
 integer qj;
 always @ (posedge sysclk) begin
 	reg        push;
@@ -309,6 +271,8 @@ always @ (posedge sysclk) begin
 		wq_t      <= 0;
 		wq_vm     <= 0;
 		stg_v     <= 0;
+		write_ena   <= 0;
+		w_l1      <= 0;
 	end else begin
 		if(stg_fl) begin
 			if(w_room) begin
@@ -321,11 +285,14 @@ always @ (posedge sysclk) begin
 				if(w_room) begin
 					push = 1; pa = stg_a; pdh = stg_d; pbh = stg_b; pdl = w_dat; pbl = w_be;
 					stg_v     <= 0;
+					write_ena <= 1;
 				end
 			end
 			else if(w_l1n) begin
 				if(w_room) begin
 					push = 1; pa = cpuAddr[28:2]; pdh = w_dat; pbh = w_be; pdl = cpuWR_lo; pbl = 2'b11;
+					write_ena <= 1;
+					w_l1      <= 1;
 				end
 			end
 			else if(w_hi) begin
@@ -333,11 +300,13 @@ always @ (posedge sysclk) begin
 				stg_a     <= cpuAddr[28:2];
 				stg_d     <= w_dat;
 				stg_b     <= w_be;
+				write_ena <= 1;
 			end
 			else if(~stg_v & w_room) begin
 				push = 1; pa = cpuAddr[28:2];
 				if(cpuAddr[1]) begin pdl = w_dat; pbl = w_be; end
 				else           begin pdh = w_dat; pbh = w_be; end
+				write_ena <= 1;
 			end
 		end
 
@@ -356,17 +325,15 @@ always @ (posedge sysclk) begin
 			if(push   && (wq_t == qj)) wq_vm[qj] <= 1'b1;
 			if(wq_pop && (wq_h == qj)) wq_vm[qj] <= 1'b0;
 		end
+		if(~ramsel) write_ena <= 0;
+		if(~ramsel) w_l1 <= 0;
 	end
-	write_ena <= write_ena_n;
-	w_l1      <= w_l1_n;
 end
 
 wire wq_any = (wq_n != 0) | stg_v;
 
 assign ramready = cache_hit || write_ena;
 assign ramready_l = cache_hit_l || (write_ena && w_l1);
-assign ramready_n   = cache_hit_n   || write_ena_n;
-assign ramready_l_n = cache_hit_l_n || (write_ena_n && w_l1_n);
 
 reg dmaCS_sync1;
 reg dmaCS_sync2;
