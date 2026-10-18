@@ -271,6 +271,17 @@ set_false_path -from {*a2065_ddr3_mailbox*|cmd_clear}        -to {*a2065_regfile
 set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_valid}  -to {*a2065_ddram*|rv_sync0}
 set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_data[*]} -to {*a2065_ddram*|rd_sync0[*]}
 
+# clk_ddr -> clk_sys: the card's interrupt into a2065.v's 2-FF synchroniser.
+# a2065_int2 is a registered level and int2_s1 exists to take it at any time;
+# landing a clk_sys cycle early or late moves INT2 by 35 ns, which nothing can
+# see. Timed, it failed hold on 1 of 60 panel fits (0.76 ns of clk_sys skew).
+# Deliberately NOT here: csr0_out..csr3_out -> a2065_regfile csr_shadow. That
+# is a 16-bit word sampled without a synchroniser; it is coherent only because
+# it is timed as the synchronous 4:1 path it is. False-pathing it would let a
+# 68k read of CSR0 mix old and new bits. Its two hold failures in 60 fits are
+# rejected by the pick job, which is the correct outcome.
+set_false_path -from {*a2065_ddr3_mailbox*|a2065_int2}       -to {*a2065_inst|int2_s1}
+
 # yc_out: no exception. A multicycle from chroma_LUT_BURST to phase[*].u used
 # to sit here, retained from the old bridge. It was never valid -- the burst LUT
 # index is recomputed from the free-running phase accumulator every clk_114
