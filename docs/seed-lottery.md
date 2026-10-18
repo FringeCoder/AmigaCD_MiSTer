@@ -81,3 +81,19 @@ more within 0.12 ns. The walls left are many and small -- ss_ctrl's own state
 machine (L, -0.09 median), the residual chipset cone (USERIO host address and
 external floppy map, Agnus BPLCON0), sdram_ctrl's CPU select, ddram_ctrl and
 ascal at -40 C -- each between -0.6 and 0 ns in a minority of seeds.
+
+## After the 2026-10-17 upstream sync
+
+Minimig-AGA `26eb46a..0bf2ab1` (all ten commits) re-rolled the netlist and
+made it worse: 1 of 60 seeds closes (56: setup +0.008, hold +0.246 at the gate
+corner; -0.110 at slow -40 C in ddram_ctrl), median about -0.42 ns against
+-0.28 before the sync. Seed 14 went from +0.130 to -0.346.
+
+The new wall is upstream's TG68K work, mostly the 68030 bus error frame
+(`3afc8170`) and the address-error PC (`15a9bce9`): cache read data
+(`cpu_dat_r`, clk_114) through cpu_wrapper's `ramdat` / `cpu_din` muxes and the
+kernel's `data_read` into a five-level `data_write_tmp` mux, and `write_ena`
+into `ae_pc`, inside one 8.8 ns clk_114 -> clk_sys relationship. It is the
+worst family (D/G) on about half the seeds. The families this document fixed
+stay fixed. Taking that path off is the next piece of work.
+
