@@ -600,6 +600,26 @@ jobs:
           cd rtl/sim/bltrd
           ./run.sh
 
+      # cpu_cache_new's sdram read request has its own expression instead of
+      # an assignment inside the cpu-side state machine, so the tag compares
+      # feed its last LUT instead of the shared next-state decode: tag RAM ->
+      # sdr_read_req was the worst path of ram2's cache, families F and H, in
+      # docs/seed-lottery.md. This proves the module identical to the previous
+      # version (frozen as cpu_cache_new_ref.v) on every output on every clock:
+      # random reads, fetches, writes and long reads over a small line set with
+      # evictions, snoops, inhibit, cache enable / D-cache toggles and clears,
+      # line buffer offers, and a memory acking fills after a random delay.
+      # LINE_TAKE 0 (ram1) and 1 (ram2), two seeds each. It fails on zero
+      # misses, zero held requests, zero hits on any of the four ways, and (ram2)
+      # zero buffer takes or zero buffer offers refused for a snoop. Falsified
+      # on 2026-10-18: the FILL1 hold ignoring the ack, a way-1 D hit not
+      # counted as a hit, and the buffer term ignoring snoop_act each fail it.
+      - name: Cache read request off the state decode (tb_cache_req_equiv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/cachereq
+          ./run.sh
+
       # Who owns each DMA slot on a copper-busy line, in every bitplane fetch
       # mode, against Copperline's cycle trace of the same copper list. Added
       # after the Turrican 2 AGA report (copper finishing a split late): a copper

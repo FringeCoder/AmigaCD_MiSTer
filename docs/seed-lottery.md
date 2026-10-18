@@ -53,7 +53,7 @@ including the ones that are reverted.
 | 12 | hold | false path a2065 `csr*_out` -> `csr_shadow` | -- | not done: 16-bit word without a synchroniser; timing it is what keeps a CSR0 read coherent | rejected |
 | 13 | A | blitter pointer bank read at `ptrsel`, off Agnus's DMA priority mux | e88e57ba | A -0.136 (15/20) -> +0.845 (0/20); median -0.539 -> -0.372 | kept |
 | 14 | L | ss_ctrl restore decisions from registered compares (`pay_eq_*`, `crc_eq`) | da9174e6 | L -0.247 (17/20) -> -0.163 (15/20), under the noise line; median -0.372 -> -0.549 (D -0.301, G -0.297) | reverted (c4e0507e); the DDR3-backed restore bench `rtl/sim/ssload` is in da9174e6 for reuse |
-| 15 | H | ddram_ctrl: the paths inside the controller, not its cache (F) | -- | path reports pending | -- |
+| 15 | H, F | cpu_cache_new `sdr_read_req` from its own expression, off the state machine's next-state decode | (this commit) | panel pending | -- |
 
 Ideas recorded and not done, with the reason:
 - Registering CIA-B's pins plainly. That makes drive select one 7 MHz cycle
