@@ -131,13 +131,24 @@ end
 
 //--------------------------------------------------------------------------------------
 
-reg  [2:0] load_d;
-wire [3:0] load_s = {load_d, clk7_en & load};
-always @(posedge clk) load_d <= load_s[2:0];
+// AGA SPRxCTL SH1/SH0 (70/35 ns) move the WHOLE sprite right by 1-3 clk.
+// The shifter keeps loading on clk7_en, on its own pixel grid, and the
+// serial output below is delayed instead. Delaying only the load (as
+// upstream #260 did) loses the shift step it lands on in lores and hires:
+// the sprite jumps a whole pixel and leaves a one-pixel gap at its left
+// edge, which shows as black columns between side-by-side sprites (Flink's
+// CD32 title screen). The bits are taken at the load, so a CTL write while
+// the previous copy is still shifting out does not move it.
+reg  [1:0] fine;
+always @(posedge clk)
+  if (reset)
+    fine <= 2'b00;
+  else if (clk7_en && load)
+    fine <= hstart_lo;
 
 // sprite shift register
 always @(posedge clk)
-  if (load_s[hstart_lo]) // AMR - load_del) // load new data into shift register
+  if (clk7_en && load) // AMR - load_del) // load new data into shift register
   begin
     shifta[63:0] <= load_pre_a ? datla_pre[63:0] : datla[63:0];
     shiftb[63:0] <= load_pre_b ? datlb_pre[63:0] : datlb[63:0];
@@ -151,11 +162,12 @@ always @(posedge clk)
 // assign serialized output data
 // AMR - register the output data to delay it by one clk7, compensating for removing load_del
 // Fixed highres sprites by pipelining shifter output.
-reg [7:0] sprdata_r;
+// Three clk deep as before, plus up to three more for the fine start.
+reg [13:0] sprdata_r;
 always @(posedge clk)
-  sprdata_r <= {shiftb[63],shifta[63],sprdata_r[7:2]}; // Ugly - are we masking a copper timing problem here?
+  sprdata_r <= {shiftb[63],shifta[63],sprdata_r[13:2]}; // Ugly - are we masking a copper timing problem here?
 
-assign sprdata[1:0] = sprdata_r[1:0]; // {shiftb[63],shifta[63]};
+assign sprdata[1:0] = sprdata_r[6-2*fine +: 2]; // {shiftb[63],shifta[63]};
 //--------------------------------------------------------------------------------------
 
 endmodule

@@ -474,6 +474,23 @@ jobs:
           vvp tb_att | tee out_att.log
           grep -q "RUN: PASS" out_att.log
 
+      # AGA SPRxCTL SH1/SH0 (70/35 ns) move the whole sprite: with SH = k the
+      # serial output is the SH = 0 output delayed k clk28, in lores, hires and
+      # super hires, with CTL bit 0 clear and set; OCS/ECS ignore the bits.
+      # Upstream #260 delayed only the load, which loses a shift step in lores
+      # and hires -- a one-pixel gap at every sprite edge (Flink CD32 title).
+      #
+      # Falsified 2026-10-18: the #260 load-delay shifter fails 10 of 48 checks
+      # (lores and hires, super hires passes); the output tap moved the wrong way
+      # fails 18; ignoring the fine bits at the tap fails 18.
+      - name: Sprite fine horizontal start (AGA SH1/SH0)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/sprites
+          iverilog -g2012 -o tb_fine ../../amiga_clk.v ../../denise_sprites_shifter.v tb_sprite_fine_start.sv
+          vvp tb_fine | tee out_fine.log
+          grep -q "RUN: PASS" out_fine.log
+
       # A line blit with a BLTSIZE width of 1 must finish. The blitter spends two
       # words per line pixel; with width 1 the last word can land in L2, where the
       # end was never tested, and the height counter wrapped -- ~32767 pixels of
