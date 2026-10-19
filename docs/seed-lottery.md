@@ -64,6 +64,12 @@ Ideas recorded and not done, with the reason:
   freeze and peek_scan and row 4's st0_cpu and sdr_read_req created none, so
   they are no longer doing anything (freeze's loads moved to port_own in
   e20bf7c4). Harmless, but not to be counted on.
+- Checking a MAX_FANOUT assignment took effect: the map report's "Registers
+  Duplicated to Honor Maximum Fanout Requirements" table lists the copies. On
+  the 0a8fe3b7 netlist it lists only sdram_ctrl's write_req (3 copies): row 1's
+  freeze and peek_scan and row 4's st0_cpu and sdr_read_req created none, so
+  they are no longer doing anything (freeze's loads moved to port_own in
+  e20bf7c4). Harmless, but not to be counted on.
 - Registering CIA-B's pins plainly. That makes drive select one 7 MHz cycle
   late, which is not cycle-exact; row 2 did it with a lookahead instead.
 - A timing exception on the CIA timer outputs. They are real single-cycle
