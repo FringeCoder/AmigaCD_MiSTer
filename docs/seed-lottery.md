@@ -492,3 +492,18 @@ rules (cycle-exact, nothing upstream changed):
   dma_read_ack all appear), sp_n -> sp_conf_r, the tag RAM into cpu_dat_r.
   Each appears on one or two seeds.
 - **F, C, B, K, N, E, A, P** median positive.
+
+### Stopped here (2026-10-19)
+
+The owner chose to stop after row 19. Row 6's registered RAM return (the only
+lever left on D/G) was offered for a re-run under the noise-line rules and
+declined: it costs a clk_114 cycle on every RAM read, a performance trade.
+It stays in the ledger as reverted, with the note above that its single-panel
+verdict predates the noise line.
+
+The one closing build since the 10-17 sync is seed 35 of c496d5b1's panel
+(run 39175622637, setup +0.051, hold +0.234), the `core` artifact
+AmigaCD_20261019.rbf. Its RTL is the current RTL: everything after c496d5b1
+is either reverted or SDC/bench only (d6f02c61), so that bitstream is the
+present design without rows 18 and 19's timing exceptions, which only change
+what STA reports.
