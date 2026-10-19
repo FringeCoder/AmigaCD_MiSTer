@@ -60,6 +60,12 @@ including the ones that are reverted.
 | 19 | hold | false path into `ss_dbg_meta` (first stage of the diagnostics' 2-FF synchroniser); same panel as row 18 | d6f02c61 | panel pending | -- |
 
 Ideas recorded and not done, with the reason:
+- Registering ss_regshadow's rd_data (its set/clear mux) on clk_sys: the RTL
+  alternative to row 18's multicycle. ss_ctrl's 6-cycle wait would cover the
+  extra stage, and the replay walk would not see it (it reads mem_q, not
+  rd_data; d6f02c61's message wrongly says otherwise). Not done because the
+  multicycle states the same fact without adding a register; try it if row 18
+  is reverted for anything other than "no change".
 - Checking a MAX_FANOUT assignment took effect: the map report's "Registers
   Duplicated to Honor Maximum Fanout Requirements" table lists the copies. On
   the 0a8fe3b7 netlist it lists only sdram_ctrl's write_req (3 copies): row 1's
