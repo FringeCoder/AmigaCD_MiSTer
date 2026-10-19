@@ -55,8 +55,15 @@ including the ones that are reverted.
 | 14 | L | ss_ctrl restore decisions from registered compares (`pay_eq_*`, `crc_eq`) | da9174e6 | L -0.247 (17/20) -> -0.163 (15/20), under the noise line; median -0.372 -> -0.549 (D -0.301, G -0.297) | reverted (c4e0507e); the DDR3-backed restore bench `rtl/sim/ssload` is in da9174e6 for reuse |
 | 15 | H, F | cpu_cache_new `sdr_read_req` from its own expression, off the state machine's next-state decode | c496d5b1 | F -0.185 (14/20) -> +0.135 (4/20), H -0.254 -> -0.052 (11/20); median -0.372 -> -0.355; **1/20 close** (seed 35, +0.051) | kept |
 | 16 | L | every restore refusal from a registered flag: magic, version, length, core_words (`rd_*_bad`, `len_bad`), fingerprint (`kick_eq`), payload CRC (`crc_eq`, row 14's) | 0a8fe3b7 | L -0.285 (19/20) -> -0.189 (17/20), under the noise line; median -0.355 -> -0.459, 1 -> 0 close (H -0.247, F -0.145, D -0.175, G -0.099) | reverted (5029a4a3); the 120-round restore bench with every refusal kind is in 0a8fe3b7 for reuse |
+| 17 | H | MAX_FANOUT 16 on ddram_ctrl's `ss_port_own` (DDR3 port-0 grant, >100 loads) | (this commit) | panel pending | -- |
 
 Ideas recorded and not done, with the reason:
+- Checking a MAX_FANOUT assignment took effect: the map report's "Registers
+  Duplicated to Honor Maximum Fanout Requirements" table lists the copies. On
+  the 0a8fe3b7 netlist it lists only sdram_ctrl's write_req (3 copies): row 1's
+  freeze and peek_scan and row 4's st0_cpu and sdr_read_req created none, so
+  they are no longer doing anything (freeze's loads moved to port_own in
+  e20bf7c4). Harmless, but not to be counted on.
 - Registering CIA-B's pins plainly. That makes drive select one 7 MHz cycle
   late, which is not cycle-exact; row 2 did it with a lookahead instead.
 - A timing exception on the CIA timer outputs. They are real single-cycle
