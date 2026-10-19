@@ -30,6 +30,7 @@ import tempfile
 # Source lists mirror the CI steps. Kept here rather than derived from the
 # workflow because a mutation run should not silently follow a workflow edit.
 AKIKO = 'rtl/akiko.v rtl/akiko_nvram.v rtl/sim/cache/dpram_sim.v'
+REGSHADOW = 'rtl/ss_regshadow.v rtl/sim/regshadow/ss_regshadow_ref.v'
 AKIKO_BR = ('rtl/akiko.v rtl/akiko_nvram.v rtl/akiko_hps_bridge.v '
             'rtl/sim/cache/dpram_sim.v')
 
@@ -78,6 +79,34 @@ MUTATIONS = [
      "\t\t\tif (hps_cmd_done && cmd_pending) begin",
      "\t\t\tif (hps_cmd_done && 1'b1) begin",
      'len_survives_phantom'),
+
+    # ss_regshadow's set/clear readback is registered; the bench compares it
+    # with the combinational version wherever ss_ctrl could sample it.
+    ('set/clear readback takes DMACON for every register',
+     'rtl/sim/regshadow/tb_ss_regshadow_rd_equiv.sv', REGSHADOW,
+     'rtl/ss_regshadow.v',
+     "sc_val_q <= `SC_REG(rd_addr[7:0]);", "sc_val_q <= r_dmacon;",
+     'rd_data at'),
+
+    ('set/clear readback not selected',
+     'rtl/sim/regshadow/tb_ss_regshadow_rd_equiv.sv', REGSHADOW,
+     'rtl/ss_regshadow.v',
+     "sc_sel_q   ? sc_val_q : mem_q;", "mem_q;",
+     'rd_data at'),
+
+    ('set/clear select from the replay walk\'s address',
+     'rtl/sim/regshadow/tb_ss_regshadow_rd_equiv.sv', REGSHADOW,
+     'rtl/ss_regshadow.v',
+     "sc_sel_q <= setclear(rd_addr[7:0]);", "sc_sel_q <= setclear(mem_addr);",
+     'rd_data at'),
+
+    ('set/clear readback a clock later than the array',
+     'rtl/sim/regshadow/tb_ss_regshadow_rd_equiv.sv', REGSHADOW,
+     'rtl/ss_regshadow.v',
+     "\tsc_val_q <= `SC_REG(rd_addr[7:0]);\nend",
+     "\tsc_val_d <= `SC_REG(rd_addr[7:0]); sc_val_q <= sc_val_d;\nend\n"
+     "reg [15:0] sc_val_d;",
+     'rd_data at'),
 ]
 
 

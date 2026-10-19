@@ -354,13 +354,14 @@ jobs:
       # change mid-transfer. Falsified on 2026-10-18: following fast_ena live
       # fails it ~100k times.
       #
-      # Third, it backs AmigaCD.sdc's multicycle from shadow_rd_addr into
-      # ss_ctrl: at every read of shadow_rd_data (S_SHADOW_LOW's last hold
-      # cycle, S_SHADOW_Q) the address must have been on the port for at least
-      # the 2 clk_114 cycles the SDC grants; it reports the shortest (6) and
-      # fails on zero reads. Falsified on 2026-10-19: S_SHADOW_LOW going
+      # Third, it checks the shadow readback's address age: at every read of
+      # shadow_rd_data (S_SHADOW_LOW's last hold cycle, S_SHADOW_Q) the address
+      # must have been on the port for at least 5 clk_114 cycles (up to 4 to
+      # reach a clk_sys edge, where ss_regshadow registers the read, and one
+      # more for the value to arrive); it reports the shortest (6)
+      # and fails on zero reads. Falsified on 2026-10-19: S_SHADOW_LOW going
       # straight to S_SHADOW_Q (a read 1 clock after the address moves), and a
-      # claimed multicycle of 7, each fail it.
+      # required age of 7, each fail it.
       - name: Save-state port claim register matches freeze | peek_scan (tb_ss_port_own.sv)
         run: |
           set -euo pipefail
@@ -392,6 +393,24 @@ jobs:
           iverilog -g2012 -o tb tb_ciab_lookahead_equiv.sv ../../amiga_clk.v ../../ciab.v ../../cia_timera.v ../../cia_timerb.v ../../cia_int.v ../../cia_timerd.v ciab_ref.v cia_timera_ref.v cia_timerb_ref.v
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
+
+      # ss_regshadow's readback is registered end to end: the set/clear select
+      # (DMACON/INTENA/ADKCON), which was combinational on rd_addr, now loads on
+      # the same clk_sys edge as the array read. As a comb path it ran from
+      # ss_ctrl's shadow_rd_addr straight back into ss_ctrl and was L's worst
+      # path (AmigaCD.sdc carried a multicycle for it, now removed). This
+      # compares the module with the previous version (frozen as
+      # ss_regshadow_ref.v): every other output on every clock, and rd_data on
+      # every clock where the address and the three registers held across the
+      # last edge, which is what ss_ctrl's frozen, held-address readback
+      # guarantees. Coverage counters fail on zero. Falsified on 2026-10-19:
+      # DMACON for every set/clear entry, the select dropped, the select taken
+      # from the replay walk's address, and the value a clock late each fail it
+      # (also in rtl/sim/run-mutations.py).
+      - name: Shadow readback register matches the comb select it replaced (tb_ss_regshadow_rd_equiv.sv)
+        run: |
+          set -euo pipefail
+          bash rtl/sim/regshadow/run.sh
 
       # The CPU's RAM return comes from cpu_rdq: the ram1/ram2 mux registered at
       # clk_114 from each port's next-state outputs, instead of the live mux of

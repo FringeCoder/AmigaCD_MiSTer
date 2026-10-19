@@ -282,18 +282,13 @@ set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_data[*]} -to {*a2065_ddram*
 # rejected by the pick job, which is the correct outcome.
 set_false_path -from {*a2065_ddr3_mailbox*|a2065_int2}       -to {*a2065_inst|int2_s1}
 
-# ss_ctrl's shadow readback: shadow_rd_addr out to ss_regshadow, whose rd_data
-# is combinational on it (a set/clear decode and a mux over 256 entries), and
-# back into ss_ctrl. ss_ctrl reads shadow_rd_data in two places, S_SHADOW_LOW's
-# last hold cycle and S_SHADOW_Q, and the address is held SS_HOLD_MAX+1 cycles
-# before either because ss_regshadow registers its array read on clk_sys: the
-# shortest the address is ever on the port at a read is 6 clk_114 cycles.
-# shadow_rd_addr is not read inside ss_ctrl, so every path from it to an
-# ss_ctrl register goes through that read. Timed as one cycle it was L's worst
-# path, -2.960 on seed 35 of run 39186900101. rtl/sim/ssown checks the address
-# age at every read against the 2 granted here and fails under it.
-set_multicycle_path -from {emu|savestate|shadow_rd_addr*} -to {emu|savestate|*} -setup 2
-set_multicycle_path -from {emu|savestate|shadow_rd_addr*} -to {emu|savestate|*} -hold 1
+# ss_ctrl's shadow readback needs no exception. It carried a multicycle from
+# shadow_rd_addr into ss_ctrl while ss_regshadow's set/clear select was
+# combinational on the address (L's worst path, -2.960 on seed 35 of run
+# 39186900101); ss_regshadow now registers that select with its array read, so
+# shadow_rd_addr reaches only clk_sys registers there and rd_data comes only from
+# registers. rtl/sim/regshadow proves the registered read equal at every point
+# ss_ctrl could sample it.
 
 # clk_114 -> clk_sys: the save-state diagnostics' 2-FF synchroniser in
 # AmigaCD.sv. ss_dbg_meta is its first stage, taking a 64-bit vector of ss_ctrl
