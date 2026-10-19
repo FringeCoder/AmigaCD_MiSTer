@@ -464,3 +464,31 @@ seed 37 at -0.075.
 
 D (20/20) and G (15/20) -- the cache's data into TG68K -- are now the widest
 walls.
+
+### Where each family stands after row 19
+
+What is left, and why each is or is not worth another attempt within the
+rules (cycle-exact, nothing upstream changed):
+
+- **D, G -- cache data into TG68K (20/20, 15/20).** A true single-cycle path:
+  the cache loads cpu_dat_r on the edge it raises cpu_ack, cpu_ack is ramready,
+  ramready opens the CPU's clock enable, and TG68K consumes the word on the
+  next edge. The data cannot arrive earlier (the tag and data RAMs answer in
+  READ), so no exception applies -- unlike the CPU -> RAM direction, which the
+  SDC's first lines make multicycle. cpu_wrapper's own mux in front is two
+  levels; the other 10-25 are inside TG68KdotC_Kernel, which is upstream. The
+  only lever left is row 6's: a registered return, one clk_114 cycle more on
+  every RAM read. Row 6 was judged on a single panel before the noise line was
+  measured (D/G better, C/F/H/L worse, median -0.524 -> -0.661). Retrying it is
+  a performance trade, not a timing fix, and is the owner's call.
+- **M -- ascal (16/20).** sys/ascal.vhd, the framework's scaler. Not ours to
+  change; row 3 (disabling the adaptive filter) is the only lever and was
+  rejected as a feature loss.
+- **L -- ss_ctrl (14/20, -0.159).** After rows 14, 16 and 18 its paths are
+  diffuse: the scan timeout counter into load_busy, the state register's own
+  decode, shadow-free CLUT reads. No cone dominates.
+- **H -- ddram_ctrl (14/20, -0.105).** Also diffuse: the request select chain
+  into the speculative ram_addr register (wq_n, stg_v, sdr_read_req,
+  dma_read_ack all appear), sp_n -> sp_conf_r, the tag RAM into cpu_dat_r.
+  Each appears on one or two seeds.
+- **F, C, B, K, N, E, A, P** median positive.
