@@ -346,13 +346,6 @@ set_instance_assignment -name MAX_FANOUT 24 -to "*ss_ctrl:savestate|peek_scan"
 set_instance_assignment -name MAX_FANOUT 6 -to "*sdram_ctrl:ram1|write_req"
 set_instance_assignment -name MAX_FANOUT 6 -to "*sdram_ctrl:ram1|st0_cpu"
 set_instance_assignment -name MAX_FANOUT 6 -to "*sdram_ctrl:ram1|cpu_cache_new:cpu_cache|sdr_read_req"
-# ddram_ctrl's save-state grant, ss_port_own, switches DDR3 port 0 between the
-# save state and the CPU side: address, write data, byte enables, burst count,
-# read and write, over 100 loads. On seed 33 of run 39181718397 it was the
-# worst path of the whole panel, ss_port_own -> ddr_cmd_pipe d_address at -1.386
-# through only 8 levels -- the route out to its loads, not logic. Same
-# duplication as above; every copy is the same register.
-set_instance_assignment -name MAX_FANOUT 16 -to "*ddram_ctrl:ram2|ss_port_own"
 set_global_assignment -name QIP_FILE rtl/A2065/a2065.qip
 set_global_assignment -name QIP_FILE rtl/akiko.qip
 set_global_assignment -name QIP_FILE rtl/cdtv.qip
