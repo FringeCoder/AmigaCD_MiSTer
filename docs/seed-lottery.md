@@ -53,7 +53,7 @@ including the ones that are reverted.
 | 12 | hold | false path a2065 `csr*_out` -> `csr_shadow` | -- | not done: 16-bit word without a synchroniser; timing it is what keeps a CSR0 read coherent | rejected |
 | 13 | A | blitter pointer bank read at `ptrsel`, off Agnus's DMA priority mux | e88e57ba | A -0.136 (15/20) -> +0.845 (0/20); median -0.539 -> -0.372 | kept |
 | 14 | L | ss_ctrl restore decisions from registered compares (`pay_eq_*`, `crc_eq`) | da9174e6 | L -0.247 (17/20) -> -0.163 (15/20), under the noise line; median -0.372 -> -0.549 (D -0.301, G -0.297) | reverted (c4e0507e); the DDR3-backed restore bench `rtl/sim/ssload` is in da9174e6 for reuse |
-| 15 | H, F | cpu_cache_new `sdr_read_req` from its own expression, off the state machine's next-state decode | c496d5b1 | panel pending | -- |
+| 15 | H, F | cpu_cache_new `sdr_read_req` from its own expression, off the state machine's next-state decode | c496d5b1 | F -0.185 (14/20) -> +0.135 (4/20), H -0.254 -> -0.052 (11/20); median -0.372 -> -0.355; **1/20 close** (seed 35, +0.051) | kept |
 
 Ideas recorded and not done, with the reason:
 - Registering CIA-B's pins plainly. That makes drive select one 7 MHz cycle
@@ -339,3 +339,31 @@ L moved 0.08 ns, under the noise line. The median fell by 0.18, carried by D
 and G, which the change does not touch: a placement re-roll, but no gain to
 set against it. Reverted in c4e0507e. Worst hold +0.199; best seed 22 at
 -0.132.
+
+### Cache read request off the state decode (c496d5b1)
+
+The diagnostic fits of 3dbfa5a1 showed H's worst path was not inside
+ddram_ctrl: on seeds 31 and 22 it was F's path, ram2's D-cache tag RAM -> the
+18-bit tag compare -> the cache state machine's next-state decode ->
+sdr_read_req (-0.331 on seed 31, where sdr_read_req ended 6 of the 10 worst
+H paths). ddram_ctrl's own paths came second (wq_a -> sp_conf_r, -0.002 on
+seed 35). sdr_read_req now has its own expression; rtl/sim/cachereq proves the
+module identical on every clock. The module is shared with ram1. Same panel,
+run 39175622637:
+
+| family | e88e57ba | + cache request off the decode |
+|---|---|---|
+| A_sys_to_sd_addr | +0.845 (0/20) | +0.486 (2/20, A.cpu_wrapper) |
+| B_114_to_sd_addr | +0.288 (3/20) | +0.173 (5/20) |
+| C.sdram_cache | +0.267 (5/20) | +0.380 (1/20) |
+| D sdram data into the CPU | -0.205 (15/20) | 0.000 (10/20) |
+| F.ddram_cache | -0.185 (14/20) | **+0.135 (4/20)** |
+| G ddram data into the CPU | -0.099 (12/20) | +0.062 (7/20) |
+| H.ddram_ctrl | -0.254 (15/20) | -0.052 (11/20) |
+| L.ss_ctrl_internal | -0.247 (17/20) | -0.285 (19/20) |
+| M.ascal | -0.017 (11/20) | -0.063 (16/20) |
+| all_setup median | -0.372 | **-0.355** |
+
+Seed 35 closes (setup +0.051, hold +0.234): the first seed to close since the
+10-17 sync. Worst hold +0.174. Kept. L is now the widest wall, failing in 19
+of 20 seeds with a worst of -1.083.
