@@ -56,8 +56,8 @@ including the ones that are reverted.
 | 15 | H, F | cpu_cache_new `sdr_read_req` from its own expression, off the state machine's next-state decode | c496d5b1 | F -0.185 (14/20) -> +0.135 (4/20), H -0.254 -> -0.052 (11/20); median -0.372 -> -0.355; **1/20 close** (seed 35, +0.051) | kept |
 | 16 | L | every restore refusal from a registered flag: magic, version, length, core_words (`rd_*_bad`, `len_bad`), fingerprint (`kick_eq`), payload CRC (`crc_eq`, row 14's) | 0a8fe3b7 | L -0.285 (19/20) -> -0.189 (17/20), under the noise line; median -0.355 -> -0.459, 1 -> 0 close (H -0.247, F -0.145, D -0.175, G -0.099) | reverted (5029a4a3); the 120-round restore bench with every refusal kind is in 0a8fe3b7 for reuse |
 | 17 | H | MAX_FANOUT 16 on ddram_ctrl's `ss_port_own` (DDR3 port-0 grant, >100 loads) | 2b894af6 | took effect (8 copies), ss_port_own paths gone; H -0.052 -> -0.055 (11/20 both), median -0.355 -> -0.393, 1 -> 0 close | reverted (85328d13): it removed one seed's outlier, which the panel does not count |
-| 18 | L | multicycle 2 from ss_ctrl's `shadow_rd_addr` into ss_ctrl (the shadow readback round trip; the address is held >= 6 clk_114 cycles at every read, checked in rtl/sim/ssown) | d6f02c61 | panel pending | -- |
-| 19 | hold | false path into `ss_dbg_meta` (first stage of the diagnostics' 2-FF synchroniser); same panel as row 18 | d6f02c61 | panel pending | -- |
+| 18 | L | multicycle 2 from ss_ctrl's `shadow_rd_addr` into ss_ctrl (the shadow readback round trip; the address is held >= 6 clk_114 cycles at every read, checked in rtl/sim/ssown) | d6f02c61 | L -0.285 (19/20, worst -1.083) -> -0.159 (14/20, worst -0.696); vs the same RTL's 2b894af6 panel -0.316 (18/20, worst -2.960); median -0.355 -> -0.519 (D, G, M re-rolled) | kept: a proven constraint, its own family better on median, count and worst, the median drop in families it does not reach |
+| 19 | hold | false path into `ss_dbg_meta` (first stage of the diagnostics' 2-FF synchroniser); same panel as row 18 | d6f02c61 | 0 hold failures in 20 (worst +0.174), against 2 on the panel before | kept |
 
 Ideas recorded and not done, with the reason:
 - Registering ss_regshadow's rd_data (its set/clear mux) on clk_sys: the RTL
@@ -435,3 +435,32 @@ Two things this panel showed that the next attempts take up:
   the shadow register file -> shadow_rd_data -> sh_low / crc_shift, a
   combinational round trip out of ss_ctrl and back in one clk_114 cycle. The
   same round trip was seed 32's L worst on the 0a8fe3b7 panel (-0.488).
+
+### Shadow readback multicycle and the diagnostics synchroniser (d6f02c61) -- kept
+
+Run 39192993535. Both exceptions matched: the fit log's only 332174 warnings
+are the four of every run (AmigaCD.sdc 167 and 169, z3sdr_* and sdram_dual*,
+from upstream 26eb46a; synthesis folds those registers, so the false paths have
+nothing to attach to). No shadow_rd_addr path is left in L.
+
+| family | c496d5b1 | 2b894af6 (same RTL) | + rows 18, 19 |
+|---|---|---|---|
+| L.ss_ctrl_internal | -0.285 (19/20), worst -1.083 | -0.316 (18/20), worst -2.960 | **-0.159 (14/20), worst -0.696** |
+| D sdram data into the CPU | 0.000 (10/20) | -0.260 (15/20) | -0.255 (20/20) |
+| F.ddram_cache | +0.135 (4/20) | +0.099 (8/20) | -0.005 (10/20) |
+| G ddram data into the CPU | +0.062 (7/20) | -0.192 (17/20) | -0.211 (15/20) |
+| H.ddram_ctrl | -0.052 (11/20) | -0.055 (11/20) | -0.105 (14/20) |
+| M.ascal | -0.063 (16/20) | -0.110 (14/20) | -0.198 (16/20) |
+| all_setup median | -0.355 | -0.393 | -0.519 |
+| hold failures | 0 | 2 | 0 |
+
+Kept, against the median. The rule exists to stop a placement re-roll being
+read as a gain; here the change is two timing exceptions that state checked
+facts, so keeping them cannot make the hardware worse, and removing them
+would put false violations back in the gate. Their own family improved on
+all three measures against both baselines. D, G and M, which they do not
+reach, moved by the amounts rows 16 and 17 showed on unchanged RTL. Best
+seed 37 at -0.075.
+
+D (20/20) and G (15/20) -- the cache's data into TG68K -- are now the widest
+walls.
