@@ -55,7 +55,7 @@ including the ones that are reverted.
 | 14 | L | ss_ctrl restore decisions from registered compares (`pay_eq_*`, `crc_eq`) | da9174e6 | L -0.247 (17/20) -> -0.163 (15/20), under the noise line; median -0.372 -> -0.549 (D -0.301, G -0.297) | reverted (c4e0507e); the DDR3-backed restore bench `rtl/sim/ssload` is in da9174e6 for reuse |
 | 15 | H, F | cpu_cache_new `sdr_read_req` from its own expression, off the state machine's next-state decode | c496d5b1 | F -0.185 (14/20) -> +0.135 (4/20), H -0.254 -> -0.052 (11/20); median -0.372 -> -0.355; **1/20 close** (seed 35, +0.051) | kept |
 | 16 | L | every restore refusal from a registered flag: magic, version, length, core_words (`rd_*_bad`, `len_bad`), fingerprint (`kick_eq`), payload CRC (`crc_eq`, row 14's) | 0a8fe3b7 | L -0.285 (19/20) -> -0.189 (17/20), under the noise line; median -0.355 -> -0.459, 1 -> 0 close (H -0.247, F -0.145, D -0.175, G -0.099) | reverted (5029a4a3); the 120-round restore bench with every refusal kind is in 0a8fe3b7 for reuse |
-| 17 | H | MAX_FANOUT 16 on ddram_ctrl's `ss_port_own` (DDR3 port-0 grant, >100 loads) | 2b894af6 | panel pending | -- |
+| 17 | H | MAX_FANOUT 16 on ddram_ctrl's `ss_port_own` (DDR3 port-0 grant, >100 loads) | 2b894af6 | took effect (8 copies), ss_port_own paths gone; H -0.052 -> -0.055 (11/20 both), median -0.355 -> -0.393, 1 -> 0 close | reverted (85328d13): it removed one seed's outlier, which the panel does not count |
 
 Ideas recorded and not done, with the reason:
 - Checking a MAX_FANOUT assignment took effect: the map report's "Registers
@@ -402,3 +402,22 @@ Reverted in 5029a4a3. Worst hold +0.192.
 F's swing between these two panels (+0.135 -> -0.145) on an unchanged cache
 is the noise line at work: c496d5b1's gain on F and H is real only as far as
 it holds on the next panel that does not touch them.
+
+### MAX_FANOUT on ddram_ctrl's ss_port_own (2b894af6) -- reverted
+
+Run 39186900101. The duplicates were made (8 per seed) and the ss_port_own ->
+d_address paths that were seed 33's -1.386 are gone, but the panel did not
+move: H -0.055 (11/20), median -0.393, 0/20 close (best seed 38, -0.093). One
+seed's outlier is not what the panel measures. Reverted in 85328d13.
+
+Two things this panel showed that the next attempts take up:
+
+- Two hold failures, both 114 MHz -> clk_sys crossings: seed 30 a2065
+  mailbox csr0_out -> regfile csr_shadow (-0.325; the crossing row 12 keeps
+  timed on purpose) and seed 34 ss_ctrl pay_idx -> AmigaCD.sv's ss_dbg_meta
+  (-0.289), the first stage of the diagnostics' 2-FF synchroniser, which is
+  not constrained as one.
+- L's worst path of the panel, seed 35, -2.960: ss_ctrl's shadow_rd_addr ->
+  the shadow register file -> shadow_rd_data -> sh_low / crc_shift, a
+  combinational round trip out of ss_ctrl and back in one clk_114 cycle. The
+  same round trip was seed 32's L worst on the 0a8fe3b7 panel (-0.488).
