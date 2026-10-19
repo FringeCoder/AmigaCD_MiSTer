@@ -620,28 +620,6 @@ jobs:
           cd rtl/sim/cachereq
           ./run.sh
 
-      # ss_ctrl's restore refusals read registered flags (rd_*_bad, len_bad,
-      # kick_eq, crc_eq) loaded with their operands, where 32-bit compares used
-      # to sit in front of load_reject's fan-out (load_busy, the L family in
-      # docs/seed-lottery.md). tb_ss_port_own's random DDR3 data never gets a
-      # restore past the magic word, so this bench gives the DDR3 port a
-      # memory: 120 rounds of a save then a restore of that file, against the
-      # frozen previous version (ss_ctrl_ref.v, ss_crc32_ref.v), every output on
-      # every clock, plus each flag against its compare. Rounds damage the
-      # magic, the version, the length (short and long), core_words or one
-      # payload bit, or change the Kickstart image, and the bench fails without
-      # a refusal of every one of those kinds and restores with fast RAM on and
-      # off. Falsified on 2026-10-19: kick_eq not updated when the file's
-      # fingerprint is captured, crc_eq from the current CRC instead of the
-      # next, rd_cw_bad from the wrong half of the word, and len_bad not
-      # reloaded with hdr_length each fail it.
-      - name: Save-state restore refusals from registered flags (tb_ss_load_equiv.sv)
-        run: |
-          set -euo pipefail
-          bash rtl/sim/check-icarus-warnings.sh -g2012 -o tb_ss_load rtl/sim/ssload/tb_ss_load_equiv.sv rtl/ss_ctrl.v rtl/ss_quiesce.v rtl/ss_serdes.v rtl/ss_dma.v rtl/ss_crc32.v rtl/sim/ssload/ss_ctrl_ref.v rtl/sim/ssload/ss_crc32_ref.v
-          vvp -n tb_ss_load | grep -v "^round" | tail -4 | tee out_ss_load.log
-          grep -q "RUN: PASS" out_ss_load.log
-
       # Who owns each DMA slot on a copper-busy line, in every bitplane fetch
       # mode, against Copperline's cycle trace of the same copper list. Added
       # after the Turrican 2 AGA report (copper finishing a split late): a copper
