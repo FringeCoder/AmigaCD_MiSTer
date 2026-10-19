@@ -353,6 +353,14 @@ jobs:
       # moves fast_ena on every clock and requires the payload length not to
       # change mid-transfer. Falsified on 2026-10-18: following fast_ena live
       # fails it ~100k times.
+      #
+      # Third, it backs AmigaCD.sdc's multicycle from shadow_rd_addr into
+      # ss_ctrl: at every read of shadow_rd_data (S_SHADOW_LOW's last hold
+      # cycle, S_SHADOW_Q) the address must have been on the port for at least
+      # the 2 clk_114 cycles the SDC grants; it reports the shortest (6) and
+      # fails on zero reads. Falsified on 2026-10-19: S_SHADOW_LOW going
+      # straight to S_SHADOW_Q (a read 1 clock after the address moves), and a
+      # claimed multicycle of 7, each fail it.
       - name: Save-state port claim register matches freeze | peek_scan (tb_ss_port_own.sv)
         run: |
           set -euo pipefail

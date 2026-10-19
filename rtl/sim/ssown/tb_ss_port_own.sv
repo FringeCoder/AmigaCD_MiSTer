@@ -18,6 +18,14 @@
 // scan time out. The bench counts freezes, peek scans, saves begun and both
 // timeouts, and fails on zero.
 //
+// A third check backs the multicycle exception in AmigaCD.sdc from
+// shadow_rd_addr into ss_ctrl: shadow_rd_data is combinational on that address
+// (through ss_regshadow, on clk_sys), and ss_ctrl reads it in exactly two
+// places, S_SHADOW_LOW's last hold cycle and S_SHADOW_Q. At every such read the
+// address must have been stable for at least SH_MC clk_114 cycles, the
+// multicycle the SDC grants. The bench reports the shortest it saw and fails if
+// it is below SH_MC or if no read happened.
+//
 // The port lists were generated from ss_ctrl.v's header; a port added there
 // breaks this build, which is the point.
 `timescale 1ns/1ns
@@ -264,6 +272,10 @@ reg busy_phase = 0, stall_phase = 0;
 // not, so the two are not compared there; instead the payload length must not
 // change while a transfer is in progress.
 reg phase_b = 0;
+// the shadow readback's address age at each read, for the multicycle check
+localparam integer SH_MC = 2;
+integer sh_age = 0, sh_reads = 0, sh_min = 1000000, sh_bad = 0;
+reg [8:0] sh_addr_q = 0;
 integer len_bad = 0, len_moves = 0, b_xfers = 0;
 reg [23:0] cw_q = 0;
 reg        busy_q = 0;
@@ -277,6 +289,19 @@ always @(negedge clk) begin
 	if (r_peek_timeout & ~pt_q)        ptimeouts = ptimeouts + 1;
 	fz_q = ref_i.freeze; sc_q = r_peek_scan; sb_q = r_save_busy;
 	qt_q = ref_i.quiesce.timeout; pt_q = r_peek_timeout;
+	// age counts the clocks the current shadow_rd_addr has been on the port,
+	// including the one being sampled now
+	if (dut.shadow_rd_addr !== sh_addr_q) sh_age = 1; else sh_age = sh_age + 1;
+	sh_addr_q = dut.shadow_rd_addr;
+	if ((dut.state == dut.S_SHADOW_LOW && dut.ss_hold == dut.SS_HOLD_MAX) ||
+	    (dut.state == dut.S_SHADOW_Q && !dut.word_busy)) begin
+		sh_reads = sh_reads + 1;
+		if (sh_age < sh_min) sh_min = sh_age;
+		if (sh_age < SH_MC) begin
+			if (sh_bad < 10) $display("SHADOW cyc %0d: shadow_rd_data read %0d clock(s) after its address changed, under the SDC's multicycle of %0d", cyc, sh_age, SH_MC);
+			sh_bad = sh_bad + 1;
+		end
+	end
 	if (phase_b) begin
 		if (dut.state != 0 && busy_q && dut.core_words !== cw_q) len_bad = len_bad + 1;
 		if (dut.state != 0 && !busy_q) b_xfers = b_xfers + 1;
@@ -351,13 +376,15 @@ initial begin
 		cyc, freezes, scans, saves, qtimeouts, ptimeouts, mism, own_bad);
 	$display("phase B: transfers %0d, clocks fast_ena differed from the held copy mid-transfer %0d, payload length changes mid-transfer %0d",
 		b_xfers, len_moves, len_bad);
+	$display("shadow readback: %0d reads, shortest address age %0d clocks (multicycle %0d), %0d under it", sh_reads, sh_min, SH_MC, sh_bad);
+	if (sh_reads == 0) $display("FAIL: no save reached the shadow readback");
 	if (b_xfers == 0 || len_moves == 0) $display("FAIL: phase B never moved fast_ena under a transfer");
 	if (freezes == 0) $display("FAIL: never froze");
 	if (scans == 0)   $display("FAIL: never scanned for a peek");
 	if (saves == 0)   $display("FAIL: never began a save");
 	if (qtimeouts == 0) $display("FAIL: the freeze never timed out");
 	if (ptimeouts == 0) $display("FAIL: a peek scan never timed out");
-	if (mism == 0 && own_bad == 0 && len_bad == 0 && b_xfers > 0 && len_moves > 0 &&
+	if (mism == 0 && own_bad == 0 && len_bad == 0 && sh_reads > 0 && sh_bad == 0 && b_xfers > 0 && len_moves > 0 &&
 	    freezes > 0 && scans > 0 && saves > 0 && qtimeouts > 0 && ptimeouts > 0) $display("RUN: PASS");
 	else $display("RUN: FAIL");
 	$finish;
