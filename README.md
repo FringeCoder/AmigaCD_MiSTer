@@ -371,7 +371,11 @@ the Quartus 13.1 revision, kept for the older toolchain). A fit writes
 repository copies to the card as `amigacd.rbf`. It was called `Minimig` until
 2026-09-15; older logs, `seed_sweep/` bitstreams and `releases/Minimig_*.rbf`
 still carry that name, and `releases/` in particular holds upstream's builds
-rather than ours, so those were left alone.
+rather than ours, so those were left alone. The exception is
+`releases/AmigaCD_20261019.rbf`, this fork's first build to close timing since
+the 2026-10-17 upstream sync: seed 35 of c496d5b1 (fit run 39175622637), setup
++0.051 ns and hold +0.234 ns at the gated slow 100 C corner. See
+`docs/seed-lottery.md`.
 
 Some files here are shared with the userspace repository and go in both
 directions: `rtl/snac_psx.v` is a copy of one it owns, checked by

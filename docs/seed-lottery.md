@@ -507,3 +507,9 @@ AmigaCD_20261019.rbf. Its RTL is the current RTL: everything after c496d5b1
 is either reverted or SDC/bench only (d6f02c61), so that bitstream is the
 present design without rows 18 and 19's timing exceptions, which only change
 what STA reports.
+
+Copied into `releases/AmigaCD_20261019.rbf` (sha256 fe70569f904e8bdf28211aab3fa262e1835194a4e5dd6473bd7cb8f791cc5e8b),
+since the CI artifact expires on 2026-11-02. Its fit.json reports all_setup
+-0.101: the family report takes the minimum over every corner (the slow -40 C
+one here), while the gate is the slow 100 C corner only, where it is +0.051.
+Not yet run on hardware.
