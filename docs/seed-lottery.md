@@ -58,6 +58,7 @@ including the ones that are reverted.
 | 17 | H | MAX_FANOUT 16 on ddram_ctrl's `ss_port_own` (DDR3 port-0 grant, >100 loads) | 2b894af6 | took effect (8 copies), ss_port_own paths gone; H -0.052 -> -0.055 (11/20 both), median -0.355 -> -0.393, 1 -> 0 close | reverted (85328d13): it removed one seed's outlier, which the panel does not count |
 | 18 | L | multicycle 2 from ss_ctrl's `shadow_rd_addr` into ss_ctrl (the shadow readback round trip; the address is held >= 6 clk_114 cycles at every read, checked in rtl/sim/ssown) | d6f02c61 | L -0.285 (19/20, worst -1.083) -> -0.159 (14/20, worst -0.696); vs the same RTL's 2b894af6 panel -0.316 (18/20, worst -2.960); median -0.355 -> -0.519 (D, G, M re-rolled) | kept: a proven constraint, its own family better on median, count and worst, the median drop in families it does not reach |
 | 19 | hold | false path into `ss_dbg_meta` (first stage of the diagnostics' 2-FF synchroniser); same panel as row 18 | d6f02c61 | 0 hold failures in 20 (worst +0.174), against 2 on the panel before | kept |
+| 20 | D, G | row 6 again: `cpu_rdq`, the RAM return registered at clk_114 with the port select applied (lookahead; equal to the old mux on every clk_sys edge), on the merged netlist | (this commit) | panel pending | -- |
 
 Ideas recorded and not done, with the reason:
 - Registering ss_regshadow's rd_data (its set/clear mux) on clk_sys: the RTL
@@ -477,10 +478,14 @@ rules (cycle-exact, nothing upstream changed):
   READ), so no exception applies -- unlike the CPU -> RAM direction, which the
   SDC's first lines make multicycle. cpu_wrapper's own mux in front is two
   levels; the other 10-25 are inside TG68KdotC_Kernel, which is upstream. The
-  only lever left is row 6's: a registered return, one clk_114 cycle more on
-  every RAM read. Row 6 was judged on a single panel before the noise line was
-  measured (D/G better, C/F/H/L worse, median -0.524 -> -0.661). Retrying it is
-  a performance trade, not a timing fix, and is the owner's call.
+  only lever left is row 6's registered return (cpu_rdq). Row 6 was judged on a
+  single panel before the noise line was measured (D/G better, C/F/H/L worse,
+  median -0.524 -> -0.661).
+  [Corrected 2026-10-19: an earlier version of this note said cpu_rdq costs a
+  clk_114 cycle on every RAM read. It does not. It is a lookahead register --
+  each port hands over the value its return registers take at the next clock
+  -- and on every clk_sys edge, the only edges the CPU samples, it equals the
+  mux it replaces, which its bench checks. It changes no CPU-visible timing.]
 - **M -- ascal (16/20).** sys/ascal.vhd, the framework's scaler. Not ours to
   change; row 3 (disabling the adaptive filter) is the only lever and was
   rejected as a feature loss.
@@ -497,9 +502,8 @@ rules (cycle-exact, nothing upstream changed):
 
 The owner chose to stop after row 19. Row 6's registered RAM return (the only
 lever left on D/G) was offered for a re-run under the noise-line rules and
-declined: it costs a clk_114 cycle on every RAM read, a performance trade.
-It stays in the ledger as reverted, with the note above that its single-panel
-verdict predates the noise line.
+first declined on the strength of that wrong cost note (corrected above); the
+owner then asked for it anyway, which is row 20.
 
 The one closing build since the 10-17 sync is seed 35 of c496d5b1's panel
 (run 39175622637, setup +0.051, hold +0.234), the `core` artifact

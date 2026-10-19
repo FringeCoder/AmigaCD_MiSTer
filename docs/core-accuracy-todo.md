@@ -1356,11 +1356,8 @@ every mode -- the general form of what c5ffbf9 did narrowly.
 
 ## T29 — A bypassed read of SDRAM-forwarded Fast RAM can hand the next miss a stale fill  [SIM] — [OPEN, upstream]
 
-Found 2026-10-18 by `rtl/sim/rdq/tb_cpu_rdq_equiv.sv` (commit fb9559cc), which
-drove both RAM controllers with real CPU-shaped traffic. That bench went with
-the cpu_rdq change it was written for (reverted, see docs/seed-lottery.md);
-`git show fb9559cc` has it, and it reproduces this once its `fwd_busy` hold
-is removed. Not caused by anything here: the same
+Found 2026-10-18 by `rtl/sim/rdq/tb_cpu_rdq_equiv.sv`, which drives both RAM
+controllers with real CPU-shaped traffic. Not caused by anything here: the same
 code is in Minimig-AGA `0bf2ab1` (`ddram_ctrl.v` states 5/6,
 `cpu_cache_new.v` `CPU_SM_FILLW`), from `26eb46a`.
 
@@ -1388,7 +1385,7 @@ CPU that issues its next access one clk_sys cycle after the last, which a
 a bypassed read there, which an MMU cache-inhibited page or D-cache-off code
 produces. Symptom would be a wrong word then a freeze. The bench now holds the
 CPU off while `ddram_ctrl` is in state 6 or 7 (`fwd_busy`), so that it tests
-what it was written for.
+what it was written for; drop that line to reproduce this.
 
 Fix candidates, neither done: keep `CPU_SM_FILLW` until the line's words are
 all in (as the cached path does), or have state 6 forward `cache_fill` only for
