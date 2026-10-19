@@ -512,7 +512,13 @@ localparam SS_MAGIC   = 32'h53534341;
 // after it moved. A 1.3 file has no mask; the host upgrades one in memory
 // before it is uploaded (all entries marked written, which is what 1.3
 // replayed), so this core only ever reads 1.4. See minimig_savestate.cpp.
-localparam SS_VERSION = 32'h00010004;
+// 1.5: the state section grew by eight words, 66 to 74 -- the 68030's MMU
+// registers (rtl/ss_state.vh) -- and everything after it moved. The new
+// fields are the top of the vector, so the eight words are the END of the
+// state section; the host upgrades a 1.4 file by inserting eight zero words
+// there (TC zero: no translation, which is every 1.4 file's machine), so this
+// core only ever reads 1.5.
+localparam SS_VERSION = 32'h00010005;
 
 // Sized copies of CORE_WORDS for the comparisons on the restore path, so a
 // 24-bit counter and a 32-bit header word are each compared against something

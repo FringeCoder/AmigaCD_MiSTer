@@ -85,6 +85,12 @@ module cpu_wrapper
 	output      [2:0] ss_sfc,          // TG68K SFC/DFC (68010+), for MOVES
 	output      [2:0] ss_dfc,
 	output      [6:0] ss_cacr_hi,      // TG68K: CACR's other bits, see the kernel port
+	output     [31:0] ss_mmu_tc,       // TG68K: the 68030's MMU registers
+	output     [31:0] ss_mmu_tt0,
+	output     [31:0] ss_mmu_tt1,
+	output     [63:0] ss_mmu_crp,
+	output     [63:0] ss_mmu_srp,
+	output     [15:0] ss_mmu_sr,
 
 	// Save state restore. Write side of the same TG68K architectural
 	// registers, taken on the CPU clock while the core is parked by ss_arm.
@@ -103,6 +109,9 @@ module cpu_wrapper
 	// data from ss_wr_data; CACR uses [3:0], which is all the vector carries.
 	input             ss_vbr_wr,
 	input             ss_cacr_wr,
+	// The MMU registers, index in ss_wr_index[2:0]; staged in the kernel and
+	// applied on ss_resume (see the ss_mmu_wr port there).
+	input             ss_mmu_wr,
 	// Sequencer re-seed, pulsed once after the writes above and before the
 	// hold is released. The architectural registers on their own are not a
 	// restore -- see the ss_resume comment in TG68KdotC_Kernel.vhd.
@@ -424,6 +433,12 @@ cpu_inst_p
   .ss_sfc(ss_sfc),
   .ss_dfc(ss_dfc),
   .ss_cacr_hi(ss_cacr_hi),
+  .ss_mmu_tc(ss_mmu_tc),
+  .ss_mmu_tt0(ss_mmu_tt0),
+  .ss_mmu_tt1(ss_mmu_tt1),
+  .ss_mmu_crp(ss_mmu_crp),
+  .ss_mmu_srp(ss_mmu_srp),
+  .ss_mmu_sr(ss_mmu_sr),
 
   // Restore path -- TG68K only. fx68k has no equivalent write port and is
   // locked out of the savestate path in AmigaCD.sv.
@@ -435,6 +450,7 @@ cpu_inst_p
   .ss_usp_wr(ss_usp_wr),
   .ss_vbr_wr(ss_vbr_wr),
   .ss_cacr_wr(ss_cacr_wr),
+  .ss_mmu_wr(ss_mmu_wr),
   .ss_resume(ss_resume)
 );
 

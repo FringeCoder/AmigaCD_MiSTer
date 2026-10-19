@@ -201,6 +201,15 @@ entity TG68KdotC_Kernel is
 		-- program never chose. All zero, as an older save file gives, is the
 		-- reset value of the pair: not owned, so the D-cache is on.
 		ss_cacr_hi				: out std_logic_vector(6 downto 0);
+		-- The 68030's MMU registers, in the state vector since format 1.5
+		-- (2026-10-19). Static while the CPU is parked: only PMOVE and reset
+		-- write them.
+		ss_mmu_tc				: out std_logic_vector(31 downto 0);
+		ss_mmu_tt0				: out std_logic_vector(31 downto 0);
+		ss_mmu_tt1				: out std_logic_vector(31 downto 0);
+		ss_mmu_crp				: out std_logic_vector(63 downto 0);
+		ss_mmu_srp				: out std_logic_vector(63 downto 0);
+		ss_mmu_sr				: out std_logic_vector(15 downto 0);
 
 		-- Save state restore. Write side of the same architectural registers,
 		-- driven only while the savestate controller has the CPU frozen. Index
@@ -222,6 +231,18 @@ entity TG68KdotC_Kernel is
 		-- ss_cacr_hi bits, masked on the 68030 as MOVEC masks them.
 		ss_vbr_wr				: in  std_logic := '0';
 		ss_cacr_wr				: in  std_logic := '0';
+		-- The MMU registers' restore, 32 bits per strobe from ss_wr_data with
+		-- ss_wr_index(2 downto 0) choosing: 0 TC, 1 TT0, 2 TT1, 3 CRP high,
+		-- 4 CRP low, 5 SRP high, 6 SRP low, 7 MMUSR. These land in a STAGE, not
+		-- in the registers, and the stage is applied on ss_resume. Written
+		-- straight into TC mid-restore, enabling translation would start a
+		-- table walk -- bus reads -- while the save state owns the bus, and
+		-- disabling it would move the address of the parked fetch under it.
+		-- ss_resume is the edge that withdraws that fetch (state <= "01"), so
+		-- from the next clock there is nothing on the bus for the change to
+		-- disturb. Applied only on a 68030 with its MMU; otherwise translation
+		-- is switched off, as reset switches it off.
+		ss_mmu_wr				: in  std_logic := '0';
 
 		-- Save state restore: sequencer re-seed. Pulse for one clock after
 		-- the architectural registers above have been written and before the
@@ -486,6 +507,10 @@ architecture logic of TG68KdotC_Kernel is
 	signal MMU_SRP				: std_logic_vector(63 downto 0) := (OTHERS => '0');
 	signal MMU_CRP				: std_logic_vector(63 downto 0) := (OTHERS => '0');
 	signal MMU_SR				: std_logic_vector(15 downto 0);
+	-- The restore's stage for the MMU registers; see the ss_mmu_wr port.
+	signal ss_st_tc, ss_st_tt0, ss_st_tt1 : std_logic_vector(31 downto 0) := (OTHERS => '0');
+	signal ss_st_crp, ss_st_srp         : std_logic_vector(63 downto 0) := (OTHERS => '0');
+	signal ss_st_sr                     : std_logic_vector(15 downto 0) := (OTHERS => '0');
 	signal pmmu_ext			: std_logic_vector(15 downto 0);
 	signal pmmu_q				: std_logic_vector(31 downto 0);
 	signal pmmu_hold			: std_logic_vector(31 downto 0);
@@ -656,7 +681,7 @@ ALU: TG68K_ALU
 
 	pmmu: entity work.TG68K_MMU030
 	port map(
-		clk => clk, reset => Reset, k_ena => clkena_lw,
+		clk => clk, reset => Reset, k_ena => clkena_lw, ss_flush => ss_resume,
 		tc => MMU_TC, crp => MMU_CRP, srp => MMU_SRP, tt0 => MMU_TT0, tt1 => MMU_TT1,
 		l_addr => addr, l_state => state_mmu, l_fc => FC_eff, l_rmw => '0',
 		l_uds => memmaskmux(5), l_lds => memmaskmux(4), l_wr => data_write_i, l_long => longword_i,
@@ -910,6 +935,12 @@ ss_halted   <= ae_halt;
 ss_sfc      <= SFC;
 ss_dfc      <= DFC;
 ss_cacr_hi  <= CACR_DC_owned & CACR_DC & CACR(13) & CACR(12) & CACR(9) & CACR(8) & CACR(4);
+ss_mmu_tc   <= MMU_TC;
+ss_mmu_tt0  <= MMU_TT0;
+ss_mmu_tt1  <= MMU_TT1;
+ss_mmu_crp  <= MMU_CRP;
+ss_mmu_srp  <= MMU_SRP;
+ss_mmu_sr   <= MMU_SR;
 
 -----------------------------------------------------------------------------
 -- Write Reg
@@ -4900,9 +4931,9 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 	  -- The state vector carries all of CACR. On the 68030 the restore applies
 	  -- the mask a MOVEC applies ("11001100010011"), so bits 3 and 2 -- clear
 	  -- strobes there, captured through CACR_out with cclr ORed in -- cannot land
-	  -- in the register. CAAR, MSP, ISP and the MMU registers are not in the
-	  -- vector: AmigaCD.sv refuses save states on the 68030 with its MMU, and
-	  -- on any CPU once the master stack has been used.
+	  -- in the register. CAAR, MSP and ISP are not in the vector: AmigaCD.sv
+	  -- refuses a save once the master stack has been used. The MMU registers
+	  -- are restored through their own stage (ss_mmu_wr).
 	  elsif ss_vbr_wr = '1' then
 		VBR <= ss_wr_data;
 	  elsif ss_cacr_wr = '1' then
@@ -5064,11 +5095,41 @@ PROCESS (opcode, pmmu_ext, pmmu_ea, pmmu_chk, pmmu_tcs, MMU_TC, MMU_SRP, MMU_CRP
 PROCESS (clk)
 	BEGIN
 		IF rising_edge(clk) THEN
+			IF ss_mmu_wr='1' THEN
+				CASE ss_wr_index(2 downto 0) IS
+					WHEN "000" => ss_st_tc <= ss_wr_data;
+					WHEN "001" => ss_st_tt0 <= ss_wr_data;
+					WHEN "010" => ss_st_tt1 <= ss_wr_data;
+					WHEN "011" => ss_st_crp(63 downto 32) <= ss_wr_data;
+					WHEN "100" => ss_st_crp(31 downto 0) <= ss_wr_data;
+					WHEN "101" => ss_st_srp(63 downto 32) <= ss_wr_data;
+					WHEN "110" => ss_st_srp(31 downto 0) <= ss_wr_data;
+					WHEN OTHERS => ss_st_sr <= ss_wr_data(15 downto 0);
+				END CASE;
+			END IF;
 			IF Reset='1' THEN
 				MMU_TC(31) <= '0';
 				MMU_TT0(15) <= '0';
 				MMU_TT1(15) <= '0';
 				MMU_SR <= (OTHERS => '0');
+				pmmu_chk <= '0';
+				pmmu_cfg <= '0';
+				pmmu_cap <= '0';
+			ELSIF ss_resume='1' THEN
+				-- The restore's MMU registers, from the stage; see ss_mmu_wr.
+				IF CPU030='1' AND MMU030='1' THEN
+					MMU_TC  <= ss_st_tc;
+					MMU_TT0 <= ss_st_tt0;
+					MMU_TT1 <= ss_st_tt1;
+					MMU_CRP <= ss_st_crp;
+					MMU_SRP <= ss_st_srp;
+					MMU_SR  <= ss_st_sr;
+				ELSE
+					MMU_TC(31) <= '0';
+					MMU_TT0(15) <= '0';
+					MMU_TT1(15) <= '0';
+					MMU_SR <= (OTHERS => '0');
+				END IF;
 				pmmu_chk <= '0';
 				pmmu_cfg <= '0';
 				pmmu_cap <= '0';
@@ -5128,7 +5189,7 @@ PROCESS (clk)
 					WHEN OTHERS => pmmu_q <= X"0000" & MMU_SR;
 				END CASE;
 			END IF;
-			IF mmu_sr_we='1' THEN
+			IF mmu_sr_we='1' AND ss_resume='0' THEN
 				MMU_SR <= mmu_sr_in;
 			END IF;
 		END IF;

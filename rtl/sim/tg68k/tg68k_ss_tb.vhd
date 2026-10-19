@@ -51,7 +51,10 @@ entity tg68k_ss_tb is
 		-- 1 runs the kernel as cpu_wrapper does for "68030 no MMU": CPU030
 		-- high, MMU030 low. CI runs the bench both ways, since the 68030 is
 		-- allowed save states without its MMU since 2026-10-19.
-		CPU030_G  : integer := 0
+		CPU030_G  : integer := 0;
+		-- 1, with CPU030_G, is the 68030 with its MMU (MMU030 high), which
+		-- PHASE 8 needs; save states carry the MMU registers since format 1.5.
+		MMU_G     : integer := 0
 	);
 end entity;
 
@@ -62,6 +65,7 @@ architecture sim of tg68k_ss_tb is
 		if b then return '1'; else return '0'; end if;
 	end function;
 	constant C030 : std_logic := to_sl(CPU030_G /= 0);
+	constant CMMU : std_logic := to_sl(CPU030_G /= 0 and MMU_G /= 0);
 
 	constant MEMW : integer := 16384;			-- words, i.e. 32 KB
 	-- Words put back between scan iterations: the program plus the sentinels.
@@ -194,6 +198,10 @@ architecture sim of tg68k_ss_tb is
 	signal ss_sfc         : std_logic_vector(2 downto 0);
 	signal ss_dfc         : std_logic_vector(2 downto 0);
 	signal ss_cacr_hi     : std_logic_vector(6 downto 0);
+	signal ss_mmu_wr      : std_logic := '0';
+	signal ss_mmu_tc, ss_mmu_tt0, ss_mmu_tt1 : std_logic_vector(31 downto 0);
+	signal ss_mmu_crp, ss_mmu_srp            : std_logic_vector(63 downto 0);
+	signal ss_mmu_sr                         : std_logic_vector(15 downto 0);
 
 	-- Testbench back door into the memory model, so a scan iteration can undo
 	-- whatever the previous one's runaway CPU scribbled.
@@ -229,7 +237,7 @@ begin
 			berr           => '0',
 			CPU            => "11",				-- as cpu_wrapper instantiates it
 			CPU030         => C030,
-			MMU030         => '0',
+			MMU030         => CMMU,
 			addr_out       => addr_out,
 			data_write     => data_write,
 			nWr            => nWr,
@@ -257,6 +265,13 @@ begin
 			ss_sfc         => ss_sfc,
 			ss_dfc         => ss_dfc,
 			ss_cacr_hi     => ss_cacr_hi,
+			ss_mmu_tc      => ss_mmu_tc,
+			ss_mmu_tt0     => ss_mmu_tt0,
+			ss_mmu_tt1     => ss_mmu_tt1,
+			ss_mmu_crp     => ss_mmu_crp,
+			ss_mmu_srp     => ss_mmu_srp,
+			ss_mmu_sr      => ss_mmu_sr,
+			ss_mmu_wr      => ss_mmu_wr,
 			ss_wr_index    => ss_wr_index,
 			ss_wr_data     => ss_wr_data,
 			ss_wr_en       => ss_wr_en,
@@ -1105,6 +1120,107 @@ begin
 		end if;
 		check(D_CACHE_out = '0', "owned with DC clear restores the D-cache off");
 		clkena_in <= '1';
+		-----------------------------------------------------------------------
+		note("PHASE 8 -- the 68030's MMU registers in the state vector");
+		-- Format 1.5. Two page tables, 4 KB pages, one level (TC $80CC8000:
+		-- PS 12, IS 12, TIA 8), identity everywhere except logical page 5:
+		--   table A at $6000 maps page 5 to physical page 4 ($4000, CAFEF00D)
+		--   table B at $6400 maps page 5 to itself      ($5000, 0BADBEEF)
+		-- Machine A loads CRP_A and TC and reads $5000: CAFEF00D, and the
+		-- capture export shows its TC and CRP. Machine B does the same through
+		-- table B, which leaves page 5 -> 5 in its ATC, and is frozen. A's MMU
+		-- registers are then restored into B through the stage and ss_resume,
+		-- and the restored program reads $5000 again: CAFEF00D only if the
+		-- registers landed AND the ATC was flushed -- the stale entry would
+		-- give 0BADBEEF, since the ATC is not keyed by the root pointer.
+		if CMMU = '1' then
+			boot_prep;
+			for i in 0 to 255 loop
+				if i mod 8 = 5 then
+					poke_w(16#6000# + i*4, X"0000"); poke_w(16#6002# + i*4, X"4001");
+				else
+					poke_w(16#6000# + i*4, conv_std_logic_vector((i*16#1000#) / 16#10000#, 16));
+					poke_w(16#6002# + i*4, conv_std_logic_vector((i*16#1000#) mod 16#10000# + 1, 16));
+				end if;
+				poke_w(16#6400# + i*4, conv_std_logic_vector((i*16#1000#) / 16#10000#, 16));
+				poke_w(16#6402# + i*4, conv_std_logic_vector((i*16#1000#) mod 16#10000# + 1, 16));
+			end loop;
+			poke_w(16#4000#, X"CAFE"); poke_w(16#4002#, X"F00D");
+			poke_w(16#5000#, X"0BAD"); poke_w(16#5002#, X"BEEF");
+			poke_w(16#700#, X"7FFF"); poke_w(16#702#, X"0002");	-- CRP A: limit $7FFF, 4-byte table
+			poke_w(16#704#, X"0000"); poke_w(16#706#, X"6000");
+			poke_w(16#708#, X"80CC"); poke_w(16#70A#, X"8000");	-- TC
+			poke_w(16#710#, X"7FFF"); poke_w(16#712#, X"0002");	-- CRP B
+			poke_w(16#714#, X"0000"); poke_w(16#716#, X"6400");
+			poke_w(16#780#, X"41F8"); poke_w(16#782#, X"0700");	-- lea $0700.w,a0
+			poke_w(16#784#, X"F010"); poke_w(16#786#, X"4C00");	-- pmove (a0),crp
+			poke_w(16#788#, X"41F8"); poke_w(16#78A#, X"0708");	-- lea $0708.w,a0
+			poke_w(16#78C#, X"F010"); poke_w(16#78E#, X"4000");	-- pmove (a0),tc
+			poke_w(16#790#, X"2038"); poke_w(16#792#, X"5000");	-- move.l $5000.w,d0
+			poke_w(16#794#, X"21C0"); poke_w(16#796#, X"0610");	-- move.l d0,$0610.w
+			poke_w(16#798#, X"60FE");						-- bra.s *
+			-- The restored program, identity-mapped page 0 in both tables.
+			poke_w(16#7E0#, X"2238"); poke_w(16#7E2#, X"5000");	-- move.l $5000.w,d1
+			poke_w(16#7E4#, X"21C1"); poke_w(16#7E6#, X"0614");	-- move.l d1,$0614.w
+			poke_w(16#7E8#, X"60FE");						-- bra.s *
+			poke_w(16#610#, X"0000"); poke_w(16#612#, X"0000");
+			boot_go;
+			step(800);
+			check(meml(16#610#) = X"CAFEF00D", "machine A reads $5000 through table A");
+			check(ss_mmu_tc = X"80CC8000" and ss_mmu_crp = X"7FFF000200006000",
+			      "the capture export shows TC and CRP");
+			-- Machine B: the same program on table B.
+			poke_w(16#784#, X"F010");
+			poke_w(16#780#, X"41F8"); poke_w(16#782#, X"0710");	-- lea $0710.w,a0
+			poke_w(16#610#, X"0000"); poke_w(16#612#, X"0000");
+			poke_w(16#614#, X"0000"); poke_w(16#616#, X"0000");
+			nReset <= '0';
+			step(6);
+			nReset <= '1';
+			step(800);
+			check(meml(16#610#) = X"0BADBEEF", "machine B reads $5000 through table B");
+			-- Freeze B and restore A's MMU registers, a PC at $7E0 and a
+			-- supervisor SR, then re-seed.
+			clkena_in <= '0';
+			step(4);
+			ss_wr_data <= X"000007E0"; ss_pc_wr <= '1';
+			wait until rising_edge(clk);
+			ss_pc_wr <= '0';
+			ss_wr_data <= X"00002700"; ss_sr_wr <= '1';
+			wait until rising_edge(clk);
+			ss_sr_wr <= '0';
+			for i in 0 to 7 loop
+				ss_wr_index <= conv_std_logic_vector(i, 4);
+				case i is
+					when 0 => ss_wr_data <= X"80CC8000";
+					when 1 => ss_wr_data <= X"00000000";
+					when 2 => ss_wr_data <= X"00000000";
+					when 3 => ss_wr_data <= X"7FFF0002";
+					when 4 => ss_wr_data <= X"00006000";
+					when 5 => ss_wr_data <= X"00000000";
+					when 6 => ss_wr_data <= X"00000000";
+					when others => ss_wr_data <= X"00000000";
+				end case;
+				ss_mmu_wr <= '1';
+				wait until rising_edge(clk);
+				ss_mmu_wr <= '0';
+			end loop;
+			step(2);
+			check(ss_mmu_crp = X"7FFF000200006400",
+			      "the MMU writes are staged: CRP is B's until the re-seed");
+			ss_resume <= '1';
+			wait until rising_edge(clk);
+			ss_resume <= '0';
+			step(2);
+			check(ss_mmu_crp = X"7FFF000200006000" and ss_mmu_tc = X"80CC8000",
+			      "the re-seed applies the staged MMU registers");
+			clkena_in <= '1';
+			step(800);
+			check(meml(16#614#) = X"CAFEF00D",
+			      "the restored machine translates through A's table, not B's ATC");
+		else
+			note("  (skipped: needs CPU030_G=1 MMU_G=1)");
+		end if;
 
 		if errors = 0 then
 			note("RUN: PASS");

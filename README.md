@@ -302,9 +302,9 @@ CPU row offers the machine's 68020 or a 68030 for the 68020 machines (CD32, CD32
 * **68030** has an MMU and runs at 56.7MHz with no speed limit. There is no FPU.
 * **68030 no MMU** is the same 68030 with the MMU instructions taking the F-line exception, as on a 68020 with no MMU,
   for software that does not expect an MMU.
-* **Save states work on the 68030 no MMU, and are refused on the 68030 with its MMU**: the state vector has no room
-  for the MMU's registers. As on the 68020, Zorro III fast RAM refuses them too, and so does a program that has used
-  the master stack.
+* **Save states work on the 68030**, with or without the MMU (the MMU's registers are in the state since format 1.5;
+  older save files are upgraded on load). As on the 68020, Zorro III fast RAM refuses them, and so does a program that
+  has used the master stack.
 
 As on the real machines, chip RAM, ROM and the custom registers are always read through the bus, and the data cache is
 switched on and off by software (SetPatch, CPU, WHDLoad).

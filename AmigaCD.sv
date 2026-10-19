@@ -546,6 +546,9 @@ wire [31:0] ss_vbr;
 wire  [3:0] ss_cacr;
 wire  [2:0] ss_sfc, ss_dfc;
 wire  [6:0] ss_cacr_hi;
+wire [31:0] ss_mmu_tc, ss_mmu_tt0, ss_mmu_tt1;
+wire [63:0] ss_mmu_crp, ss_mmu_srp;
+wire [15:0] ss_mmu_sr;
 reg  [31:0] ss_cpu_d0, ss_cpu_d1, ss_cpu_d2, ss_cpu_d3;
 reg  [31:0] ss_cpu_d4, ss_cpu_d5, ss_cpu_d6, ss_cpu_d7;
 reg  [31:0] ss_cpu_a0, ss_cpu_a1, ss_cpu_a2, ss_cpu_a3;
@@ -891,6 +894,7 @@ wire        ss_fanout_sr_wr;
 wire        ss_fanout_usp_wr;
 wire        ss_fanout_vbr_wr;
 wire        ss_fanout_cacr_wr;
+wire        ss_fanout_mmu_wr;
 wire        ss_fanout_resume;
 wire  [3:0] ss_fanout_map_in;
 wire        ss_fanout_map_we;
@@ -1160,6 +1164,12 @@ cpu_wrapper cpu_wrapper
 	.ss_sfc       (ss_sfc          ),
 	.ss_dfc       (ss_dfc          ),
 	.ss_cacr_hi   (ss_cacr_hi      ),
+	.ss_mmu_tc    (ss_mmu_tc       ),
+	.ss_mmu_tt0   (ss_mmu_tt0      ),
+	.ss_mmu_tt1   (ss_mmu_tt1      ),
+	.ss_mmu_crp   (ss_mmu_crp      ),
+	.ss_mmu_srp   (ss_mmu_srp      ),
+	.ss_mmu_sr    (ss_mmu_sr       ),
 
 	// Restore write port into the TG68K register file, driven by
 	// ss_state_fanout at the bottom of this file. One shared data bus and one
@@ -1174,6 +1184,7 @@ cpu_wrapper cpu_wrapper
 	.ss_usp_wr    (ss_fanout_usp_wr  ),
 	.ss_vbr_wr    (ss_fanout_vbr_wr  ),
 	.ss_cacr_wr   (ss_fanout_cacr_wr ),
+	.ss_mmu_wr    (ss_fanout_mmu_wr  ),
 	.ss_resume    (ss_fanout_resume  ),
 	.fastramcfg   (memcfg[6:4]     ),
 	.bootrom      (bootrom         ),
@@ -1996,23 +2007,17 @@ wire       ss_load_req_osd = status[54];
 // is enough: save_busy (and therefore freeze, the CPU park and every port
 // takeover below) can only ever rise out of ss_ctrl's S_IDLE on save_req.
 //
-// *** 68030 lockout *** (since upstream 26eb46a). The 68030 is TG68K, but with
-// state the vector does not carry: the MMU (TC, TT0, TT1, CRP, SRP, MMUSR and
-// whatever the walker has cached), the upper CACR bits, CAAR, MSP and ISP. A
-// program that never touches the MMU would restore fine, but the save cannot
-// tell, and a restored machine with its translation tables gone is wrong in a
-// way that shows up wherever the program next takes a fault, not at the
-// restore. Same answer as fx68k: refused, not silently partial. Its Zorro III
-// fast RAM, which the payload has no section for, would be a second reason.
-//
-// "68030 no MMU" (upstream a5f1637, cpucfg[2] on the 68030) is NOT refused,
-// since 2026-10-19. Without the MMU the rest of that list is what the 68020
-// has: the upper CACR bits are in the vector now (ss_cacr_hi), MSP and ISP
-// are covered by the master-stack refusal below, CAAR is what it is on the
-// 68020, and Zorro III keeps its own refusal. PMOVE does not decode there
-// (TG68KdotC_Kernel.vhd, CPU030 and MMU030), so TC stays at its reset 0 and
-// nothing is translated. The kernel's deferred prefetch-fault and rerun state,
-// which is 68030 machinery, is cleared by ss_resume as reset clears it.
+// *** the 68030 *** Refused from upstream 26eb46a until 2026-10-19: the
+// 68030 is TG68K, but with state the vector did not carry -- the MMU (TC, TT0,
+// TT1, CRP, SRP, MMUSR and whatever the walker has cached), the upper CACR
+// bits, CAAR, MSP and ISP. Now the vector carries the MMU registers (format
+// 1.5) and the upper CACR bits (ss_cacr_hi), and the rest is what the 68020
+// has: MSP and ISP are covered by the master-stack refusal below and CAAR is
+// harmless to lose (below). The ATC and the walker are not saved; the restore
+// flushes them on ss_resume, on the same edge it loads the MMU registers, and
+// the restored tables repopulate the ATC on the next walk
+// (TG68KdotC_Kernel.vhd ss_mmu_wr, TG68K_MMU030.vhd ss_flush). Its Zorro III
+// fast RAM keeps its own refusal, below.
 //
 // The 68020 has MSP and ISP too (upstream 894266e). It is not refused for
 // them outright, because AmigaOS never uses the master stack; a save is
@@ -2030,8 +2035,7 @@ wire       ss_load_req_osd = status[54];
 // The OSD already refuses it (menu.cpp, minimig_ss_blocked); this is the core
 // not relying on that. The decode is cpu_wrapper's ac_memcard and fast_ena's
 // below: memcfg[6] is a Zorro III board exactly when cpu_type & ~ec020.
-wire ss_supported   = (cpucfg[1:0] != 2'b00) & ~((cpucfg[1:0] == 2'b10) & ~cpucfg[2])
-                    & ~(cpu_type & ~ss_ec020 & memcfg[6]);
+wire ss_supported   = (cpucfg[1:0] != 2'b00) & ~(cpu_type & ~ss_ec020 & memcfg[6]);
 // A save is refused, at the request, once the 68020's master stack has been in
 // use since reset: MSP and ISP are not in the vector, so such a save would
 // restore with whatever stacks the running machine has. AmigaOS never sets M,
@@ -2747,7 +2751,7 @@ end
 // this flop becomes the only thing keeping a back-to-back restore off the
 // previous vector.
 //
-// Cost is `SS_STATE_W` flops, 2106 of them, and one clk_sys cycle of extra
+// Cost is `SS_STATE_W` flops, 2346 of them, and one clk_sys cycle of extra
 // latency on a 23-cycle sequence that is followed by a million SDRAM word
 // writes (see the ORDERING NOTE below).
 reg [`SS_STATE_W-1:0] ss_state_out_q;
@@ -2781,6 +2785,7 @@ ss_state_fanout #(.STATE_W(`SS_STATE_W)) ss_fanout
 	.cpu_usp_wr   (ss_fanout_usp_wr),
 	.cpu_vbr_wr   (ss_fanout_vbr_wr),
 	.cpu_cacr_wr  (ss_fanout_cacr_wr),
+	.cpu_mmu_wr   (ss_fanout_mmu_wr),
 	.cpu_resume   (ss_fanout_resume),
 
 	.map_in       (ss_fanout_map_in),

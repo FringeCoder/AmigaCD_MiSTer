@@ -128,13 +128,14 @@ module tb_ss_fanout_retime;
 	wire [31:0] wd_raw, wd_ali, wd_mis;
 	wire        we_raw, we_ali, we_mis;
 	wire        pc_raw, pc_ali, pc_mis;
+	wire        mw_raw;
 
 	ss_state_fanout #(.STATE_W(STATE_W)) f_raw (
 		.clk(clk_sys), .rst_n(rst_n), .req(req_raw), .ack(ack_raw),
 		.state(state_out),
 		.cpu_wr_index(wi_raw), .cpu_wr_data(wd_raw), .cpu_wr_en(we_raw),
 		.cpu_pc_wr(pc_raw), .cpu_sr_wr(), .cpu_usp_wr(), .cpu_vbr_wr(),
-		.cpu_cacr_wr(), .cpu_resume(), .map_in(), .map_we(), .intreq_out(),
+		.cpu_cacr_wr(), .cpu_mmu_wr(mw_raw), .cpu_resume(), .map_in(), .map_we(), .intreq_out(),
 		.cia_a_out(), .cia_b_out(), .cia_we(), .akiko_out(), .akiko_we(),
 		.busy());
 
@@ -162,12 +163,16 @@ module tb_ss_fanout_retime;
 	reg [31:0] reg_mis [0:15];
 	reg [31:0] pcv_raw, pcv_ali, pcv_mis;
 	integer n_raw = 0, n_ali = 0, n_mis = 0;
+	// The MMU registers' eight writes (format 1.5), by kernel index.
+	reg [31:0] mmu_raw [0:7];
+	integer nm_raw = 0;
 
 	always @(posedge clk_sys) if (rst_n) begin
 		if (we_raw) begin reg_raw[wi_raw] = wd_raw; n_raw = n_raw + 1; end
 		if (we_ali) begin reg_ali[wi_ali] = wd_ali; n_ali = n_ali + 1; end
 		if (we_mis) begin reg_mis[wi_mis] = wd_mis; n_mis = n_mis + 1; end
 		if (pc_raw) pcv_raw = wd_raw;
+		if (mw_raw) begin mmu_raw[wi_raw[2:0]] = wd_raw; nm_raw = nm_raw + 1; end
 		if (pc_ali) pcv_ali = wd_ali;
 		if (pc_mis) pcv_mis = wd_mis;
 	end
@@ -184,6 +189,8 @@ module tb_ss_fanout_retime;
 			pcv_ali = 32'hDEADBEEF;
 			pcv_mis = 32'hDEADBEEF;
 			n_raw = 0; n_ali = 0; n_mis = 0;
+			for (j = 0; j < 8; j = j + 1) mmu_raw[j] = 32'hDEADBEEF;
+			nm_raw = 0;
 		end
 	endtask
 
@@ -234,6 +241,9 @@ module tb_ss_fanout_retime;
 	initial begin
 		$display("tb_ss_fanout_retime");
 		vec1 = mkvec(8'h11);
+		// The MMU fields, the top 240 bits: {MMUSR, TT1, TT0, SRP, CRP, TC}.
+		vec1[STATE_W-1 -: 240] = {16'h5A11, 32'h71710001, 32'h70700001,
+		                          64'h5151000152520001, 64'hC1C10001C2C20001, 32'h7C7C0001};
 		vec2 = mkvec(8'h22);
 		clear_capture();
 
@@ -258,6 +268,12 @@ module tb_ss_fanout_retime;
 			if (reg_ali[i] !== reg_raw[i]) diff_ali = diff_ali + 1;
 		ok(diff_ali == 0, "settled vector: aligned agrees with the reference");
 		ok(pcv_ali === pcv_raw, "settled vector: aligned PC agrees");
+		ok(nm_raw == 8 &&
+		   mmu_raw[0] === 32'h7C7C0001 && mmu_raw[1] === 32'h70700001 &&
+		   mmu_raw[2] === 32'h71710001 && mmu_raw[3] === 32'hC1C10001 &&
+		   mmu_raw[4] === 32'hC2C20001 && mmu_raw[5] === 32'h51510001 &&
+		   mmu_raw[6] === 32'h52520001 && mmu_raw[7] === 32'h00005A11,
+		   "settled vector: the MMU writes in the kernel's index order");
 
 		// ---- the hazard, at every phase. The vector changes on the same
 		//      clk_114 edge that pulses state_we, which is what a restore
