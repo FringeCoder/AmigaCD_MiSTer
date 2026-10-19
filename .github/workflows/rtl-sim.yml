@@ -335,6 +335,81 @@ jobs:
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # The SDRAM CPU port claim (freeze | peek_scan) is now ss_ctrl's own
+      # register, port_own, loaded with the next values of both, so it leaves a
+      # flop instead of a gate on freeze's ~145-load net -- that path into
+      # sdram_ctrl's sd_addr was the worst family after the chipset one. This
+      # proves port_own equals the OR on every clock and ss_ctrl's outputs equal
+      # the previous version's (frozen as ss_ctrl_ref.v / ss_quiesce_ref.v):
+      # 1.5M clocks of random saves, loads and peeks, busy stretches that make
+      # the freeze time out and SDRAM stalls that make a peek scan time out.
+      # Falsified on 2026-10-17: port_own from the current freeze, from the
+      # current peek_scan, a peek-scan release forced high, and the freeze
+      # granted after a timeout each fail it.
+      #
+      # Its last 300k clocks are a second check. ss_ctrl now holds fast_ena for
+      # the whole of a transfer (an OSD ApplyConfiguration can change the memory
+      # config under a running save without resetting ss_ctrl), so there it
+      # moves fast_ena on every clock and requires the payload length not to
+      # change mid-transfer. Falsified on 2026-10-18: following fast_ena live
+      # fails it ~100k times.
+      #
+      # Third, it backs AmigaCD.sdc's multicycle from shadow_rd_addr into
+      # ss_ctrl: at every read of shadow_rd_data (S_SHADOW_LOW's last hold
+      # cycle, S_SHADOW_Q) the address must have been on the port for at least
+      # the 2 clk_114 cycles the SDC grants; it reports the shortest (6) and
+      # fails on zero reads. Falsified on 2026-10-19: S_SHADOW_LOW going
+      # straight to S_SHADOW_Q (a read 1 clock after the address moves), and a
+      # claimed multicycle of 7, each fail it.
+      - name: Save-state port claim register matches freeze | peek_scan (tb_ss_port_own.sv)
+        run: |
+          set -euo pipefail
+          bash rtl/sim/check-icarus-warnings.sh -g2012 -o tb_ss_port_own rtl/sim/ssown/tb_ss_port_own.sv rtl/ss_ctrl.v rtl/ss_quiesce.v rtl/ss_serdes.v rtl/ss_dma.v rtl/ss_crc32.v rtl/sim/ssown/ss_ctrl_ref.v rtl/sim/ssown/ss_quiesce_ref.v
+          vvp -n tb_ss_port_own | tee out_ss_port_own.log
+          grep -q "RUN: PASS" out_ss_port_own.log
+
+      # CIA-B's port B pins (drive select, motor) now come straight off a
+      # register loaded with their NEXT value: the port expression applied to
+      # the next-state logic of DDRB, PRB and both timers, and amiga_clk's next
+      # eclk. Through Paula's floppy DMA request, Agnus and Gary those pins reach
+      # sdram_ctrl's sd_addr inside half a 7 MHz cycle, and CIA-B was the worst
+      # source of that path in the 68030 netlist (-1.45 ns on seed 8). This
+      # proves the module identical to the previous one (frozen as ciab_ref.v,
+      # with its timers) on every output and every clock: 2M clocks of random
+      # CPU traffic biased to PRB/DDRB/timers with PBON/OUTMODE/cascade, CIA
+      # resets, amiga_clk's async reset, the freeze's ce, and save-state loads.
+      # Falsified on 2026-10-17: stale eclk, a stale OUTMODE, a stale PRB, a
+      # stale cascade select, a stale zero test and a wrong eclk shift condition
+      # each fail it. On 2026-10-18 a review found the clock amiga_clk's reset
+      # asserts on was not exact (its eclk_n cannot see an asynchronous reset
+      # coming; AmigaCD.sv now covers it from reset_d's next state). The bench
+      # had missed it at one reset in 100000 clocks; its second half now resets
+      # every ~300, and without the fix fails 3 times in 3439 resets.
+      - name: CIA-B port B lookahead matches its previous version (tb_ciab_lookahead_equiv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/ciab
+          iverilog -g2012 -o tb tb_ciab_lookahead_equiv.sv ../../amiga_clk.v ../../ciab.v ../../cia_timera.v ../../cia_timerb.v ../../cia_int.v ../../cia_timerd.v ciab_ref.v cia_timera_ref.v cia_timerb_ref.v
+          vvp -n tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
+      # drive_sounds registers the DDR3 read data (dd_q) before its 4:1 sample
+      # select, because the HPS port's readdata straight into smp missed setup
+      # in 4 of 58 seeds. That costs one clock per read; this proves the module
+      # identical, on every output and every clock, to the previous one (frozen
+      # as drive_sounds_ref.v) behind a DDR3 port one clock slower -- a latency
+      # the port never fixed. Falsified on 2026-10-17: reading the select or the
+      # line cache from the live port instead of dd_q, and a wrong word, each
+      # fail it (the model drives garbage outside its ready cycle, which is what
+      # makes the first two visible).
+      - name: drive_sounds matches its previous version a DDR3 clock later (tb_drive_sounds_equiv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/dsnd
+          iverilog -g2012 -o tb ../../drive_sounds.v drive_sounds_ref.v tb_drive_sounds_equiv.sv
+          vvp -n tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # ss_serdes became a real shift register (it was addressed by count) to
       # take a ~50-way word mux and a per-word count decode off two clk_114
       # paths that missed setup after the 68030 merge. This proves every output
@@ -353,10 +428,11 @@ jobs:
             grep -q "RUN: PASS" out_$w.log
           done
 
-      # sys/yc_out.sv carries a local retiming: the chroma sine ROM moved in
-      # front of the register feeding the U/V multipliers, without which the
-      # 114 MHz fit missed setup by 1.0-1.4 ns on every seed. This proves the
-      # output identical to upstream's module on every clock (NTSC and PAL,
+      # sys/yc_out.sv registers the chroma sine values, so the sine ROM sits in
+      # front of the register feeding the U/V multipliers. Without that, the
+      # 114 MHz fit missed setup by 1.0-1.4 ns on every seed. It began as a local
+      # change and is now upstream (Template_MiSTer #120). This proves the
+      # output identical to upstream's module from before #120 on every clock (NTSC and PAL,
       # burst and active chroma both exercised and counted), and stops building
       # if a sys/ resync reverts the change -- which would bring the setup
       # failure back with nothing else to say so. Falsified on 2026-10-16: a
@@ -474,6 +550,23 @@ jobs:
           vvp tb_att | tee out_att.log
           grep -q "RUN: PASS" out_att.log
 
+      # AGA SPRxCTL SH1/SH0 (70/35 ns) move the whole sprite: with SH = k the
+      # serial output is the SH = 0 output delayed k clk28, in lores, hires and
+      # super hires, with CTL bit 0 clear and set; OCS/ECS ignore the bits.
+      # Upstream #260 delayed only the load, which loses a shift step in lores
+      # and hires -- a one-pixel gap at every sprite edge (Flink CD32 title).
+      #
+      # Falsified 2026-10-18: the #260 load-delay shifter fails 10 of 48 checks
+      # (lores and hires, super hires passes); the output tap moved the wrong way
+      # fails 18; ignoring the fine bits at the tap fails 18.
+      - name: Sprite fine horizontal start (AGA SH1/SH0)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/sprites
+          iverilog -g2012 -o tb_fine ../../amiga_clk.v ../../denise_sprites_shifter.v tb_sprite_fine_start.sv
+          vvp tb_fine | tee out_fine.log
+          grep -q "RUN: PASS" out_fine.log
+
       # A line blit with a BLTSIZE width of 1 must finish. The blitter spends two
       # words per line pixel; with width 1 the last word can land in L2, where the
       # end was never tested, and the height counter wrapped -- ~32767 pixels of
@@ -496,6 +589,44 @@ jobs:
           iverilog -g2012 -o tbbc tb_blit_line_channels.sv ../../amiga_clk.v ../../agnus*.v
           vvp tbbc | tee out_ch.log
           grep -q "RUN: PASS" out_ch.log
+
+      # The blitter pointer bank is read at ptrsel instead of at its write select,
+      # which followed Agnus's register bus and dma_ack -- the DMA priority mux --
+      # and put every arbitration input on the path to sdram_ctrl's sd_addr
+      # (docs/seed-lottery.md, family A). This proves the whole agnus identical
+      # to the previous version (frozen as *_ref.v) on every clock: random
+      # blits, line mode included, against disk, audio, bitplane and sprite
+      # DMA, OCS/ECS and AGA, two seeds each. It fails on zero grants, zero
+      # line-mode grants, zero L3 first-pixel cycles, zero cycles where the two
+      # selects differ, zero slots for any competing DMA, and on any X on a
+      # compared output. Falsified on 2026-10-18: the low word read from the
+      # paired channel, the high word read from channel C on modulo cycles, and
+      # channel A read as B on modulo-only cycles (line-mode L1) each fail it.
+      - name: Blitter pointer read off the DMA mux (tb_bltrd_equiv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/bltrd
+          ./run.sh
+
+      # cpu_cache_new's sdram read request has its own expression instead of
+      # an assignment inside the cpu-side state machine, so the tag compares
+      # feed its last LUT instead of the shared next-state decode: tag RAM ->
+      # sdr_read_req was the worst path of ram2's cache, families F and H, in
+      # docs/seed-lottery.md. This proves the module identical to the previous
+      # version (frozen as cpu_cache_new_ref.v) on every output on every clock:
+      # random reads, fetches, writes and long reads over a small line set with
+      # evictions, snoops, inhibit, cache enable / D-cache toggles and clears,
+      # line buffer offers, and a memory acking fills after a random delay.
+      # LINE_TAKE 0 (ram1) and 1 (ram2), two seeds each. It fails on zero
+      # misses, zero held requests, zero hits on any of the four ways, and (ram2)
+      # zero buffer takes or zero buffer offers refused for a snoop. Falsified
+      # on 2026-10-18: the FILL1 hold ignoring the ack, a way-1 D hit not
+      # counted as a hit, and the buffer term ignoring snoop_act each fail it.
+      - name: Cache read request off the state decode (tb_cache_req_equiv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/cachereq
+          ./run.sh
 
       # Who owns each DMA slot on a copper-busy line, in every bitplane fetch
       # mode, against Copperline's cycle trace of the same copper list. Added
@@ -715,6 +846,16 @@ jobs:
       # CPU comes back at the restored PC. Without ss_resume only a fifth of
       # those freeze points survive, which is the bug this covers; the run
       # prints the per-freeze-point map either way.
+      #
+      # PHASE 5 covers two refusals added 2026-10-18 from hand-poked programs:
+      # the master stack flag AmigaCD.sv refuses a save on (low on the test
+      # program, raised by MOVEC to MSP and by setting M, cleared by reset), and
+      # a restore out of a CPU halted on a double address error, which used to
+      # time out every time. Falsified: dropping either flag trigger, or the
+      # halt clear from the ss_resume re-seed, fails the check that names it.
+      # PHASE 6: SFC and DFC, in the state vector since 2026-10-18, show on the
+      # capture export after MOVEC and come back on the restore's CACR write.
+      # Falsified: SFC not restored, and SFC/DFC swapped, each fail it.
       #
       # Runs from the repo root: the testbench opens its program image by a
       # path relative to the working directory.

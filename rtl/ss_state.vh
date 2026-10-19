@@ -56,10 +56,10 @@
 //   ciab sdr_buf/cnt/load    the serial shift register in flight, 13 bits
 //   cia_timera/b pb_tgl      the PB6/PB7 toggle flop, 1 bit each, x2 CIAs
 //
-// Not an oversight, a budget. SS_STATE_W is 2093 and STATE_WORDS rounds it to
-// 66 words = 2112 bits, so there are 19 bits of free padding to grow into
-// before the state section lengthens. The list above is 23 bits, which does
-// not fit -- and lengthening the section moves every section after it, which
+// Not an oversight, a budget. SS_STATE_W was 2093 and STATE_WORDS rounds it to
+// 66 words = 2112 bits, so there were 19 bits of free padding to grow into
+// before the state section lengthens (13 since SFC/DFC took 6, below). The
+// list above is 23 bits, which does not fit -- and lengthening the section moves every section after it, which
 // is the 1.2 case in ss_ctrl.v's version notes and would refuse every save
 // file already on disk.
 //
@@ -73,7 +73,15 @@
 // If the format has to move for some other reason, take these with it.
 // ---------------------------------------------------------------------------
 
+// ss_sfc and ss_dfc (68010+ MOVES function codes, 3 bits each) were added
+// 2026-10-18 at the FRONT of the list, which is the top of the vector: ss_serdes
+// pads the vector with zeros above its top bit to fill the last word, so they
+// sit in what was padding and every other field keeps its bit position. The
+// section length (STATE_WORDS, 66) is unchanged, a save file written before
+// restores with SFC = DFC = 0, and one written now is read by an older core
+// with the two fields ignored. No format version change for that reason.
 `define SS_STATE_LIST { \
+	ss_sfc, ss_dfc, \
 	ss_cpu_d0, ss_cpu_d1, ss_cpu_d2, ss_cpu_d3, \
 	ss_cpu_d4, ss_cpu_d5, ss_cpu_d6, ss_cpu_d7, \
 	ss_cpu_a0, ss_cpu_a1, ss_cpu_a2, ss_cpu_a3, \
@@ -118,7 +126,7 @@
 // directions take it from here, so the choice is free; the length is not,
 // and it changes with this.
 
-// 16 registers + PC + USP + VBR (32 each) + SR (16) + CACR (4) + 4 map bits
+// SFC + DFC (3 each) + 16 registers + PC + USP + VBR (32 each) + SR (16) + CACR (4) + 4 map bits
 // + INTREQ (15) + CIA A (191) + CIA B (203) + Akiko (1052)
 // The CIAs, by value: 191 bits for CIA A and 203 for CIA B. Both sit on the
 // CPU bus, invisible to the chipset register shadow, and cannot be read back
@@ -126,6 +134,6 @@
 // pending interrupts, reading TOD moves its latch. ciaa.v and ciab.v carry the
 // bit layouts; the widths are stated there and here and nowhere else.
 
-`define SS_STATE_W (16*32 + 32 + 32 + 32 + 16 + 4 + 4 + 15 + 191 + 203 + `SS_AKIKO_W)
+`define SS_STATE_W (3 + 3 + 16*32 + 32 + 32 + 32 + 16 + 4 + 4 + 15 + 191 + 203 + `SS_AKIKO_W)
 
 `endif

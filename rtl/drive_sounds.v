@@ -89,6 +89,20 @@ wire  [3:0] ej  = known & ~present;
 
 always @(posedge clk) line_q <= line[v];
 
+// The DDR3 read data is registered before anything looks at it. DDRAM_DOUT is
+// the HPS f2sdram port's readdata, which lands in the fabric late and far from
+// here: taking it straight through the 4:1 sample select into smp missed setup
+// on clk_114 in 4 of 58 seeds of the 68030 netlist (-0.85 ns worst), and was
+// the worst path of the whole design in two of them. With dd_q in between the
+// port has a full cycle to reach a plain register.
+//
+// The cost is one clock on every DDR3 read, which is no change of behaviour: the
+// latency of this port was never fixed (it waits on ddr_dout_ready from the
+// arbiter, behind other masters), and rtl/sim/dsnd proves the module now acts
+// exactly as the previous one does behind a DDR3 port one clock slower.
+reg [63:0] dd_q;
+always @(posedge clk) dd_q <= ddr_dout;
+
 always @(posedge clk) begin
 	if (ddr_rd & ~ddr_busy) ddr_rd <= 0;
 
@@ -126,9 +140,10 @@ always @(posedge clk) begin
 			act[v] <= 0;
 			v <= v + 1'd1;
 		end
-		2: if (ddr_dout_ready) begin
-			line[v] <= ddr_dout;
-			smp <= ddr_dout[{at[1:0], 4'b0000} +: 16];
+		2: if (ddr_dout_ready) p <= 6;
+		6: begin
+			line[v] <= dd_q;
+			smp <= dd_q[{at[1:0], 4'b0000} +: 16];
 			p <= 4;
 		end
 		3: begin

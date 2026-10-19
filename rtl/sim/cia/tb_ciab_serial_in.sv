@@ -64,6 +64,10 @@ module tb_ciab_serial_in;
 	// went high between clk7_en pulses would never be seen and no timer would
 	// ever count.
 	assign eclk = clk7_en && (ediv == 4'd9);
+	// eclk as it will be after this edge: ciab registers its port B pins from
+	// next-state values (see ciab.v), so it needs the next eclk as well.
+	wire [3:0] ediv_n = clk7_en ? ((ediv == 4'd9) ? 4'd0 : ediv + 4'd1) : ediv;
+	wire       eclk_n = (phase == 2'd0) && (ediv_n == 4'd9);
 	always @(posedge clk)
 		if (clk7_en) ediv <= (ediv == 4'd9) ? 4'd0 : ediv + 4'd1;
 
@@ -72,7 +76,7 @@ module tb_ciab_serial_in;
 		.clk(clk), .clk7_en(clk7_en),
 		.aen(aen_b), .rd(rd), .wr(wr), .reset(reset),
 		.rs(rs), .data_in(data_in), .data_out(dout_b),
-		.tick(1'b0), .eclk(eclk), .flag(1'b1), .irq(),
+		.tick(1'b0), .eclk(eclk), .eclk_n(eclk_n), .flag(1'b1), .irq(),
 		.porta_in(porta_pins), .porta_out(),
 		.ss_state(), .ss_ld(1'b0), .ss_ld_data(203'd0),
 		.portb_out(portb_out_b)

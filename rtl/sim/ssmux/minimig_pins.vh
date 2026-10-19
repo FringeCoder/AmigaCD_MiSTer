@@ -39,6 +39,7 @@ wire         c1;
 wire         c3;
 wire         cck;
 wire [9:0]   eclk;
+wire [9:0]   eclk_n;
 wire         rxd;
 wire         txd;
 wire         cts;
@@ -122,7 +123,7 @@ wire         cdtv_nvr_dirty;
 wire         cdtv_card_dirty;
 wire [9:0]   cdtv_cdda_volume;
 wire         cdtv_cdda_volume_valid;
-wire [4:0]   cpucfg;
+wire [2:0]   cpucfg;
 wire [2:0]   cachecfg;
 wire [6:0]   memcfg;
 wire         bootrom;
@@ -447,6 +448,7 @@ minimig dut (
 	.c3(c3),
 	.cck(cck),
 	.eclk(eclk),
+	.eclk_n(eclk_n),
 	.rxd(rxd),
 	.txd(txd),
 	.cts(cts),

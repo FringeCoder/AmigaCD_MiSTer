@@ -169,6 +169,24 @@ set_false_path -from {emu|sdram_big*}
 set_false_path -from {emu|sdram_dual*}
 
 set_false_path -from {emu|minimig|USERIO1|cpu_config*}
+# chipset_config and memory_config (all but bit 6) are latched only while
+# minimig's reset is asserted -- userio.v, "configuration changes only while
+# reset is active" -- the same reason cpu_config above is a false path. Note
+# what that reset includes: the 68k's own RESET instruction (minimig.v,
+# reset = sys_reset | ~_cpu_reset_in), which does not stop the CPU, and the OSD
+# writes the pending values (t_*) while the machine runs. So a change the OSD
+# made is taken on the next reset of any kind. Everything that reads these
+# bits is itself held in reset or idle across that pulse (Agnus, Denise,
+# Paula, the CIAs, Akiko, autoconfig, no chip request on the SDRAM address);
+# the only live readers are cosmetic (ce_pix/res, cdda_gain). An OSD write
+# landing in the last clock or two of a reset pulse is the one unchecked edge,
+# and it is exactly upstream's exposure for cpu_config. Measured as a source into
+# sdram_ctrl sd_addr at -0.64 ns on seed 8 of the 68030 netlist, through the
+# chipset decodes (a1k / ecs / aga) and the memory map. memory_config[6] is
+# copied every clock (userio.v, outside the reset branch) and stays timed, as
+# do floppy_config and floppy_ext_drive, which the OSD writes while running.
+set_false_path -from {emu|minimig|USERIO1|chipset_config[*]}
+set_false_path -from {emu|minimig|USERIO1|memory_config[0] emu|minimig|USERIO1|memory_config[1] emu|minimig|USERIO1|memory_config[2] emu|minimig|USERIO1|memory_config[3] emu|minimig|USERIO1|memory_config[4] emu|minimig|USERIO1|memory_config[5] emu|minimig|USERIO1|memory_config[7]}
 set_false_path -from {emu|minimig|USERIO1|ide_config*}
 set_false_path -from {emu|minimig|USERIO1|bootrom}
 set_false_path -from {emu|minimig|CPU1|halt}
@@ -253,12 +271,44 @@ set_false_path -from {*a2065_ddr3_mailbox*|cmd_clear}        -to {*a2065_regfile
 set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_valid}  -to {*a2065_ddram*|rv_sync0}
 set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_data[*]} -to {*a2065_ddram*|rd_sync0[*]}
 
+# clk_ddr -> clk_sys: the card's interrupt into a2065.v's 2-FF synchroniser.
+# a2065_int2 is a registered level and int2_s1 exists to take it at any time;
+# landing a clk_sys cycle early or late moves INT2 by 35 ns, which nothing can
+# see. Timed, it failed hold on 1 of 60 panel fits (0.76 ns of clk_sys skew).
+# Deliberately NOT here: csr0_out..csr3_out -> a2065_regfile csr_shadow. That
+# is a 16-bit word sampled without a synchroniser; it is coherent only because
+# it is timed as the synchronous 4:1 path it is. False-pathing it would let a
+# 68k read of CSR0 mix old and new bits. Its two hold failures in 60 fits are
+# rejected by the pick job, which is the correct outcome.
+set_false_path -from {*a2065_ddr3_mailbox*|a2065_int2}       -to {*a2065_inst|int2_s1}
+
+# ss_ctrl's shadow readback: shadow_rd_addr out to ss_regshadow, whose rd_data
+# is combinational on it (a set/clear decode and a mux over 256 entries), and
+# back into ss_ctrl. ss_ctrl reads shadow_rd_data in two places, S_SHADOW_LOW's
+# last hold cycle and S_SHADOW_Q, and the address is held SS_HOLD_MAX+1 cycles
+# before either because ss_regshadow registers its array read on clk_sys: the
+# shortest the address is ever on the port at a read is 6 clk_114 cycles.
+# shadow_rd_addr is not read inside ss_ctrl, so every path from it to an
+# ss_ctrl register goes through that read. Timed as one cycle it was L's worst
+# path, -2.960 on seed 35 of run 39186900101. rtl/sim/ssown checks the address
+# age at every read against the 2 granted here and fails under it.
+set_multicycle_path -from {emu|savestate|shadow_rd_addr*} -to {emu|savestate|*} -setup 2
+set_multicycle_path -from {emu|savestate|shadow_rd_addr*} -to {emu|savestate|*} -hold 1
+
+# clk_114 -> clk_sys: the save-state diagnostics' 2-FF synchroniser in
+# AmigaCD.sv. ss_dbg_meta is its first stage, taking a 64-bit vector of ss_ctrl
+# state as one snapshot; the second stage (ss_dbg_sync) is what the HPS poller
+# reads, and a torn or stale sample costs one log line (see AmigaCD.sv). Timed,
+# it failed hold on seed 34 of run 39186900101 (pay_idx[0] -> ss_dbg_meta[28],
+# -0.289).
+set_false_path -to {emu|ss_dbg_meta[*]}
+
 # yc_out: no exception. A multicycle from chroma_LUT_BURST to phase[*].u used
 # to sit here, retained from the old bridge. It was never valid -- the burst LUT
 # index is recomputed from the free-running phase accumulator every clk_114
 # cycle -- and its source register is gone: sys/yc_out.sv now registers the
-# sine values rather than the indices (see the comment there), which closes the
-# path as a plain single-cycle one.
+# sine values rather than the indices (local first, upstream since
+# Template_MiSTer #120), which closes the path as a plain single-cycle one.
 
 # emu PLL cross-clock: counter[1]→counter[0] marginal path
 set_multicycle_path -setup 2 -from [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[1\].output_counter|divclk"] -to [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[0\].output_counter|divclk"]

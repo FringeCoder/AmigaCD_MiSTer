@@ -39,6 +39,12 @@ tail -40 "fit_$seed.log"
 # own source usually means the fitter ran out of something -- DSP blocks most
 # of all, which turns a hard multiplier into ALM logic -- and only this says so.
 cat "output_files/$proj.fit.summary" 2>/dev/null || echo "no fit summary"
+# Where the SDRAM address and bank pins sit on the die. The chipset -> sd_addr
+# family ends in the I/O cell of each pin, and its last hop is a fixed route
+# of several ns to whichever pins are farthest from the logic -- so which pins
+# those are, and where, is what a placement constraint would be built from.
+echo "== SDRAM address/bank pins: name ; pin ; bank ; X ; Y =="
+grep -E '^; SDRAM_(A|BA)\[' "output_files/$proj.fit.rpt" 2>/dev/null | awk -F';' '!seen[$2]++ {print $2";"$3";"$4";"$5";"$6}' || true
 
 rpt="output_files/$proj.sta.rpt"
 slack() {   # the worst of every corner's figure, so no corner hides a failure
@@ -63,8 +69,26 @@ if [ "$ok" != true ] && [ -d db ]; then
 	else echo "no path report; quartus_sta said:"; tail -30 "paths_$seed.log"; fi
 fi
 
-printf '{"seed": %s, "setup": %s, "hold": %s, "ok": %s, "flow_status": %s}\n' \
-	"$seed" "${setup:-null}" "${hold:-null}" "$ok" "$status" | tee fit.json
+# Every seed, passing or not: the worst slack of each recurring path family
+# (scripts/ci-sta-families.tcl). A closed seed's margins are as much a finding
+# as a failed seed's paths, and the families are what the pick job compares
+# across the panel.
+fams='{}'
+if [ -d db ]; then
+	rm -f "families_$seed.txt" "family_paths_$seed.rpt"
+	docker run --rm -v "$PWD":/project -w /project "$IMAGE" \
+		quartus_sta -t scripts/ci-sta-families.tcl "$proj" "families_$seed.txt" "family_paths_$seed.rpt" > "families_$seed.log" 2>&1 || true
+	if [ -s "families_$seed.txt" ]; then
+		echo "== path families, worst setup slack over all corners =="
+		cat "families_$seed.txt"
+		fams=$(awk 'BEGIN{printf "{"} {v=($2=="none")?"null":$2; printf "%s\"%s\": %s", (NR>1?", ":""), $1, v} END{printf "}"}' "families_$seed.txt")
+	else
+		echo "no family report; quartus_sta said:"; tail -30 "families_$seed.log"
+	fi
+fi
+
+printf '{"seed": %s, "setup": %s, "hold": %s, "ok": %s, "flow_status": %s, "families": %s}\n' \
+	"$seed" "${setup:-null}" "${hold:-null}" "$ok" "$status" "$fams" | tee fit.json
 
 # The flow failing outright is this job's failure. Missing timing is reported
 # in fit.json and judged by the caller, which knows whether it is a release.

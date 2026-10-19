@@ -33,8 +33,7 @@ module cpu_wrapper
 	input             ph1,
 	input             ph2,
 
-	input       [4:0] cpucfg,
-	input             ntsc,
+	input       [2:0] cpucfg,
 	input       [2:0] fastramcfg,
 	input       [2:0] cachecfg,
 	input             bootrom,
@@ -79,8 +78,12 @@ module cpu_wrapper
 	output            ss_bus_settled,
 	output     [15:0] ss_sr,
 	output     [31:0] ss_usp,
+	output            ss_mstack_used,  // TG68K: master stack used since reset
+	output            ss_halted,       // TG68K: halted on a double address error
 	output     [31:0] ss_vbr,
 	output      [3:0] ss_cacr,
+	output      [2:0] ss_sfc,          // TG68K SFC/DFC (68010+), for MOVES
+	output      [2:0] ss_dfc,
 
 	// Save state restore. Write side of the same TG68K architectural
 	// registers, taken on the CPU clock while the core is parked by ss_arm.
@@ -304,8 +307,8 @@ always @* begin
 		chip_rw      = c_rw;
 		chip_uds     = c_uds;
 		chip_lds     = c_lds;
-		chip_addr    = (c_long & ~c_rw) ? {w32_adr, 1'b0} : cpu_addr_m[23:1];
-		chip_din     = (c_long & ~c_rw) ? w32_hi : cpu_dout_p;
+		chip_addr    = ((c_long | w32_fl) & ~c_rw) ? {w32_adr, 1'b0} : cpu_addr_m[23:1];
+		chip_din     = ((c_long | w32_fl) & ~c_rw) ? w32_hi : cpu_dout_p;
 		chip_long    = c_long;
 		chip_din2    = cpu_dout_p;
 		chip_data    = chipdout_i;
@@ -352,7 +355,7 @@ wire [15:0] opc_out;
 wire        opc_cond;
 wire [15:0] opc_snd;
 wire        opc_dbx;
-wire [13:0] cacr_x;
+wire  [1:0] cacr_x;
 wire        mmu_busy;
 wire        s21_en;
 wire        long_cand;
@@ -392,6 +395,7 @@ cpu_inst_p
   
   .cpu({cpucfg[1], cpucfg[1] | cpucfg[0]}),
   .cpu030(cpu030),
+  .mmu030(~cpucfg[2]),
   .opc_start(opc_start),
   .opc_out(opc_out),
   .opc_cond(opc_cond),
@@ -414,6 +418,10 @@ cpu_inst_p
   .ss_trap_active(ss_trap_active),
   .ss_sr(ss_sr),
   .ss_usp(ss_usp),
+  .ss_mstack_used(ss_mstack_used),
+  .ss_halted(ss_halted),
+  .ss_sfc(ss_sfc),
+  .ss_dfc(ss_dfc),
 
   // Restore path -- TG68K only. fx68k has no equivalent write port and is
   // locked out of the savestate path in AmigaCD.sv.
@@ -493,11 +501,12 @@ always @(posedge clk) begin
 	end
 end
 
-// CPU model and speed (upstream 26eb46a). cpucfg[1:0] is the CPU: 00 68000,
-// 01 68010, 10 68030, 11 68020 -- the 68EC020 when cpucfg[2] is set, at the
-// speed of a stock A1200 and with 24-bit addresses. For the 68030 cpucfg[2]
-// and cpucfg[4:3] pick its clock. cpu_cycles below replaces the 4-sysclk
-// cooldown this fork used as the stock-speed throttle.
+// CPU model and speed (upstream 26eb46a, a5f1637). cpucfg[1:0] is the CPU:
+// 00 68000, 01 68010, 10 68030, 11 68020 -- the 68EC020 when cpucfg[2] is
+// set, at the speed of a stock A1200 and with 24-bit addresses. For the 68030
+// cpucfg[2] means no MMU; the 68030 runs at its maximum clock only. cpu_cycles
+// below replaces the 4-sysclk cooldown this fork used as the stock-speed
+// throttle.
 //
 // clkena gates the CPU pipeline forward-tick. The bridge fires cdtv_selack
 // combinationally with sel, so the data is available on the same cycle --
@@ -533,7 +542,10 @@ wire stock_speed   = cpucfg[2] & (cpucfg[1:0] == 2'b11);
 reg ss_parked;
 always @(posedge clk) begin
 	if (~reset | ~ss_arm) ss_parked <= 1'b0;
-	else if (ss_at_boundary) ss_parked <= 1'b1;
+	// A CPU halted on a double address error never reaches a boundary; its
+	// clock is off until reset, so it is as parked as it will ever be. The
+	// latch is what keeps it held once the restore's re-seed clears the halt.
+	else if (ss_at_boundary | ss_halted) ss_parked <= 1'b1;
 end
 wire ss_cpu_hold   = ss_arm & (ss_at_boundary | ss_parked);
 
@@ -545,9 +557,7 @@ cpu_cycles cycles
 (
 	.clk(clk),
 	.reset(reset),
-	.ntsc(ntsc),
-	.mode({cpu030, stock_speed}),
-	.speed({cpu030 & cpucfg[2], cpucfg[4:3]}),
+	.ena(stock_speed),
 	.opc_start(opc_start),
 	.opc(opc_out),
 	.opc_cond(opc_cond),
@@ -606,6 +616,7 @@ reg        c_long;
 reg        w32;
 reg [23:2] w32_adr;
 reg [15:0] w32_hi;
+reg        w32_fl;
 reg        r32;
 reg [23:2] r32_adr;
 reg [15:0] r32_lo;
@@ -626,6 +637,7 @@ always @(negedge clk, negedge reset) begin
 		c_long <= 0;
 		ready <= 0;
 		w32 <= 0;
+		w32_fl <= 0;
 		r32 <= 0;
 	end
 	else begin
@@ -656,10 +668,19 @@ always @(negedge clk, negedge reset) begin
 			case (stage)
 				0: if (chipreq & ~now) begin
 						c_as <= 0;
-						c_rw <= wr;
-						c_uds <= uds_in;
-						c_lds <= lds_in;
-						c_long <= w32 | (c32 & wr);
+						if (w32 & (wr | (cpu_addr_m[23:2] != w32_adr) | ~cpu_addr_m[1] | uds_in | lds_in)) begin
+							c_rw <= 0;
+							c_uds <= 0;
+							c_lds <= 0;
+							c_long <= 0;
+							w32_fl <= 1;
+						end
+						else begin
+							c_rw <= wr;
+							c_uds <= uds_in;
+							c_lds <= lds_in;
+							c_long <= w32 | (c32 & wr);
+						end
 						r32 <= 0;
 						stage <= 1;
 					end
@@ -677,7 +698,8 @@ always @(negedge clk, negedge reset) begin
 								r32     <= 1;
 								r32_adr <= cpu_addr_m[23:2];
 							end
-							ready <= 1;
+							ready <= ~w32_fl;
+							w32_fl <= 0;
 							stage <= 3;
 						end
 					end
@@ -804,11 +826,11 @@ always @(*) begin
 			default: ;
 		endcase
 	end
-	// Zorro III RAM 64MB/128MB/256MB/384MB
+	// Zorro III RAM 128MB/256MB/384MB
 	else if(ac_memcard[2]) begin
 		case (chip_addr[6:1])
 			6'b000000: autocfg_data = 4'b1010;	// Zorro-III card, add mem, no ROM
-			6'b000001: autocfg_data = ac_memcard[1] ? {3'b001, ~ac_memcard[0]} : 4'b0100; // 64MB, 128MB or 256MB, extended
+			6'b000001: autocfg_data = ac_memcard[1] ? 4'b0011 : 4'b0100; // 128MB or 256MB, extended
 			6'b000010: autocfg_data = 4'b1110;	// ProductID=0x10 (only setting upper nibble)
 			6'b000100: autocfg_data = 4'b0000;	// Memory card, not silenceable, Extended size, reserved.
 			6'b000101: autocfg_data = 4'b1111;	// 0000 - logical size matches physical size TODO change this to 0001, so it is autosized by the OS, WHEN it will be 24MB.

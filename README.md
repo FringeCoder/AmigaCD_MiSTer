@@ -151,7 +151,7 @@ Inherited from Minimig-AGA, with this fork's additions marked **+**.
 * ChipRAM : 0.5MB - 2.0MB
 * SlowRAM : 0.0MB - 1.5MB
 * FastRAM : 0.0MB - 384MB
-* CPU core : 68000, 68010, 68EC020, 68030 (with MMU, no FPU)
+* CPU core : 68000, 68010, 68EC020, 68030 (with or without MMU, no FPU)
 * Kickstart : 1.2, 1.3, 2.0, 3.0, 3.1, 3.1.4, 3.2 (256kB, 512kB & 1MB kickstart ROMs currently supported)
 * HRTmon with custom registers mirror
 * Floppy drives : 1-4 floppies (supports ADF floppy image format), with normal & turbo speeds
@@ -244,6 +244,41 @@ Notes:
 * The Amiga shows its station address as 00:80:10:00:00:00. This is cosmetic. On the wire, a unique address derived from the MiSTer NIC is used.
 * Throughput is limited by the Amiga CPU rather than by the card (around 500KB/s with a 68020).
 
+### Serial (PPP)
+
+The other way online, with no card: the Amiga's serial port (Paula) is wired
+to MiSTer's UART, and MiSTer's Linux runs the other end of a PPP link. It is
+much slower than the A2065 -- the port runs at 115200 or 230400 baud, about
+11 or 23 KB/s before PPP's overhead -- but it needs nothing in the Ethernet
+menu and works on any MiSTer.
+
+On MiSTer, in the OSD:
+- open the core's system settings page (the one with "Define buttons" and
+  "Button/Key remap") and choose **UART mode**;
+- set **Connection** to **PPP** and **Baud** to 115200 or 230400 (the core
+  offers those two);
+- the choice is saved per core (`uartmode.AmigaCD` in MiSTer's config folder).
+  "Reset UART connection" restarts the Linux side if the link hangs.
+
+Choosing a mode makes the menu run MiSTer Linux's `uartmode` script
+(`user_io.cpp`, `SetUARTMode`), which starts the Linux end of the link. What
+that script runs, and the addresses it hands out, belong to the MiSTer Linux
+image rather than to this repository -- see the MiSTer documentation for its
+PPP mode. `docs/timing-probe.md` in the userspace repository shows how to
+check on the MiSTer which mode is active and what holds the serial device.
+
+On Amiga:
+- install a TCP/IP stack with PPP over `serial.device`: MiamiDX has PPP built
+  in; Roadshow or AmiTCP need a SANA-II PPP driver from Aminet;
+- set the serial device to the same baud as the OSD, 8N1, with RTS/CTS
+  hardware handshaking (the core wires RTS and CTS through);
+- dial with no phone number or modem init string (it is a direct link) and
+  let PPP negotiate the address.
+
+Not yet verified on this fork: which Amiga PPP stacks negotiate cleanly with
+MiSTer's end, and whether 230400 holds without overruns on a 68000. Record
+what works here.
+
 ### RTG
 
 * install [Picasso96.lha](http://aminet.net/package/driver/video/Picasso96) Choose uaegfx while installing.
@@ -259,20 +294,21 @@ RTG is available only for 68030 CPU.
 
 ### 68030 CPU
 
-The CPU item of the System page offers 68000, 68010, 68020 and 68030; on the AmigaCD Settings page, the CPU row
-offers the machine's 68020 or a 68030 for the 68020 machines (CD32, CD32+, A1200).
+The CPU item of the System page offers 68000, 68010, 68020, 68030 and 68030 no MMU; on the AmigaCD Settings page, the
+CPU row offers the machine's 68020 or a 68030 for the 68020 machines (CD32, CD32+, A1200).
 
 * **68020** with **CPU Turbo On**, this fork's default, runs unthrottled with 32-bit addresses, as it always has here.
   With CPU Turbo Off it is the **68EC020** at the speed of a stock A1200, with 24-bit addresses.
-* **68030** has an MMU and runs at 25, 33, 40 or 50MHz, the clocks of the real accelerator cards, or at 56.7MHz with
-  no speed limit (the CPU Clock row). There is no FPU. **Save states are refused on the 68030**: the state vector has
-  no room for its MMU.
+* **68030** has an MMU and runs at 56.7MHz with no speed limit. There is no FPU.
+* **68030 no MMU** is the same 68030 with the MMU instructions taking the F-line exception, as on a 68020 with no MMU,
+  for software that does not expect an MMU.
+* **Save states are refused on the 68030**, with or without the MMU: the state vector has no room for its extra
+  registers.
 
-From 25 to 50MHz the 68030 runs as fast as a real 68030 card at the same clock (checked upstream with AIBB against an
-ACA1233n). As on the real machines, chip RAM, ROM and the custom registers are always read through the bus, and the
-data cache is switched on and off by software (SetPatch, CPU, WHDLoad).
+As on the real machines, chip RAM, ROM and the custom registers are always read through the bus, and the data cache is
+switched on and off by software (SetPatch, CPU, WHDLoad).
 
-FastRAM can be none, 2M, 4M or 8M, and with the 68030 or the unthrottled 68020 also 64M, 128M, 256M or 384M.
+FastRAM can be none, 2M, 4M or 8M, and with the 68030 or the unthrottled 68020 also 256M or 384M.
 
 ### Floppy drive sounds
 
@@ -370,7 +406,11 @@ the Quartus 13.1 revision, kept for the older toolchain). A fit writes
 repository copies to the card as `amigacd.rbf`. It was called `Minimig` until
 2026-09-15; older logs, `seed_sweep/` bitstreams and `releases/Minimig_*.rbf`
 still carry that name, and `releases/` in particular holds upstream's builds
-rather than ours, so those were left alone.
+rather than ours, so those were left alone. The exception is
+`releases/AmigaCD_20261019.rbf`, this fork's first build to close timing since
+the 2026-10-17 upstream sync: seed 35 of c496d5b1 (fit run 39175622637), setup
++0.051 ns and hold +0.234 ns at the gated slow 100 C corner. See
+`docs/seed-lottery.md`.
 
 Some files here are shared with the userspace repository and go in both
 directions: `rtl/snac_psx.v` is a copy of one it owns, checked by

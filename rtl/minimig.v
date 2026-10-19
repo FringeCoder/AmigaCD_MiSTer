@@ -186,6 +186,7 @@ module minimig
 	input 	     c3,          // clock enable signal
 	input 	     cck,         // colour clock enable
 	input   [9:0] eclk,        // ECLK enable (1/10th of CLK)
+	input   [9:0] eclk_n,      // eclk after this edge (amiga_clk), for CIA-B's port B lookahead
 
 	//rs232 pins
 	input 	     rxd,         // rs232 receive
@@ -306,7 +307,7 @@ module minimig
 	output        cdtv_cdda_volume_valid,
 
 	//user i/o
-	output  [4:0] cpucfg,
+	output  [2:0] cpucfg,
 	output  [2:0] cachecfg,
 	output  [6:0] memcfg,
 	output        bootrom,     // enable bootrom magic in gary.v
@@ -937,6 +938,7 @@ ciab CIAB1
 	.data_out(cia_data_out[15:8]),
 	.tick(_hsync),
 	.eclk(eclk[8]),
+	.eclk_n(eclk_n[8]),
 	.irq(int6),
 	.flag(index),
 	.porta_in({cd,cts,dsr,ri&_joy3[4],1'b1,_joy4[4]}),

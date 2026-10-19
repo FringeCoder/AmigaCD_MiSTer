@@ -1,8 +1,10 @@
-// sys/yc_out.sv carries a local retiming (see the comment above its
-// chroma_*_val registers): the sine ROM moved in front of the register that
-// fed the U/V multipliers, to close the 114 MHz fit. This bench runs it against
-// the upstream module unchanged (yc_out_ref.sv, MiSTer-devel sys/yc_out.sv with
-// the module renamed) and requires every output to match on every clock.
+// sys/yc_out.sv registers the chroma sine values rather than their LUT
+// indices, so the sine ROM sits in front of the register that feeds the U/V
+// multipliers, which was needed to close the 114 MHz fit. It started here as a local
+// change and went upstream as Template_MiSTer #120 (5dda373). This bench runs it
+// against upstream's module from just before that commit (yc_out_ref.sv,
+// Template_MiSTer afd7808 sys/yc_out.sv with the module renamed) and requires
+// every output to match on every clock.
 //
 // Stimulus is line-shaped, not just random: hsync resets the colour-burst
 // counter and the burst window is a band of cycles after it, so purely random
@@ -13,9 +15,10 @@
 // The checks are only meaningful if both branches ran, so the bench also
 // counts burst and active-chroma cycles in the reference and fails on zero.
 //
-// It reads dut.chroma_SIN_val by name. If a sys/ resync reverts the retiming,
-// that name is gone and this bench stops building -- the point at which the
-// fit would start missing setup again.
+// It reads dut.chroma_SIN by name, the register that now holds a sine value. If
+// a sys/ resync ever brings back the indexed form, chroma_SIN is gone
+// and this bench stops building -- the point at which the fit would start
+// missing setup again.
 //
 // Built with Verilator rather than Icarus: yc_out uses an unpacked struct array and an array
 // localparam, which Icarus 12 does not support.
@@ -56,7 +59,7 @@ localparam integer LINES = 24;     // per configuration
 localparam integer CFGS  = 8;
 
 // A revert of the retiming removes this register and the bench stops building.
-wire signed [10:0] retimed_sin = dut.chroma_SIN_val;
+wire signed [10:0] retimed_sin = dut.chroma_SIN;
 
 always #4.37 clk = ~clk;
 

@@ -54,7 +54,7 @@ localparam CONF_STR = {
 	"MT32-pi: MT-32 v2,",
 	"MT32-pi: CM-32L,",
 	"MT32-pi: Unknown mode,",
-	// Save state outcomes. These are indices 13..22 of this list, which is what
+	// Save state outcomes. These are indices 13..23 of this list, which is what
 	// SS_INFO_BASE names; user_io.cpp's show_core_info() counts substrings from
 	// 1, so inserting anything above here shifts them and must shift
 	// SS_INFO_BASE with it. Order after "restored" is ss_ctrl's load_fail_code
@@ -79,7 +79,10 @@ localparam CONF_STR = {
 	// No comma inside a message: substrcpy() (user_io.cpp:512) splits this line
 	// on commas, so one here would truncate the toast at "Restore: busy".
 	"Restore: busy - try again,",
-	"Restore: FAILED;",
+	"Restore: FAILED,",
+	// SS_INFO_BASE + 10: a save the core refuses at the request, for state
+	// the vector does not carry -- see ss_save_allowed.
+	"Save state: refused - master stack in use;",
 	"V,v",`BUILD_DATE
 };
 
@@ -395,17 +398,20 @@ end
 wire reset = ~locked | buttons[1] | RESET;
 
 reg reset_d;
+reg reset_rs;
 always @(posedge clk_sys, posedge reset) begin
 	reg [7:0] reset_s;
-	reg rs;
 	
 	if(reset) reset_s <= '1;
 	else begin
 		reset_s <= reset_s << 1;
-		rs <= reset_s[7];
-		reset_d <= rs;
+		reset_rs <= reset_s[7];
+		reset_d <= reset_rs;
 	end
 end
+// reset_d as it will be after this clk_sys edge (it holds while reset is up),
+// for CIA-B's port B lookahead below
+wire reset_d_n = reset ? reset_d : reset_rs;
 
 //// amiga clocks ////
 //
@@ -471,6 +477,14 @@ wire        am_c1;
 wire        am_c3;
 wire        am_cck;
 wire  [9:0] am_eclk;
+wire  [9:0] am_eclk_n;      // am_eclk after this edge, for CIA-B's port B lookahead (ciab.v)
+// amiga_clk's eclk_n covers its reset only once reset_n is already low: its
+// reset is asynchronous, and ~reset_d falls just AFTER a clk_sys edge, which
+// sets the shifter to its reset value within the cycle. So the edge on which
+// reset_d rises is covered here, from reset_d's own next state. Without it
+// CIA-B's PB6/PB7 could differ from the old combinational pins for that one
+// clock, when a timer drives them in pulse mode (found 2026-10-18).
+wire  [9:0] am_eclk_nx = reset_d_n ? 10'd1 : am_eclk_n;
 
 // The freeze's two clk_sys-domain signals: the enable that stops the Amiga's
 // timebase, and the register-decode tick a replay needs while it is stopped.
@@ -505,6 +519,7 @@ amiga_clk amiga_clk_am
 	.c3       ( am_c3         ),
 	.cck      ( am_cck        ),
 	.eclk     ( am_eclk       ),
+	.eclk_n   ( am_eclk_n     ),
 	.ce       ( ~ss_freeze_7m ),
 	.reset_n  ( ~reset_d      )  // same synchronous release as the master copy
 );
@@ -525,8 +540,11 @@ wire        ss_cpu_parked;
 wire        ss_cpu_bus_settled;
 wire [15:0] ss_sr;
 wire [31:0] ss_usp;
+wire        ss_mstack_used;
+wire        ss_cpu_halted;
 wire [31:0] ss_vbr;
 wire  [3:0] ss_cacr;
+wire  [2:0] ss_sfc, ss_dfc;
 reg  [31:0] ss_cpu_d0, ss_cpu_d1, ss_cpu_d2, ss_cpu_d3;
 reg  [31:0] ss_cpu_d4, ss_cpu_d5, ss_cpu_d6, ss_cpu_d7;
 reg  [31:0] ss_cpu_a0, ss_cpu_a1, ss_cpu_a2, ss_cpu_a3;
@@ -789,7 +807,11 @@ wire [31:0] ss_clut_wr_data;
 // assertion is what makes this safe to delete, and it must keep passing: if a
 // future change lets a scan run unfrozen again, the term has to come back
 // here at the same time.
-wire        ss_port_own = ss_freeze | ss_peek_scan;
+// ss_freeze | ss_peek_scan, delivered as ss_ctrl's own register port_own:
+// loaded with the next values of both, so it is the same OR on every clock
+// but leaves a flop instead of a gate on freeze's ~145-load net. The proof is
+// rtl/sim/ssown, which checks port_own against the OR on every clock.
+wire        ss_port_own;
 
 // Where the Kickstart ROM physically lives in SDRAM, as the CPU port's own
 // word address -- DERIVED, not assumed. Amiga $F80000 goes through
@@ -1101,7 +1123,6 @@ cpu_wrapper cpu_wrapper
 	.fastchip_lw     (fastchip_lw     ),
 
 	.cpucfg       (cpucfg          ),
-	.ntsc         (ntsc            ),
 	.cachecfg     (cachecfg        ),
 	.sdram_big    (sdram_big       ),
 	.sdram_dual   (sdram_dual      ),
@@ -1131,8 +1152,12 @@ cpu_wrapper cpu_wrapper
 	.ss_bus_settled(ss_cpu_bus_settled),
 	.ss_sr        (ss_sr           ),
 	.ss_usp       (ss_usp          ),
+	.ss_mstack_used(ss_mstack_used ),
+	.ss_halted    (ss_cpu_halted   ),
 	.ss_vbr       (ss_vbr          ),
 	.ss_cacr      (ss_cacr         ),
+	.ss_sfc       (ss_sfc          ),
+	.ss_dfc       (ss_dfc          ),
 
 	// Restore write port into the TG68K register file, driven by
 	// ss_state_fanout at the bottom of this file. One shared data bus and one
@@ -1692,7 +1717,7 @@ assign UART_TXD = (hps_mpu & mt32_use) | uart_tx;
 
 //// minimig top ////
 // [1:0] CPU, [2] 68EC020 / 68030 clock, [4:3] 68030 clock (upstream 26eb46a).
-wire  [4:0] cpucfg;
+wire  [2:0] cpucfg;
 wire  [2:0] cachecfg;
 wire  [6:0] memcfg;
 wire        bootrom;   
@@ -1765,6 +1790,7 @@ minimig minimig
 	.c3           (am_c3            ), // clk28m clock domain signal synchronous with clk signal delayed by 90 degrees
 	.cck          (am_cck           ), // colour clock output (3.54 MHz)
 	.eclk         (am_eclk          ), // 0.709379 MHz clock enable output (clk domain pulse)
+	.eclk_n       (am_eclk_nx       ), // the same, after this edge (CIA-B port B lookahead)
 
 	//rs232 pins
 	.rxd          (uart_rx          ), // RS232 receive
@@ -1977,10 +2003,33 @@ wire       ss_load_req_osd = status[54];
 // restore. Same answer as fx68k: refused, not silently partial. Its Zorro III
 // fast RAM, which the payload has no section for, would be a second reason.
 //
-// cpucfg[1:0] and not |cpucfg: bit 2 is the 68EC020 / 68030-clock bit and
-// bits 4:3 the 68030 clock, none of which says which core is running.
-// cpu_wrapper runs fx68k exactly when cpucfg[1:0] == 0.
-wire ss_supported   = (cpucfg[1:0] != 2'b00) & (cpucfg[1:0] != 2'b10);
+// "68030 no MMU" (upstream a5f1637) is refused as well: it has no MMU state,
+// but the rest of the list -- upper CACR, CAAR, MSP, ISP, Zorro III -- stands.
+//
+// The 68020 has MSP and ISP too (upstream 894266e). It is not refused for
+// them outright, because AmigaOS never uses the master stack; a save is
+// refused instead once the kernel reports it in use (ss_save_allowed below).
+// CAAR is 68020 state the vector does not carry either; it only names the
+// entry a CACR clear-entry write acts on, so losing it loses nothing.
+//
+// cpucfg[1:0] and not |cpucfg: bit 2 is the 68EC020 bit, or on the 68030 the
+// no-MMU bit, and says nothing about which core is running. cpu_wrapper runs
+// fx68k exactly when cpucfg[1:0] == 0.
+//
+// Zorro III fast RAM is refused too, on the CPUs that get it (the unthrottled
+// 68020 as well as the 68030): the payload has no section for it, it sits over
+// the save-slot area of DDR3, and its board's autoconfig base is not saved.
+// The OSD already refuses it (menu.cpp, minimig_ss_blocked); this is the core
+// not relying on that. The decode is cpu_wrapper's ac_memcard and fast_ena's
+// below: memcfg[6] is a Zorro III board exactly when cpu_type & ~ec020.
+wire ss_supported   = (cpucfg[1:0] != 2'b00) & (cpucfg[1:0] != 2'b10)
+                    & ~(cpu_type & ~ss_ec020 & memcfg[6]);
+// A save is refused, at the request, once the 68020's master stack has been in
+// use since reset: MSP and ISP are not in the vector, so such a save would
+// restore with whatever stacks the running machine has. AmigaOS never sets M,
+// so this does not fire on an ordinary machine. A restore is not refused for
+// it: the state being restored was saved with the master stack unused.
+wire ss_save_allowed = ss_supported & ~ss_mstack_used;
 // *** the request is an EDGE, and it is made one HERE, not in userspace ***
 // ss_ctrl re-arms out of S_IDLE on any clock where save_req is high, and it
 // drops back to S_IDLE the moment a save finishes. Feeding it status[51] as a
@@ -2024,7 +2073,7 @@ wire ss_save_edge = ss_save_req_osd & ~ss_save_req_d;
 
 always @(posedge clk_114) begin
 	ss_save_req_d <= ss_save_req_osd;
-	if (reset_d || !ss_supported) ss_save_pending <= 1'b0;
+	if (reset_d || !ss_save_allowed) ss_save_pending <= 1'b0;
 	else if (ss_save_busy)        ss_save_pending <= 1'b0;
 	else if (ss_save_edge)        ss_save_pending <= 1'b1;
 end
@@ -2082,9 +2131,15 @@ wire ss_load_req_raw = ss_load_pending;
 // sampling it live would deadlock the sixteen-cycle register sweep below.
 // The latch clears whenever the CPU is not on a boundary, so it can only be
 // set by a ready seen during THIS park.
+//
+// A RESTORE also takes a CPU halted on a double address error as parked: it
+// never reaches a boundary, so without this a restore -- the one way out of a
+// halted machine short of a reset -- timed out every time. A save does not:
+// the state it would capture is a dead CPU, which restores into one that runs.
+wire ss_cpu_at_boundary_q = ss_cpu_at_boundary | (ss_cpu_halted & ss_load_busy);
 reg ss_cpu_settled_q;
 always @(posedge clk_sys) begin
-	if (!ss_cpu_at_boundary)     ss_cpu_settled_q <= 1'b0;
+	if (!ss_cpu_at_boundary_q)   ss_cpu_settled_q <= 1'b0;
 	else if (ss_cpu_bus_settled) ss_cpu_settled_q <= 1'b1;
 end
 
@@ -2094,7 +2149,7 @@ end
 // term reached S_PEEK_FREEZE, waited, and fell back to idle with freeze still
 // low -- every peek returning "not valid yet" and never a byte of memory.
 assign ss_cpu_parked = (ss_save_busy | ss_load_busy | ss_peek_busy)
-                     & ss_cpu_at_boundary & ss_cpu_settled_q;
+                     & ss_cpu_at_boundary_q & ss_cpu_settled_q;
 
 always @(posedge clk_sys) begin
 	if (!ss_cpu_parked) begin
@@ -2322,11 +2377,12 @@ ss_ctrl #(.STATE_W(`SS_STATE_W), .CHIP_WORDS(24'h100000)) savestate
 	// part-way through a boot, so two saves in one session could disagree
 	// about it and the second could not be restored over the first.
 	//
-	// The decode mirrors cpu_wrapper's ac_memcard. On the 68030 the three bits
-	// are used as-is and bit 2 selects a Zorro III board; on every other CPU,
-	// the 68EC020 included since upstream 26eb46a, a set bit 2 is folded down
-	// to the 8 MB Zorro II entry, so any non-zero value is Z2. (The 68030
-	// cannot save at all -- see ss_supported -- but the decode stays exact.)
+	// The decode mirrors cpu_wrapper's ac_memcard. On the 68030 and the
+	// unthrottled 68020 (cpu_type & ~ec020) the three bits are used as-is and
+	// bit 2 selects a Zorro III board; on every other CPU, the 68EC020 included
+	// since upstream 26eb46a, a set bit 2 is folded down to the 8 MB Zorro II
+	// entry, so any non-zero value is Z2. (Neither the 68030 nor a Zorro III
+	// board can save at all -- see ss_supported -- but the decode stays exact.)
 	.fast_ena     ((cpu_type & ~ss_ec020) ? (~memcfg[6] & |memcfg[5:4]) : (|memcfg[6:4])),
 
 	// Kickstart fingerprint. See SS_KICK_BASE for the derivation and
@@ -2389,6 +2445,7 @@ ss_ctrl #(.STATE_W(`SS_STATE_W), .CHIP_WORDS(24'h100000)) savestate
 	.peek_valid(ss_peek_valid),
 	.peek_busy(ss_peek_busy),
 	.peek_scan(ss_peek_scan),
+	.port_own(ss_port_own),
 	.cpu_pc(ss_pc),
 	.pc_snapshot(ss_pc_snapshot),
 	.kick_pair(ss_kick_pair),
@@ -2440,9 +2497,15 @@ reg  [3:0] ss_code_meta, ss_code_sync;
 // the outcomes beside it. It only ever goes 0 -> 1, so there is nothing to
 // miss between samples.
 reg        ss_kick_warn_meta, ss_kick_warn_sync;
+// status[51] is a clk_sys register, so its edge is taken here directly. A
+// request ss_supported refuses never reaches this core from the OSD, which
+// greys the rows out first; one ss_save_allowed refuses for the master stack does,
+// since the host cannot see the CPU's state, and it says so.
+reg        ss_save_req_sys_d;
 
 always @(posedge clk_sys) begin
 	ss_info_req  <= 1'b0;
+	ss_save_req_sys_d <= ss_save_req_osd;
 
 	ss_out_meta  <= {ss_load_fail, ss_load_ok, ss_save_fail, ss_save_ok};
 	ss_out_sync  <= ss_out_meta;
@@ -2476,6 +2539,10 @@ always @(posedge clk_sys) begin
 		ss_info_code <= (ss_code_sync >= 4'd1 && ss_code_sync <= 4'd6)
 		                ? (SS_INFO_BASE + 8'd2 + {4'd0, ss_code_sync})
 		                : (SS_INFO_BASE + 8'd9);
+		ss_info_req  <= 1'b1;
+	end
+	else if (ss_save_req_osd & ~ss_save_req_sys_d & ss_supported & ss_mstack_used) begin
+		ss_info_code <= SS_INFO_BASE + 8'd10;
 		ss_info_req  <= 1'b1;
 	end
 end
@@ -2672,7 +2739,7 @@ end
 // this flop becomes the only thing keeping a back-to-back restore off the
 // previous vector.
 //
-// Cost is `SS_STATE_W` flops, 2093 of them, and one clk_sys cycle of extra
+// Cost is `SS_STATE_W` flops, 2099 of them, and one clk_sys cycle of extra
 // latency on a 23-cycle sequence that is followed by a million SDRAM word
 // writes (see the ORDERING NOTE below).
 reg [`SS_STATE_W-1:0] ss_state_out_q;

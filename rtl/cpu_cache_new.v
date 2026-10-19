@@ -311,11 +311,26 @@ wire [15:0] rd_dat    = rd_i0 ? idram0_cpu_dat_r :
 wire [15:0] rd_dat_hi = rd_d0 ? ddram0_cpu_dat_r : rd_d1 ? ddram1_cpu_dat_r : buf_word;
 wire  [3:0] rd_tw_op  = rd_i0 ? TW_I0 : rd_i1 ? TW_I1 : rd_d0 ? TW_D0 : rd_d1 ? TW_D1 : dtag_lru ? TW_DF0 : TW_DF1;
 
+// sdr_read_req is set in READ on a miss and held in FILL1 until the ack, and
+// is 0 everywhere else -- the same value the state machine below used to
+// assign it. It has its own expression so the tag compares (rd_*) feed its
+// last LUT directly: inside the state machine they went through the shared
+// next-state decode first, two LUTs more from the tag RAM output, and that
+// was the worst path of ram2's cache (families F and H) on most seeds.
+wire rd_hit   = rd_i0 | rd_i1 | rd_d0 | rd_d1;
+wire rd_buf   = LINE_TAKE && buf_ok_r && !snoop_act && !cpu_ir && cc_den && !cache_inhibit;
+wire rq_read  = (cpu_sm_state == CPU_SM_READ) && !rd_buf;
+wire rq_fill1 = (cpu_sm_state == CPU_SM_FILL1) && !sdr_read_ack;
+
+always @ (posedge clk) begin
+  if (rst) sdr_read_req <= 1'b0;
+  else     sdr_read_req <= rq_fill1 | (rq_read & !rd_hit);
+end
+
 // cpu side state machine
 always @ (posedge clk) begin
   if (rst) begin
     fill              <= 1'b0;
-    sdr_read_req      <= 1'b0;
     wb_en             <= 1'b0;
     cpu_ack           <= 1'b0;
     cpu_ack_l         <= 1'b0;
@@ -342,7 +357,6 @@ always @ (posedge clk) begin
     cpu_sm_dline0_we  <= 1'b0;
     cpu_sm_dline1_we  <= 1'b0;
     cpu_sm_long       <= 1'b0;
-    sdr_read_req      <= 1'b0;
     wb_en             <= 1'b0;
     cpu_sm_itag_we    <= 1'b0;
     cpu_sm_dtag_we    <= 1'b0;
@@ -446,8 +460,7 @@ always @ (posedge clk) begin
           cpu_sm_dline1_we <= !dtag_lru;
           cpu_sm_state     <= CPU_SM_WAIT;
         end else begin
-          // on miss fetch data from SDRAM
-          sdr_read_req <= 1'b1;
+          // on miss fetch data from SDRAM (sdr_read_req: see rq_read)
           cpu_sm_state <= CPU_SM_FILL1;
           // begin tracking this fill line for the snoop interlock
           fill_active  <= 1'b1;
@@ -463,10 +476,7 @@ always @ (posedge clk) begin
         tw_tag <= cpu_adr_tag;
         fill <= 1'b1;
         cpu_sm_adr <= cpu_adr[10:1]; 
-        if (!sdr_read_ack) begin
-          sdr_read_req <= 1'b1;
-        end else begin
-          sdr_read_req <= 1'b0;
+        if (sdr_read_ack) begin
           // read data to cpu
           cpu_dat_r <= sdr_dat_r;
           cpu_ack <= 1'b1;

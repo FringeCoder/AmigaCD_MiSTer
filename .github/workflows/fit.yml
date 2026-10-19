@@ -98,7 +98,9 @@ jobs:
         run: ./scripts/ci-fit.sh AmigaCD "${{ matrix.seed }}"
 
       # The reports are what a timing failure is read from, so they travel
-      # with the bitstream even when the fit fails.
+      # with the bitstream even when the fit fails. family_paths lists the ten
+      # worst paths of each failing family (scripts/ci-sta-families.tcl), which
+      # is what restructuring one needs and the 25-row report never shows.
       - name: Upload
         if: always()
         uses: actions/upload-artifact@v4
@@ -108,6 +110,8 @@ jobs:
             fit.json
             fit_${{ matrix.seed }}.log
             paths_${{ matrix.seed }}.rpt
+            families_${{ matrix.seed }}.txt
+            family_paths_${{ matrix.seed }}.rpt
             output_files/AmigaCD.rbf
             output_files/*.rpt
             output_files/*.summary
@@ -158,6 +162,29 @@ jobs:
               for r in rows:
                   mark = 'picked' if r is best else ('good' if r.get('ok') else 'no')
                   s.write('| %s | %s | %s | %s |\n' % (r['seed'], r['setup'], r['hold'], mark))
+          # The panel, not the winner. With a fixed list of seeds, the median
+          # slack and the number that close are what an RTL change moved; the
+          # best seed alone is a draw. Per family, the median and how many seeds
+          # it fails in say which wall is next (scripts/ci-sta-families.tcl).
+          def med(v):
+              v = sorted(v)
+              return None if not v else (v[len(v)//2] if len(v) % 2 else (v[len(v)//2-1] + v[len(v)//2]) / 2)
+          setups = [r['setup'] for r in rows if r.get('setup') is not None]
+          holds = [r['hold'] for r in rows if r.get('hold') is not None]
+          panel = 'Panel of %d seeds: %d close, median setup %s, worst hold %s' % (
+              len(rows), len(good), med(setups), min(holds) if holds else None)
+          print(panel)
+          fams = {}
+          for r in rows:
+              for k, v in (r.get('families') or {}).items():
+                  if v is not None:
+                      fams.setdefault(k, []).append(v)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as s:
+              s.write('\n%s\n\n| family | median | worst | seeds < 0 |\n|---|---|---|---|\n' % panel)
+              for k, v in fams.items():
+                  line = '| %s | %.3f | %.3f | %d of %d |' % (k, med(v), min(v), sum(x < 0 for x in v), len(v))
+                  s.write(line + '\n')
+                  print(line)
           out = open(os.environ['GITHUB_OUTPUT'], 'a')
           if best is None:
               msg = 'No seed closed timing (setup and hold both > 0): %s' % ', '.join(

@@ -36,7 +36,7 @@
 
 module tb_ss_fanout_retime;
 
-	localparam integer STATE_W = 1041 + 1052;   // SS_STATE_W, Akiko included
+	localparam integer STATE_W = 1047 + 1052;   // SS_STATE_W, Akiko included
 
 	integer errors = 0;
 

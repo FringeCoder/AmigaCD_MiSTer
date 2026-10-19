@@ -25,6 +25,7 @@ module ciab
   output   [7:0] data_out,  // CPU data bus output
   input   tick,             // TOD tick input (50/60 Hz)
   input   eclk,             // E clock (system clock / 10)
+  input   eclk_n,           // eclk as it will be after this clock edge (amiga_clk eclk_n)
   input   flag,             // FLAG input (disk index pulse)
   output   irq,             // Interrupt request (INT6)
 
@@ -84,6 +85,7 @@ module ciab
   wire  [7:0] sdr_out;      // SDR output
   wire  spmode;             // Timer A serial port mode (0=input, 1=output)
   wire  ta_pb_on, ta_pb_val;  // Timer A driving PB6
+  wire  ta_pb_on_n, ta_pb_val_n, tb_pb_on_n, tb_pb_val_n, tmra_ovf_n;  // their values after this edge
   wire  tb_pb_on, tb_pb_val;  // Timer B driving PB7
 
   reg    tick_del;          // Delayed tick for edge detection
@@ -293,26 +295,22 @@ reg [7:0] regportb;         // Port B output register
 reg [7:0] ddrportb;         // Port B direction register
 
 // Port B output register
-always @(posedge clk)
-  if (ss_ld)
-    regportb[7:0] <= ss_ld_data[23:16];
-  else if (clk7_en) begin
-    if (reset)
-      regportb[7:0] <= 8'd0;
-    else if (wr && prb)
-      regportb[7:0] <= data_in[7:0];
-  end
+wire [7:0] regportb_n =
+  ss_ld          ? ss_ld_data[23:16] :
+  !clk7_en       ? regportb[7:0] :
+  reset          ? 8'd0 :
+  (wr && prb)    ? data_in[7:0] :
+                   regportb[7:0];
+always @(posedge clk) regportb[7:0] <= regportb_n;
 
 // Port B direction register
-always @(posedge clk)
-  if (ss_ld)
-    ddrportb[7:0] <= ss_ld_data[31:24];
-  else if (clk7_en) begin
-    if (reset)
-      ddrportb[7:0] <= 8'd0;
-    else if (wr && ddrb)
-       ddrportb[7:0] <= data_in[7:0];
-  end
+wire [7:0] ddrportb_n =
+  ss_ld          ? ss_ld_data[31:24] :
+  !clk7_en       ? ddrportb[7:0] :
+  reset          ? 8'd0 :
+  (wr && ddrb)   ? data_in[7:0] :
+                   ddrportb[7:0];
+always @(posedge clk) ddrportb[7:0] <= ddrportb_n;
 
 // Port B read multiplexer
 always @(*)
@@ -334,11 +332,29 @@ end
 // lines from a timer, which on a real Amiga is just as true and just as
 // destructive. This is faithful, not safe -- and no Amiga software does it,
 // which is why it has gone unnoticed since 2005.
-wire [7:0] portb_pins = (~ddrportb[7:0]) | regportb[7:0];
+//
+// The pins come straight off a register, portb_q, loaded every clock with what
+// they WILL be: the same expression applied to the next-state values of
+// DDRB, PRB and the two timers (each written in its module as `X <= X_n`, so
+// the lookahead is the registers' own next-state logic, not a copy). On every
+// clock portb_q therefore equals what the combinational pins would be, and
+// rtl/sim/ciab proves that against the previous module, frozen as ciab_ref.v.
+//
+// Why: these pins are drive select and motor, and Paula's floppy DMA request,
+// Agnus' slot decision and Gary's chip select all follow from them inside one
+// half 7 MHz cycle into sdram_ctrl's sd_addr. With the timer underflow and the
+// port mux in front of them, that path missed setup in most seeds of the 68030
+// netlist, CIA-B being the worst source of all (-1.45 ns on seed 8). Moving
+// that logic in front of a register takes it off the path and changes nothing
+// any consumer can see.
+wire [7:0] portb_pins_n = (~ddrportb_n[7:0]) | regportb_n[7:0];
+reg  [7:0] portb_q = 8'hFF;   // what the pins are at power-up: DDRB 0, timers off
+always @(posedge clk)
+  portb_q <= {tb_pb_on_n ? tb_pb_val_n : portb_pins_n[7],
+              ta_pb_on_n ? ta_pb_val_n : portb_pins_n[6],
+              portb_pins_n[5:0]};
 
-assign portb_out[7:0] = {tb_pb_on ? tb_pb_val : portb_pins[7],
-                         ta_pb_on ? ta_pb_val : portb_pins[6],
-                         portb_pins[5:0]};
+assign portb_out[7:0] = portb_q;
 
 // Delayed tick signal for edge detection
 always @(posedge clk)
@@ -389,6 +405,10 @@ cia_timera tmra
   .irq(ta),
   .pb_on(ta_pb_on),
   .pb_val(ta_pb_val),
+  .eclk_n(eclk_n),
+  .tmra_ovf_n(tmra_ovf_n),
+  .pb_on_n(ta_pb_on_n),
+  .pb_val_n(ta_pb_val_n),
   .ss_state(ss_tmra),
   .ss_ld(ss_ld),
   .ss_ld_data(ss_ld_data[88:50])
@@ -411,6 +431,10 @@ cia_timerb tmrb
   .irq(tb),
   .pb_on(tb_pb_on),
   .pb_val(tb_pb_val),
+  .eclk_n(eclk_n),
+  .tmra_ovf_n(tmra_ovf_n),
+  .pb_on_n(tb_pb_on_n),
+  .pb_val_n(tb_pb_val_n),
   .ss_state(ss_tmrb),
   .ss_ld(ss_ld),
   .ss_ld_data(ss_ld_data[127:89])
