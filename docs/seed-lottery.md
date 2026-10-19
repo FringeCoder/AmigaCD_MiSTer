@@ -58,7 +58,7 @@ including the ones that are reverted.
 | 17 | H | MAX_FANOUT 16 on ddram_ctrl's `ss_port_own` (DDR3 port-0 grant, >100 loads) | 2b894af6 | took effect (8 copies), ss_port_own paths gone; H -0.052 -> -0.055 (11/20 both), median -0.355 -> -0.393, 1 -> 0 close | reverted (85328d13): it removed one seed's outlier, which the panel does not count |
 | 18 | L | multicycle 2 from ss_ctrl's `shadow_rd_addr` into ss_ctrl (the shadow readback round trip; the address is held >= 6 clk_114 cycles at every read, checked in rtl/sim/ssown) | d6f02c61 | L -0.285 (19/20, worst -1.083) -> -0.159 (14/20, worst -0.696); vs the same RTL's 2b894af6 panel -0.316 (18/20, worst -2.960); median -0.355 -> -0.519 (D, G, M re-rolled) | kept: a proven constraint, its own family better on median, count and worst, the median drop in families it does not reach |
 | 19 | hold | false path into `ss_dbg_meta` (first stage of the diagnostics' 2-FF synchroniser); same panel as row 18 | d6f02c61 | 0 hold failures in 20 (worst +0.174), against 2 on the panel before | kept |
-| 20 | D, G | row 6 again: `cpu_rdq`, the RAM return registered at clk_114 with the port select applied (lookahead; equal to the old mux on every clk_sys edge), on the merged netlist | ad8aa2a7 | panel pending | -- |
+| 20 | D, G | row 6 again: `cpu_rdq`, the RAM return registered at clk_114 with the port select applied (lookahead; equal to the old mux on every clk_sys edge), on the merged netlist | ad8aa2a7 | S (was D) -0.255 (20/20) -> +0.101 (6/20), G -0.211 -> +1.139 (0/20); but C +0.510 -> -0.129 (12/20), F -0.005 -> -0.399 (20/20), H -0.105 -> -0.596 (20/20), L -0.159 -> -0.323 (19/20); median -0.519 -> -0.728, 0/20 close either way | reverted (row 6's result again: the wall moves to the caches and ddram_ctrl, and the total gets worse) |
 | 21 | L | the RTL answer to row 18: `ss_regshadow` registers its set/clear readback (DMACON/INTENA/ADKCON) on the array read's clk_sys edge, so nothing from `shadow_rd_addr` reaches ss_ctrl and row 18's multicycle is removed (proven in rtl/sim/regshadow) | 89e08f32 | panel pending, after row 20 is judged | -- |
 
 Ideas recorded and not done, with the reason:
@@ -514,3 +514,28 @@ since the CI artifact expires on 2026-11-02. Its fit.json reports all_setup
 -0.101: the family report takes the minimum over every corner (the slow -40 C
 one here), while the gate is the slow 100 C corner only, where it is +0.051.
 Not yet run on hardware.
+
+### cpu_rdq again (ad8aa2a7, row 20) -- reverted
+
+Run 39335315169, seeds 21-38, 41, 42, against d6f02c61's panel (run
+39192993535) on the same list:
+
+| family | d6f02c61 | + cpu_rdq |
+|---|---|---|
+| D / S (sdram data into the CPU) | -0.255 (20/20) | S +0.101 (6/20) |
+| G ddram data into the CPU | -0.211 (15/20) | +1.139 (0/20) |
+| C.sdram_cache | +0.510 | -0.129 (12/20) |
+| F.ddram_cache | -0.005 | -0.399 (20/20) |
+| H.ddram_ctrl | -0.105 | -0.596 (20/20) |
+| L.ss_ctrl_internal | -0.159 | -0.323 (19/20) |
+| M.ascal | -0.198 | -0.127 (12/20) |
+| all_setup median | -0.519 | **-0.728** |
+
+0/20 close; best seed 35 at -0.366. This is row 6's panel again, nearly
+family for family: the CPU input wall goes, and C, F and H -- the caches'
+output cones, which now also feed cpu_rdq's D input, and the DDR3 controller
+beside them -- each lose more than the 0.3 ns noise line. The median is worse
+by 0.21. Reverted in the commit after ad8aa2a7's ledger entry. Two fits of the
+same idea on two netlists agree, so this is not placement luck: do not try the
+registered RAM return a third time without a change that also takes load off
+the cache outputs.

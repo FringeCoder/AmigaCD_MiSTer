@@ -1057,33 +1057,13 @@ wire        ram_sel;
 wire        ram_lds;
 wire        ram_uds;
 wire [15:0] ram_din;
-// ram_ready is for the clk_114 side (ram_cs below). cpu_wrapper takes the
-// same mux registered by cpu_rdq, which is one level shorter into the CPU and
-// equal to this on every clk_sys edge -- see rtl/cpu_rdq.v.
+wire [15:0] ram_dout  = zram_sel ? ram_dout2  : ram_dout1;
 wire        ram_ready = zram_sel ? ram_ready2 : ram_ready1;
 wire        zram_sel  = |ram_addr[28:26];
 wire        ram_l1;
 wire [15:0] ram_din_lo;
 wire [15:0] ram_dout2_hi;
 wire        ram_ready2_l;
-wire [15:0] ram_dout1_n, ram_dout2_n;
-wire        ram_ready1_n, ram_ready2_n, ram_ready2_l_n;
-wire [15:0] cpu_ram_dout;
-wire        cpu_ram_ready, cpu_ram_ready_l;
-
-cpu_rdq cpu_rdq
-(
-	.clk            (clk_114        ),
-	.zram_sel       (zram_sel       ),
-	.ram1_dout_n    (ram_dout1_n    ),
-	.ram1_ready_n   (ram_ready1_n   ),
-	.ram2_dout_n    (ram_dout2_n    ),
-	.ram2_ready_n   (ram_ready2_n   ),
-	.ram2_ready_l_n (ram_ready2_l_n ),
-	.dout           (cpu_ram_dout   ),
-	.ready          (cpu_ram_ready  ),
-	.ready_l        (cpu_ram_ready_l)
-);
 wire        ramshared;
 
 wire [7:0] toccata_base;
@@ -1214,14 +1194,14 @@ cpu_wrapper cpu_wrapper
 	.ramaddr      (ram_addr        ),
 	.ramlds       (ram_lds         ),
 	.ramuds       (ram_uds         ),
-	.ramdout      (cpu_ram_dout    ),
+	.ramdout      (ram_dout        ),
 	.ramdin       (ram_din         ),
-	.ramready     (cpu_ram_ready   ),
+	.ramready     (ram_ready       ),
 	.ramshared    (ramshared       ),
 	.ramlong1     (ram_l1          ),
 	.ramdin_lo    (ram_din_lo      ),
 	.ramdout_hi   (ram_dout2_hi    ),
-	.ramready_l   (cpu_ram_ready_l ),
+	.ramready_l   (zram_sel & ram_ready2_l),
 
 	//custom CPU signals
 	.cpustate     (cpu_state       ),
@@ -1350,8 +1330,6 @@ sdram_ctrl ram1
 	.cache_inhibit(ss_port_own & ss_sd_cache_inhibit),
 	.cpuRD        (ram_dout1       ),
 	.ramready     (ram_ready1      ),
-	.cpuRD_n      (ram_dout1_n     ),
-	.ramready_n   (ram_ready1_n    ),
 
 	.chipWR       (arb_chip_wr     ),
 	.chipAddr     (arb_chip_addr   ),
@@ -1517,9 +1495,6 @@ ddram_ctrl ram2
 	.cpuWR_lo     (ram_din_lo      ),
 	.cpuRD_hi     (ram_dout2_hi    ),
 	.ramready_l   (ram_ready2_l    ),
-	.cpuRD_n      (ram_dout2_n     ),
-	.ramready_n   (ram_ready2_n    ),
-	.ramready_l_n (ram_ready2_l_n  ),
 
 	// Save state port, muxed onto DDR3 arbiter master 0. The write side is
 	// taken while frozen; the read side is taken for the whole of a restore,
