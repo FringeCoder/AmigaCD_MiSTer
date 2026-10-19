@@ -15,7 +15,11 @@ module ss_crc32
 	input             init,
 	input             wr,
 	input      [7:0]  byte_in,
-	output     [31:0] crc_out
+	output     [31:0] crc_out,
+	// crc_out's value after the next clock edge, for a consumer that wants to
+	// register a comparison against it without lagging a cycle (ss_ctrl's
+	// crc_eq).
+	output     [31:0] crc_next
 );
 
 reg [31:0] crc = 32'hFFFFFFFF;
@@ -33,13 +37,14 @@ endfunction
 integer b;
 reg [31:0] next;
 
-always @(posedge clk) begin
-	if (init) crc <= 32'hFFFFFFFF;
-	else if (wr) begin
-		next = crc ^ {24'd0, byte_in};
-		for (b = 0; b < 8; b = b + 1) next = crc_bit(next);
-		crc <= next;
-	end
+always @(*) begin
+	next = crc ^ {24'd0, byte_in};
+	for (b = 0; b < 8; b = b + 1) next = crc_bit(next);
 end
+
+wire [31:0] crc_d = init ? 32'hFFFFFFFF : wr ? next : crc;
+assign crc_next = ~crc_d;
+
+always @(posedge clk) crc <= crc_d;
 
 endmodule

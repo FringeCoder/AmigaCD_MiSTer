@@ -907,6 +907,10 @@ reg        sh_half;
 reg [15:0] sh_low;
 reg [31:0] kick_crc;        // fingerprint of the ROM currently in the machine
 reg [31:0] file_kick_crc;   // fingerprint the state file was made under
+// kick_crc == file_kick_crc, set from the value written on each write of
+// either (one site each), so S_L_KICK_CHK reads one bit instead of a 32-bit
+// compare in front of load_reject's fan-out (family L, docs/seed-lottery.md).
+reg        kick_eq;
 // Sticky since reset: a restore ran with a fingerprint that did not match
 // the file's. Reported, not acted on -- see S_L_KICK_CHK.
 reg        kick_warn;
@@ -967,7 +971,9 @@ reg        crc_wr;
 reg  [7:0] crc_byte;
 wire [31:0] crc_value;
 
-ss_crc32 crc (.clk(clk), .init(crc_init), .wr(crc_wr), .byte_in(crc_byte), .crc_out(crc_value));
+wire [31:0] crc_next;
+ss_crc32 crc (.clk(clk), .init(crc_init), .wr(crc_wr), .byte_in(crc_byte), .crc_out(crc_value),
+              .crc_next(crc_next));
 
 // A 32-bit payload word is fed to the CRC as four bytes, least significant
 // first, so the result matches crc32_compute() over the little-endian
@@ -1032,6 +1038,28 @@ reg [5:0]  rd_ret;        // state to resume in once rd_data is valid
 reg [31:0] hdr_length;
 reg [31:0] want_crc;
 reg [23:0] pay_idx;       // payload word index, 0 .. CORE_WORDS
+
+// The restore's refusal decisions read registered flags, not the compares
+// they stand for: a 32-bit compare in front of load_reject's fan-out (a dozen
+// registers, load_busy among them) was the worst path of family L on most
+// seeds (docs/seed-lottery.md). Each flag is loaded on the same edge as its
+// operand, from the value being written, so it equals its compare on every
+// clock after that write. rd_data and hdr_length have one write site each.
+// MIN_LENGTH and CORE_WORDS_32 follow fast_ena_q, which only loads in S_IDLE,
+// so they cannot move between the read and the state that tests the flag.
+reg rd_magic_bad;   // rd_data[31:0]  != SS_MAGIC
+reg rd_ver_bad;     // rd_data[63:32] != SS_VERSION
+reg rd_cw_bad;      // rd_data[31:0]  != CORE_WORDS_32
+reg rd_len_bad;     // rd_data[63:32] outside MIN_LENGTH .. MAX_LENGTH
+reg len_bad;        // hdr_length     outside MIN_LENGTH .. MAX_LENGTH
+
+// The payload CRC check, registered from ss_crc32's next value: crc_eq is
+// (crc_value == want_crc) on every clock that tests it. want_crc is written
+// only in S_L_CRC_CAP, whose next state tests pay_idx == CORE_WORDS_24 with
+// pay_idx just set to 0, so the one clock where crc_eq would see the old
+// want_crc is never one that reads it.
+reg crc_eq;
+always @(posedge clk) crc_eq <= (crc_next == want_crc);
 
 wire load_req_rise = load_req && !load_req_d;
 
@@ -1648,6 +1676,7 @@ always @(posedge clk) begin
 					// folded into crc_out on the edge that clears crc_wr, and
 					// crc_busy includes crc_wr.
 					kick_crc <= crc_value;
+					kick_eq  <= (crc_value == file_kick_crc);
 					crc_init <= 1'b1;      // re-arm for whatever the caller does next
 					rom_scan <= 1'b0;
 					state    <= kick_ret;
@@ -2188,14 +2217,19 @@ always @(posedge clk) begin
 		S_L_RD_DATA: begin
 			if (ddr_readdatavalid_q) begin
 				rd_data <= ddr_readdata_q;
+				// the header checks on this word, registered with it
+				rd_magic_bad <= (ddr_readdata_q[31:0]  != SS_MAGIC);
+				rd_ver_bad   <= (ddr_readdata_q[63:32] != SS_VERSION);
+				rd_cw_bad    <= (ddr_readdata_q[31:0]  != CORE_WORDS_32);
+				rd_len_bad   <= (ddr_readdata_q[63:32] < MIN_LENGTH) || (ddr_readdata_q[63:32] > MAX_LENGTH);
 				rd_pair <= {1'b0, rd_idx[23:1]};
 				state   <= rd_ret;
 			end
 		end
 
 		S_L_MAGIC: begin
-			if (rd_data[31:0] != SS_MAGIC) load_reject(FAIL_MAGIC);
-			else if (rd_data[63:32] != SS_VERSION) load_reject(FAIL_VERSION);
+			if (rd_magic_bad) load_reject(FAIL_MAGIC);
+			else if (rd_ver_bad) load_reject(FAIL_VERSION);
 			else begin
 				// Word 0 holds the counter, word 1 the length.
 				rd_idx <= 24'd0;
@@ -2206,6 +2240,7 @@ always @(posedge clk) begin
 
 		S_L_LEN_CAP: begin
 			hdr_length <= rd_data[63:32];
+			len_bad    <= rd_len_bad;
 			// Word 4 holds core_words, word 5 host_words.
 			rd_idx     <= 24'd4;
 			rd_ret     <= S_L_LEN_CHK;
@@ -2218,8 +2253,7 @@ always @(posedge clk) begin
 		// otherwise produce -- the user can act on "wrong core", not on
 		// "corrupt".
 		S_L_LEN_CHK: begin
-			if ((hdr_length < MIN_LENGTH) || (hdr_length > MAX_LENGTH) ||
-			    (rd_data[31:0] != CORE_WORDS_32))
+			if (len_bad || rd_cw_bad)
 				load_reject(FAIL_LENGTH);
 			else begin
 				// Word 6 holds core_crc32, word 7 host_crc32.
@@ -2247,7 +2281,7 @@ always @(posedge clk) begin
 				// crc_out on the edge that clears it -- see word_busy above
 				// for the save-side bug this exact off-by-one cycle caused.
 				if (!crc_busy) begin
-					if (crc_value == want_crc) begin
+					if (crc_eq) begin
 						// The file is intact. One gate left: is it this
 						// machine's Kickstart? That one is deliberately LAST
 						// even though it is the cheaper of the two scans.
@@ -2291,7 +2325,10 @@ always @(posedge clk) begin
 				// Payload word 0 is the fingerprint the file was made under.
 				// Grabbing it here rather than with a read of its own means the
 				// scan that has to walk the whole payload anyway pays for it.
-				if (pay_idx == 24'd0) file_kick_crc <= pay_word;
+				if (pay_idx == 24'd0) begin
+					file_kick_crc <= pay_word;
+					kick_eq       <= (kick_crc == pay_word);
+				end
 				crc_word(pay_word);
 				pay_idx <= pay_idx + 24'd1;
 				state   <= S_L_PAY_FETCH;
@@ -2317,7 +2354,7 @@ always @(posedge clk) begin
 			// the memory image it is being given, and refusing is the only
 			// useful answer. kick_warn still rides out on the diagnostics for
 			// anyone reading them.
-			if (kick_crc != file_kick_crc) begin
+			if (!kick_eq) begin
 				kick_warn <= 1'b1;
 				load_reject(FAIL_KICK);
 			end
