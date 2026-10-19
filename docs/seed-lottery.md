@@ -58,7 +58,7 @@ including the ones that are reverted.
 | 17 | H | MAX_FANOUT 16 on ddram_ctrl's `ss_port_own` (DDR3 port-0 grant, >100 loads) | 2b894af6 | took effect (8 copies), ss_port_own paths gone; H -0.052 -> -0.055 (11/20 both), median -0.355 -> -0.393, 1 -> 0 close | reverted (85328d13): it removed one seed's outlier, which the panel does not count |
 | 18 | L | multicycle 2 from ss_ctrl's `shadow_rd_addr` into ss_ctrl (the shadow readback round trip; the address is held >= 6 clk_114 cycles at every read, checked in rtl/sim/ssown) | d6f02c61 | L -0.285 (19/20, worst -1.083) -> -0.159 (14/20, worst -0.696); vs the same RTL's 2b894af6 panel -0.316 (18/20, worst -2.960); median -0.355 -> -0.519 (D, G, M re-rolled) | kept: a proven constraint, its own family better on median, count and worst, the median drop in families it does not reach |
 | 19 | hold | false path into `ss_dbg_meta` (first stage of the diagnostics' 2-FF synchroniser); same panel as row 18 | d6f02c61 | 0 hold failures in 20 (worst +0.174), against 2 on the panel before | kept |
-| 20 | D, G | row 6 again: `cpu_rdq`, the RAM return registered at clk_114 with the port select applied (lookahead; equal to the old mux on every clk_sys edge), on the merged netlist | (this commit) | panel pending | -- |
+| 20 | D, G | row 6 again: `cpu_rdq`, the RAM return registered at clk_114 with the port select applied (lookahead; equal to the old mux on every clk_sys edge), on the merged netlist | ad8aa2a7 | panel pending | -- |
 
 Ideas recorded and not done, with the reason:
 - Registering ss_regshadow's rd_data (its set/clear mux) on clk_sys: the RTL
