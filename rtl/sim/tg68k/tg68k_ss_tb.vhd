@@ -47,11 +47,21 @@ entity tg68k_ss_tb is
 		-- loop is about 70 clocks, so 80 covers all of it and then some.
 		FREEZE_N  : integer := 80;
 		-- Clocks spent in the main loop before the first freeze point.
-		FREEZE_LO : integer := 200
+		FREEZE_LO : integer := 200;
+		-- 1 runs the kernel as cpu_wrapper does for "68030 no MMU": CPU030
+		-- high, MMU030 low. CI runs the bench both ways, since the 68030 is
+		-- allowed save states without its MMU since 2026-10-19.
+		CPU030_G  : integer := 0
 	);
 end entity;
 
 architecture sim of tg68k_ss_tb is
+
+	function to_sl(b : boolean) return std_logic is
+	begin
+		if b then return '1'; else return '0'; end if;
+	end function;
+	constant C030 : std_logic := to_sl(CPU030_G /= 0);
 
 	constant MEMW : integer := 16384;			-- words, i.e. 32 KB
 	-- Words put back between scan iterations: the program plus the sentinels.
@@ -183,6 +193,7 @@ architecture sim of tg68k_ss_tb is
 	signal ss_halted      : std_logic;
 	signal ss_sfc         : std_logic_vector(2 downto 0);
 	signal ss_dfc         : std_logic_vector(2 downto 0);
+	signal ss_cacr_hi     : std_logic_vector(6 downto 0);
 
 	-- Testbench back door into the memory model, so a scan iteration can undo
 	-- whatever the previous one's runaway CPU scribbled.
@@ -217,6 +228,8 @@ begin
 			IPL_autovector => '0',
 			berr           => '0',
 			CPU            => "11",				-- as cpu_wrapper instantiates it
+			CPU030         => C030,
+			MMU030         => '0',
 			addr_out       => addr_out,
 			data_write     => data_write,
 			nWr            => nWr,
@@ -243,6 +256,7 @@ begin
 			ss_halted      => ss_halted,
 			ss_sfc         => ss_sfc,
 			ss_dfc         => ss_dfc,
+			ss_cacr_hi     => ss_cacr_hi,
 			ss_wr_index    => ss_wr_index,
 			ss_wr_data     => ss_wr_data,
 			ss_wr_en       => ss_wr_en,
@@ -1040,6 +1054,56 @@ begin
 		step(2);
 		check(ss_sfc = "010" and ss_dfc = "110",
 		      "the restore's CACR write puts SFC and DFC back");
+		clkena_in <= '1';
+		-----------------------------------------------------------------------
+		note("PHASE 7 -- the rest of CACR in the state vector");
+		-- ss_cacr_hi is {CACR_DC_owned, CACR_DC, CACR 13, 12, 9, 8, 4}, restored
+		-- from bits 16:10 of the CACR strobe. On the 68030 the restore masks
+		-- CACR as MOVEC does, so bits 3:2 (clear strobes there) do not land;
+		-- on the 68020 bits 13:4 do not exist. The D-cache heuristic pair is
+		-- restored on both. Before 2026-10-19 none of this was in the vector.
+		boot_prep;
+		poke_w(16#780#, X"70FF");		-- moveq #-1,d0
+		poke_w(16#782#, X"4E7B");		-- movec d0,cacr
+		poke_w(16#784#, X"0002");
+		poke_w(16#786#, X"60FE");		-- bra.s *
+		boot_go;
+		step(400);
+		if C030 = '1' then
+			check(ss_cacr_hi = "1111111",
+			      "MOVEC to CACR shows the 68030's upper bits on the capture export");
+		else
+			check(ss_cacr_hi = "1100000",
+			      "MOVEC to CACR shows only the heuristic pair on the 68020");
+		end if;
+		clkena_in <= '0';
+		step(4);
+		-- owned 0, DC 1, C13 0, C12 1, C9 0, C8 1, C4 1; CACR 3:0 all set
+		ss_wr_data <= X"000" & "000" & "0101011" & "000" & "000" & "1111";
+		ss_cacr_wr <= '1';
+		wait until rising_edge(clk);
+		ss_cacr_wr <= '0';
+		step(2);
+		if C030 = '1' then
+			check(ss_cacr_hi = "0101011" and CACR_out = "0011",
+			      "the 68030 restore puts the upper bits back and masks 3:2");
+		else
+			check(ss_cacr_hi = "0100000" and CACR_out = "1111",
+			      "the 68020 restore keeps CACR 3:0 and drops 13:4");
+		end if;
+		check(D_CACHE_out = '1', "not owned restores the D-cache on");
+		-- owned 1, DC 0, C13 1, C12 1, C9 0, C8 1, C4 0
+		ss_wr_data <= X"000" & "000" & "1011010" & "000" & "000" & "0000";
+		ss_cacr_wr <= '1';
+		wait until rising_edge(clk);
+		ss_cacr_wr <= '0';
+		step(2);
+		if C030 = '1' then
+			check(ss_cacr_hi = "1011010", "a second pattern, 68030");
+		else
+			check(ss_cacr_hi = "1000000", "a second pattern, 68020");
+		end if;
+		check(D_CACHE_out = '0', "owned with DC clear restores the D-cache off");
 		clkena_in <= '1';
 
 		if errors = 0 then

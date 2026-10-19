@@ -58,7 +58,8 @@
 //
 // Not an oversight, a budget. SS_STATE_W was 2093 and STATE_WORDS rounds it to
 // 66 words = 2112 bits, so there were 19 bits of free padding to grow into
-// before the state section lengthens (13 since SFC/DFC took 6, below). The
+// before the state section lengthens (13 since SFC/DFC took 6, 6 since
+// ss_cacr_hi took 7, below). The
 // list above is 23 bits, which does not fit -- and lengthening the section moves every section after it, which
 // is the 1.2 case in ss_ctrl.v's version notes and would refuse every save
 // file already on disk.
@@ -80,7 +81,15 @@
 // section length (STATE_WORDS, 66) is unchanged, a save file written before
 // restores with SFC = DFC = 0, and one written now is read by an older core
 // with the two fields ignored. No format version change for that reason.
+//
+// ss_cacr_hi (7 bits: the 68030's CACR bits 4, 8, 9, 12, 13 and the D-cache
+// heuristic's CACR_DC / CACR_DC_owned) was added 2026-10-19 the same way, ahead
+// of SFC/DFC, for the 68030 without its MMU. A file written before restores
+// all seven as zero: no 68030 upper bits, which is right for every file a core
+// that refused the 68030 could have written, and the heuristic at its reset
+// value (not owned, D-cache on). 6 bits of padding are left.
 `define SS_STATE_LIST { \
+	ss_cacr_hi, \
 	ss_sfc, ss_dfc, \
 	ss_cpu_d0, ss_cpu_d1, ss_cpu_d2, ss_cpu_d3, \
 	ss_cpu_d4, ss_cpu_d5, ss_cpu_d6, ss_cpu_d7, \
@@ -126,7 +135,7 @@
 // directions take it from here, so the choice is free; the length is not,
 // and it changes with this.
 
-// SFC + DFC (3 each) + 16 registers + PC + USP + VBR (32 each) + SR (16) + CACR (4) + 4 map bits
+// CACR hi (7) + SFC + DFC (3 each) + 16 registers + PC + USP + VBR (32 each) + SR (16) + CACR (4) + 4 map bits
 // + INTREQ (15) + CIA A (191) + CIA B (203) + Akiko (1052)
 // The CIAs, by value: 191 bits for CIA A and 203 for CIA B. Both sit on the
 // CPU bus, invisible to the chipset register shadow, and cannot be read back
@@ -134,6 +143,6 @@
 // pending interrupts, reading TOD moves its latch. ciaa.v and ciab.v carry the
 // bit layouts; the widths are stated there and here and nowhere else.
 
-`define SS_STATE_W (3 + 3 + 16*32 + 32 + 32 + 32 + 16 + 4 + 4 + 15 + 191 + 203 + `SS_AKIKO_W)
+`define SS_STATE_W (7 + 3 + 3 + 16*32 + 32 + 32 + 32 + 16 + 4 + 4 + 15 + 191 + 203 + `SS_AKIKO_W)
 
 `endif

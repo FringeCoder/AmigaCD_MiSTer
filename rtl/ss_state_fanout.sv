@@ -122,6 +122,7 @@ wire [31:0] ss_pc, ss_usp, ss_vbr;
 wire [15:0] ss_sr;
 wire  [3:0] ss_cacr;
 wire  [2:0] ss_sfc, ss_dfc;
+wire  [6:0] ss_cacr_hi;
 wire        ss_ovl, ss_rom_readonly, ss_sel_kick1mb, ss_sel_kick256kmirror;
 wire [14:0] ss_intreq;
 wire [190:0] ss_cia_a;
@@ -271,9 +272,10 @@ always @(posedge clk) begin
 			STEP_SR:   begin cpu_wr_data <= {16'd0, ss_sr};        cpu_sr_wr   <= 1'b1; end
 			STEP_USP:  begin cpu_wr_data <= ss_usp;                cpu_usp_wr  <= 1'b1; end
 			STEP_VBR:  begin cpu_wr_data <= ss_vbr;                cpu_vbr_wr  <= 1'b1; end
-			// SFC and DFC ride on the CACR strobe: TG68K takes them from bits
-			// 6:4 and 9:7 of the same write (TG68KdotC_Kernel.vhd, ss_sfc).
-			STEP_CACR: begin cpu_wr_data <= {22'd0, ss_dfc, ss_sfc, ss_cacr}; cpu_cacr_wr <= 1'b1; end
+			// SFC, DFC and the rest of CACR ride on the CACR strobe: TG68K takes
+			// them from bits 6:4, 9:7 and 16:10 of the same write
+			// (TG68KdotC_Kernel.vhd, ss_sfc and ss_cacr_hi).
+			STEP_CACR: begin cpu_wr_data <= {15'd0, ss_cacr_hi, ss_dfc, ss_sfc, ss_cacr}; cpu_cacr_wr <= 1'b1; end
 			// Same bit order as minimig.v's ss_map output. Only [3] (ovl) and
 			// [2] (rom_readonly) have a target; [1:0] are combinational
 			// address decodes -- see rtl/ss_state.vh.

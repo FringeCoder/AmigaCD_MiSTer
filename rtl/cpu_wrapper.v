@@ -84,6 +84,7 @@ module cpu_wrapper
 	output      [3:0] ss_cacr,
 	output      [2:0] ss_sfc,          // TG68K SFC/DFC (68010+), for MOVES
 	output      [2:0] ss_dfc,
+	output      [6:0] ss_cacr_hi,      // TG68K: CACR's other bits, see the kernel port
 
 	// Save state restore. Write side of the same TG68K architectural
 	// registers, taken on the CPU clock while the core is parked by ss_arm.
@@ -422,6 +423,7 @@ cpu_inst_p
   .ss_halted(ss_halted),
   .ss_sfc(ss_sfc),
   .ss_dfc(ss_dfc),
+  .ss_cacr_hi(ss_cacr_hi),
 
   // Restore path -- TG68K only. fx68k has no equivalent write port and is
   // locked out of the savestate path in AmigaCD.sv.

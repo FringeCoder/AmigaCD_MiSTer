@@ -33,10 +33,14 @@
  * the thing it was guessing at is worth pinning down.
  */
 `timescale 1ns/1ps
+`include "rtl/ss_state.vh"
 
 module tb_ss_fanout_retime;
 
-	localparam integer STATE_W = 1047 + 1052;   // SS_STATE_W, Akiko included
+	// From the header, not restated: a width written out here went stale
+	// silently whenever the vector grew, since Icarus skips the fanout's $bits
+	// guard.
+	localparam integer STATE_W = `SS_STATE_W;
 
 	integer errors = 0;
 

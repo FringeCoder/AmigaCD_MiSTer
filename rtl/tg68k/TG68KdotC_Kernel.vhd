@@ -192,6 +192,15 @@ entity TG68KdotC_Kernel is
 		-- ss_wr_data(9 downto 7).
 		ss_sfc					: out std_logic_vector(2 downto 0);
 		ss_dfc					: out std_logic_vector(2 downto 0);
+		-- The rest of CACR, since 2026-10-19, written back on the same strobe
+		-- from ss_wr_data(16 downto 10): the 68030's CACR bits 4, 8, 9, 12 and
+		-- 13 (6:0 is that order, low first), then CACR_DC and CACR_DC_owned.
+		-- The last two are the local D-cache heuristic, not CACR, but they are
+		-- what a MOVEC to CACR leaves behind, and a restore that kept the
+		-- running machine's pair would give the restored one a D-cache its
+		-- program never chose. All zero, as an older save file gives, is the
+		-- reset value of the pair: not owned, so the D-cache is on.
+		ss_cacr_hi				: out std_logic_vector(6 downto 0);
 
 		-- Save state restore. Write side of the same architectural registers,
 		-- driven only while the savestate controller has the CPU frozen. Index
@@ -209,9 +218,8 @@ entity TG68KdotC_Kernel is
 		-- too. Without these two a restored machine would keep the running
 		-- machine's exception vector base -- every trap and interrupt would
 		-- dispatch through the wrong table, which does not fail where the
-		-- bug is. ss_cacr_wr takes CACR(3 downto 0) only, which is all the
-		-- vector carries; CACR_DC / CACR_DC_owned are a local D-cache
-		-- heuristic and are deliberately left alone.
+		-- bug is. ss_cacr_wr takes CACR(3 downto 0), SFC, DFC and the
+		-- ss_cacr_hi bits, masked on the 68030 as MOVEC masks them.
 		ss_vbr_wr				: in  std_logic := '0';
 		ss_cacr_wr				: in  std_logic := '0';
 
@@ -901,6 +909,7 @@ ss_mstack_used <= mstack_used;
 ss_halted   <= ae_halt;
 ss_sfc      <= SFC;
 ss_dfc      <= DFC;
+ss_cacr_hi  <= CACR_DC_owned & CACR_DC & CACR(13) & CACR(12) & CACR(9) & CACR(8) & CACR(4);
 
 -----------------------------------------------------------------------------
 -- Write Reg
@@ -4888,15 +4897,25 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 	  -- the register file write is (see that process): the CPU's clock
 	  -- enable is held low for the whole restore window, so a write placed
 	  -- inside the guard would silently never happen. Reset keeps priority.
-	  -- The state vector carries CACR(3 downto 0), which is all of the 68020's;
-	  -- the 68030's upper CACR bits, CAAR, MSP, ISP and the MMU registers are
-	  -- not in it, which is why AmigaCD.sv refuses save states on the 68030.
+	  -- The state vector carries all of CACR. On the 68030 the restore applies
+	  -- the mask a MOVEC applies ("11001100010011"), so bits 3 and 2 -- clear
+	  -- strobes there, captured through CACR_out with cclr ORed in -- cannot land
+	  -- in the register. CAAR, MSP, ISP and the MMU registers are not in the
+	  -- vector: AmigaCD.sv refuses save states on the 68030 with its MMU, and
+	  -- on any CPU once the master stack has been used.
 	  elsif ss_vbr_wr = '1' then
 		VBR <= ss_wr_data;
 	  elsif ss_cacr_wr = '1' then
-		CACR <= "0000000000" & ss_wr_data(3 downto 0);
+		if CPU030 = '1' then
+		  CACR <= ss_wr_data(14 downto 13) & "00" & ss_wr_data(12 downto 11) & "000" &
+		          ss_wr_data(10) & "00" & ss_wr_data(1 downto 0);
+		else
+		  CACR <= "0000000000" & ss_wr_data(3 downto 0);
+		end if;
 		SFC  <= ss_wr_data(6 downto 4);
 		DFC  <= ss_wr_data(9 downto 7);
+		CACR_DC       <= ss_wr_data(15);
+		CACR_DC_owned <= ss_wr_data(16);
 	  else
 		if cclr /= "00000" then cclr <= cclr - 1; end if;
 		if clkena_lw = '1' and exec(movec_wr) = '1' then
@@ -5221,7 +5240,12 @@ PROCESS (clk)
 	VARIABLE fd, fn : std_logic;
 	BEGIN
 		IF rising_edge(clk) THEN
-			IF Reset='1' THEN
+			-- ss_resume clears the 68030's deferred-fault and rerun state as
+			-- reset does: a restore resumes at an instruction boundary with a
+			-- fresh sequencer (see the ss_resume re-seed), and a prefetch fault
+			-- or a format B rerun left pending by the machine being replaced
+			-- would otherwise fire into the restored one.
+			IF Reset='1' OR ss_resume='1' THEN
 				pf_bad <= '0';
 				pf_wait <= '0';
 				pf_lazy <= '0';

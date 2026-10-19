@@ -74,6 +74,7 @@ module TG68KdotC_Kernel
 	output            ss_halted,
 	output      [2:0] ss_sfc,
 	output      [2:0] ss_dfc,
+	output      [6:0] ss_cacr_hi,
 
 	input       [3:0] ss_wr_index,
 	input      [31:0] ss_wr_data,
@@ -130,6 +131,7 @@ module TG68KdotC_Kernel
 	assign ss_halted      = 1'b0;
 	assign ss_sfc         = 3'd0;
 	assign ss_dfc         = 3'd0;
+	assign ss_cacr_hi     = 7'd0;
 
 endmodule
 

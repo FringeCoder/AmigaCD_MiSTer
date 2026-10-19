@@ -545,6 +545,7 @@ wire        ss_cpu_halted;
 wire [31:0] ss_vbr;
 wire  [3:0] ss_cacr;
 wire  [2:0] ss_sfc, ss_dfc;
+wire  [6:0] ss_cacr_hi;
 reg  [31:0] ss_cpu_d0, ss_cpu_d1, ss_cpu_d2, ss_cpu_d3;
 reg  [31:0] ss_cpu_d4, ss_cpu_d5, ss_cpu_d6, ss_cpu_d7;
 reg  [31:0] ss_cpu_a0, ss_cpu_a1, ss_cpu_a2, ss_cpu_a3;
@@ -1178,6 +1179,7 @@ cpu_wrapper cpu_wrapper
 	.ss_cacr      (ss_cacr         ),
 	.ss_sfc       (ss_sfc          ),
 	.ss_dfc       (ss_dfc          ),
+	.ss_cacr_hi   (ss_cacr_hi      ),
 
 	// Restore write port into the TG68K register file, driven by
 	// ss_state_fanout at the bottom of this file. One shared data bus and one
@@ -2028,8 +2030,14 @@ wire       ss_load_req_osd = status[54];
 // restore. Same answer as fx68k: refused, not silently partial. Its Zorro III
 // fast RAM, which the payload has no section for, would be a second reason.
 //
-// "68030 no MMU" (upstream a5f1637) is refused as well: it has no MMU state,
-// but the rest of the list -- upper CACR, CAAR, MSP, ISP, Zorro III -- stands.
+// "68030 no MMU" (upstream a5f1637, cpucfg[2] on the 68030) is NOT refused,
+// since 2026-10-19. Without the MMU the rest of that list is what the 68020
+// has: the upper CACR bits are in the vector now (ss_cacr_hi), MSP and ISP
+// are covered by the master-stack refusal below, CAAR is what it is on the
+// 68020, and Zorro III keeps its own refusal. PMOVE does not decode there
+// (TG68KdotC_Kernel.vhd, CPU030 and MMU030), so TC stays at its reset 0 and
+// nothing is translated. The kernel's deferred prefetch-fault and rerun state,
+// which is 68030 machinery, is cleared by ss_resume as reset clears it.
 //
 // The 68020 has MSP and ISP too (upstream 894266e). It is not refused for
 // them outright, because AmigaOS never uses the master stack; a save is
@@ -2047,7 +2055,7 @@ wire       ss_load_req_osd = status[54];
 // The OSD already refuses it (menu.cpp, minimig_ss_blocked); this is the core
 // not relying on that. The decode is cpu_wrapper's ac_memcard and fast_ena's
 // below: memcfg[6] is a Zorro III board exactly when cpu_type & ~ec020.
-wire ss_supported   = (cpucfg[1:0] != 2'b00) & (cpucfg[1:0] != 2'b10)
+wire ss_supported   = (cpucfg[1:0] != 2'b00) & ~((cpucfg[1:0] == 2'b10) & ~cpucfg[2])
                     & ~(cpu_type & ~ss_ec020 & memcfg[6]);
 // A save is refused, at the request, once the 68020's master stack has been in
 // use since reset: MSP and ISP are not in the vector, so such a save would
@@ -2764,7 +2772,7 @@ end
 // this flop becomes the only thing keeping a back-to-back restore off the
 // previous vector.
 //
-// Cost is `SS_STATE_W` flops, 2099 of them, and one clk_sys cycle of extra
+// Cost is `SS_STATE_W` flops, 2106 of them, and one clk_sys cycle of extra
 // latency on a 23-cycle sequence that is followed by a million SDRAM word
 // writes (see the ORDERING NOTE below).
 reg [`SS_STATE_W-1:0] ss_state_out_q;

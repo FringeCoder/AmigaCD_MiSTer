@@ -900,6 +900,10 @@ jobs:
       # PHASE 6: SFC and DFC, in the state vector since 2026-10-18, show on the
       # capture export after MOVEC and come back on the restore's CACR write.
       # Falsified: SFC not restored, and SFC/DFC swapped, each fail it.
+      # PHASE 7: the rest of CACR (ss_cacr_hi: the 68030's bits 4, 8, 9, 12, 13
+      # and the D-cache heuristic pair), in the vector since 2026-10-19. Falsified
+      # on the 68030 run below: the restore's 68030 mask dropped, CACR_DC_owned
+      # not restored, and two export bits swapped each fail it.
       #
       # Runs from the repo root: the testbench opens its program image by a
       # path relative to the working directory.
@@ -907,6 +911,17 @@ jobs:
         run: |
           set -euo pipefail
           bash rtl/sim/tg68k/run.sh
+
+      # The same bench with the kernel as cpu_wrapper runs it for "68030 no
+      # MMU" (CPU030 high, MMU030 low), which save states are allowed on since
+      # 2026-10-19. The whole freeze-point scan runs again on the 68030 decode,
+      # and PHASE 7 checks the 68030 half of the CACR restore: its upper bits
+      # come back and bits 3:2, clear strobes there, are masked as MOVEC masks
+      # them. Its own work directory, so the two elaborations do not collide.
+      - name: TG68K savestate restore, 68030 no MMU
+        run: |
+          set -euo pipefail
+          WORKDIR=build/ghdl030 bash rtl/sim/tg68k/run.sh -gCPU030_G=1
 
       # The save state register bus through the real minimig: the snoop tap,
       # the replay mux, the replay's register-decode tick and the memory map
