@@ -54,7 +54,7 @@ including the ones that are reverted.
 | 13 | A | blitter pointer bank read at `ptrsel`, off Agnus's DMA priority mux | e88e57ba | A -0.136 (15/20) -> +0.845 (0/20); median -0.539 -> -0.372 | kept |
 | 14 | L | ss_ctrl restore decisions from registered compares (`pay_eq_*`, `crc_eq`) | da9174e6 | L -0.247 (17/20) -> -0.163 (15/20), under the noise line; median -0.372 -> -0.549 (D -0.301, G -0.297) | reverted (c4e0507e); the DDR3-backed restore bench `rtl/sim/ssload` is in da9174e6 for reuse |
 | 15 | H, F | cpu_cache_new `sdr_read_req` from its own expression, off the state machine's next-state decode | c496d5b1 | F -0.185 (14/20) -> +0.135 (4/20), H -0.254 -> -0.052 (11/20); median -0.372 -> -0.355; **1/20 close** (seed 35, +0.051) | kept |
-| 16 | L | every restore refusal from a registered flag: magic, version, length, core_words (`rd_*_bad`, `len_bad`), fingerprint (`kick_eq`), payload CRC (`crc_eq`, row 14's) | 0a8fe3b7 | panel pending | -- |
+| 16 | L | every restore refusal from a registered flag: magic, version, length, core_words (`rd_*_bad`, `len_bad`), fingerprint (`kick_eq`), payload CRC (`crc_eq`, row 14's) | 0a8fe3b7 | L -0.285 (19/20) -> -0.189 (17/20), under the noise line; median -0.355 -> -0.459, 1 -> 0 close (H -0.247, F -0.145, D -0.175, G -0.099) | reverted (5029a4a3); the 120-round restore bench with every refusal kind is in 0a8fe3b7 for reuse |
 
 Ideas recorded and not done, with the reason:
 - Registering CIA-B's pins plainly. That makes drive select one 7 MHz cycle
@@ -63,12 +63,14 @@ Ideas recorded and not done, with the reason:
   paths.
 - Moving sdram_ctrl's chip slot later in its 16-state schedule. That is an
   upstream redesign.
-- Restructuring the restore request (`load_req_rise`) into ss_ctrl's FSM. It
-  is the other source of seed 37's L path, and row 14 leaves it alone. It
-  needs the request's next value from AmigaCD.sv. Row 14 did not close L
-  (its compares were half of the cone and moving them bought 0.08 ns), so this
-  alone is unlikely to either; L's paths need re-reading on a current netlist
-  first.
+- Restructuring the restore request (`load_req_rise`) into ss_ctrl's FSM.
+  Rows 14 and 16 took every restore compare off load_reject's fan-out and
+  bought 0.08 and 0.10 ns: L is not held down by the compares, so this one
+  is not expected to help either. Before a third L attempt, read the paths
+  left on a netlist that carries row 16's flags (0a8fe3b7): what remains
+  after the compares -- load_reject's own fan-out (a dozen registers, the
+  state register among them) or the placement of ss_ctrl against the DDR3
+  read port -- is the thing to change, not another compare.
 
 ## What was found
 
@@ -368,3 +370,28 @@ run 39175622637:
 Seed 35 closes (setup +0.051, hold +0.234): the first seed to close since the
 10-17 sync. Worst hold +0.174. Kept. L is now the widest wall, failing in 19
 of 20 seeds with a worst of -1.083.
+
+### Family L from every refusal as a flag (0a8fe3b7) -- reverted
+
+Every restore refusal gate (magic, version, length, core_words, fingerprint,
+payload CRC) read a flag loaded with its operand, where c496d5b1's panel had
+the compares in front of load_busy on seeds 29, 42, 37 and 31. Same panel,
+run 39181718397:
+
+| family | c496d5b1 | + refusals from flags |
+|---|---|---|
+| L.ss_ctrl_internal | -0.285 (19/20) | -0.189 (17/20) |
+| D sdram data into the CPU | 0.000 (10/20) | -0.175 (16/20) |
+| F.ddram_cache | +0.135 (4/20) | -0.145 (15/20) |
+| G ddram data into the CPU | +0.062 (7/20) | -0.099 (14/20) |
+| H.ddram_ctrl | -0.052 (11/20) | -0.247 (18/20) |
+| M.ascal | -0.063 (16/20) | -0.023 (11/20) |
+| all_setup median | **-0.355** | -0.459 |
+
+L moved 0.10 ns, under the noise line, the families the change does not touch
+re-rolled worse, and seed 35 no longer closes (best seed 24, -0.017).
+Reverted in 5029a4a3. Worst hold +0.192.
+
+F's swing between these two panels (+0.135 -> -0.145) on an unchanged cache
+is the noise line at work: c496d5b1's gain on F and H is real only as far as
+it holds on the next panel that does not touch them.
