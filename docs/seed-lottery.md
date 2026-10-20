@@ -61,7 +61,7 @@ including the ones that are reverted.
 | 20 | D, G | row 6 again: `cpu_rdq`, the RAM return registered at clk_114 with the port select applied (lookahead; equal to the old mux on every clk_sys edge), on the merged netlist | ad8aa2a7 | S (was D) -0.255 (20/20) -> +0.101 (6/20), G -0.211 -> +1.139 (0/20); but C +0.510 -> -0.129 (12/20), F -0.005 -> -0.399 (20/20), H -0.105 -> -0.596 (20/20), L -0.159 -> -0.323 (19/20); median -0.519 -> -0.728, 0/20 close either way | reverted (row 6's result again: the wall moves to the caches and ddram_ctrl, and the total gets worse) |
 | 21 | L | the RTL answer to row 18: `ss_regshadow` registers its set/clear readback (DMACON/INTENA/ADKCON) on the array read's clk_sys edge, so nothing from `shadow_rd_addr` reaches ss_ctrl and row 18's multicycle is removed (proven in rtl/sim/regshadow) -- panelled on cf8f795c, i.e. without row 20 and with the 68030-no-MMU save state change (75772818: a 7-bit CACR restore mux and a reset term in the kernel), which is small and on the CPU side | 89e08f32 | L -0.159 (14/20) -> -0.275 (17/20), median -0.519 -> -0.582, 0/20 close either way; best seed 31 -0.290 (run 39341492928) | kept on the owner's call (2026-10-20): within noise, not an improvement by the rule, but an RTL fact in place of an SDC exception, proven equivalent in rtl/sim/regshadow |
 | 22 | D, G | the TG68K takes a RAM read only when its data is two clk_114 old (cpu_rdgate: ready one clk_114 behind ack, data ANDed with it) and AmigaCD.sdc says so with a -start multicycle; the caches ack read hits from IDLE (fast_hit) so hits keep their latency. Costs a clk_sys on ~10% of TG68K reads (misses/fills ending on the tight edge), none on hits; fx68k untouched. Proven in rtl/sim/rdgate | d7823233 | median -0.556 -> -0.877, 0/20 close; D -0.344 -> -0.310, G -0.363 -> -0.233 (both still failing in 16-18/20); C +0.348 -> -0.335 (19/20), F -0.206 -> -0.520, H -0.275 -> -0.605, L -0.225 -> -0.448 (all 20/20) | reverted: the target barely moved and every cache family paid for it |
-| 23 | all (area) | remove five save-state retiming banks that re-time crossings AmigaCD.sdc already false-paths: the restore vector bank ss_state_out_q (2346), the CIA capture regs (394) and restore regs (394), Akiko's capture (1052) and restore (1052) -- 5238 flops, ~10% of the design's registers. Not a path fix: the D/G split showed every seed still 0.34-0.54 ns short without D/G, each in a different family, at 84% ALMs | b80fca71 | panel pending (vs c8103f94's seeds 21-38, 41, 42: median -0.556) | -- |
+| 23 | all (area) | remove five save-state retiming banks that re-time crossings AmigaCD.sdc already false-paths: the restore vector bank ss_state_out_q (2346), the CIA capture regs (394) and restore regs (394), Akiko's capture (1052) and restore (1052) -- 5238 flops, ~10% of the design's registers. Not a path fix: the D/G split showed every seed still 0.34-0.54 ns short without D/G, each in a different family, at 84% ALMs | b80fca71 | median -0.556 -> -0.496, 0/20 close (best seed 27, -0.039); H -0.275 -> -0.177, L -0.225 -> -0.054, F -0.206 -> -0.100, G -0.363 -> -0.405, D, C, M unchanged; no hold failures; registers 52,321 -> 48,441 but ALMs only 35,075 -> 34,913 | kept: the median and three families better, none clearly worse -- though every shift is under the noise line |
 
 Ideas recorded and not done, with the reason:
 - [Done as row 21, 2026-10-19, with no added latency: the set/clear select
@@ -664,3 +664,32 @@ seed 47 at -0.009 on the 100 C sweep, an 85 C bar would very likely pass
 that seed -- but adopting it means signing off on a junction never above
 85 C on every board, which is the owner's call, and on its own it does not
 make the design close. Left at 100 C.
+
+### Five save-state retiming banks removed (b80fca71, row 23) -- kept
+
+Run 39417638838, seeds 21-38, 41, 42, against the same seeds of the
+c8103f94 sweep:
+
+| family | c8103f94 | row 23 |
+|---|---|---|
+| D sdram data into the CPU | -0.344 (38/40) | -0.344 (19/20) |
+| G ddram data into the CPU | -0.363 | -0.405 (18/20) |
+| H.ddram_ctrl | -0.275 | -0.177 (17/20) |
+| F.ddram_cache | -0.206 | -0.100 (15/20) |
+| L.ss_ctrl_internal | -0.225 | -0.054 (11/20) |
+| M.ascal | -0.025 | -0.017 (10/20) |
+| C.sdram_cache | +0.348 | +0.379 (2/20) |
+| all_setup median | -0.556 | **-0.496** |
+
+0/20 close; best seed 27 at -0.039, then 22 (-0.185) and 41 (-0.259). No
+hold failures (worst +0.115), so the existing false paths do cover the
+crossings the banks used to re-time; the only 332174 warnings are the two
+pre-existing ones. Seed 27's fit: 48,441 registers (was 52,321) but
+34,913 ALMs (was 35,075, 83%) -- the flops were packed into ALMs that also
+carry logic, so the logic footprint barely moved. Removing registers is not
+the area lever this design needs; ALM-level logic is.
+
+Kept by the rule (median and H, L, F better, nothing clearly worse), with
+the caveat that each shift is inside the 0.3 ns placement noise. D and G
+are the wall again and untouched: row 22's gate is the proven fix for them,
+and its fast-hit half is what has to change.
