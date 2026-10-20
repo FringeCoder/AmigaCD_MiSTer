@@ -612,6 +612,14 @@ sweep (run 39375965435):
 in the commit after this section's: every RTL, SDC and CI file is
 byte-identical to c8103f94 again.
 
+[Corrected 2026-10-20, from the artifacts: the multicycle DID apply -- no new
+332174 warnings, and on row 22's seed 34 the cpu_dat_r launches are gone from
+D/G, leaving only cpu_ack / cpu_ack_l paths at -0.015 / -0.009. On c8103f94,
+109 of the 120 worst D/G paths start at cpu_dat_r. So the gate worked; the
+panel was lost to the fast hit's cost in C, F, H and to placement, and with
+D/G set aside every c8103f94 seed is still 0.34-0.54 ns short in some other
+family. The paragraph below is the guess this replaces.]
+
 Two things went wrong. D and G hardly improved, which says the multicycle
 took little of them: what remains of D and G on this netlist was not the
 cpu_dat_r launches it names -- most likely the ack -> ready -> TG68K clock
