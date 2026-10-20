@@ -633,3 +633,25 @@ SEED goes from 56 (-0.308 on this netlist) to 47. A local build with it
 misses timing by 9 ps at the slow 100 C corner -- not a closing build.
 releases/AmigaCD_20261019.rbf (seed 35 of c496d5b1, +0.051) remains the only
 closing bitstream; it predates the 68030 save states.
+
+### 85 C measurement (policy, not a design change) -- not adopted
+
+Run 39394305042: c8103f94's netlist with `MAX_CORE_JUNCTION_TEMP 85` instead
+of the device's 100 (1093bb7d, reverted straight after), seeds 21-38, 41, 42,
+against the same seeds at 100 C in run 39375965435:
+
+| | 100 C | 85 C |
+|---|---|---|
+| all_setup median | -0.556 | -0.402 |
+| best seed | 31, -0.226 | 21, -0.130 |
+| close | 0/20 | 0/20 |
+| D / G (CPU input) | -0.344 / -0.363 | -0.164 / -0.324 |
+| H.ddram_ctrl | -0.275 | -0.273 |
+| L.ss_ctrl_internal | -0.225 | -0.155 |
+
+The cooler corner buys about 0.15 ns of median (the fit also re-places, so
+family figures mix both effects), and no seed closes with it either. With
+seed 47 at -0.009 on the 100 C sweep, an 85 C bar would very likely pass
+that seed -- but adopting it means signing off on a junction never above
+85 C on every board, which is the owner's call, and on its own it does not
+make the design close. Left at 100 C.
