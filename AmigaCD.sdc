@@ -136,29 +136,18 @@ set ss_clksys [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[1
 # Capture: clk_sys state sources into the serdes shift register.
 set_false_path -from $ss_clksys -to {*ss_serdes*|shifter[*]}
 
-# Restore: the held vector out to its clk_sys consumers (ss_state_out_q, and
-# whatever else unpacks it).
+# Restore: the held vector out to its clk_sys consumers -- the fan-out, the
+# CIAs and Akiko directly since row 23 removed the clk_sys banks in between.
 set_false_path -from {*ss_serdes*|state_out[*]} -to $ss_clksys
 
 # Restore: ss_ctrl's chipset-shadow replay bus into ss_regshadow, which is
 # clk_sys. Same vector, same freeze, carried on its own bus.
 set_false_path -from {*ss_ctrl*|shadow_ld_data[*]} -to $ss_clksys
 
-# Capture: the CIA words' clk_114 retiming registers (AmigaCD.sv, ss_cia_a /
-# ss_cia_b). They were added to move the CIAs' crossing off the shifter, and
-# they take the same coincident-edge hold check the shifter did: -0.569 at
-# seed 4 after upstream 26eb46a moved the placement, CIAA1|sdr_latch[5] ->
-# ss_cia_a[25]. Their only consumer is the state vector (ss_state.vh), read
-# inside the freeze, so the argument above covers them word for word.
-set_false_path -from $ss_clksys -to {emu|ss_cia_a[*] emu|ss_cia_b[*]}
-
-# Capture: Akiko's clk_114 retiming register (AmigaCD.sv, ss_akiko), the same
-# shape as the CIAs' and added for the same reason. It took the same hold check
-# once 26eb46a moved the placement: -0.198 at seed 1 and -0.077 at seed 8,
-# akiko|g_cd.cdrom_result_buffer -> ss_akiko[718] / [671]. Its only consumer is
-# the state vector (ss_state.vh), and Akiko is required idle before the freeze
-# is granted (akiko.v ss_idle), so its state is static while the vector is read.
-set_false_path -from $ss_clksys -to {emu|ss_akiko[*]}
+# The CIA and Akiko capture registers (ss_cia_a/b, ss_akiko) had their own
+# false paths here. They were removed on 2026-10-20 (row 23, for area): the
+# CIA and Akiko words now go into the shifter raw, under the shifter's false
+# path above, which is what those registers' exceptions said anyway.
 
 set_false_path -from {emu|cpu_wrapper|z3ram_*}
 set_false_path -from {emu|cpu_wrapper|z2ram_*}
