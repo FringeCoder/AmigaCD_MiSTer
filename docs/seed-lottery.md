@@ -75,7 +75,9 @@ Ideas recorded and not done, with the reason:
   the 0a8fe3b7 netlist it lists only sdram_ctrl's write_req (3 copies): row 1's
   freeze and peek_scan and row 4's st0_cpu and sdr_read_req created none, so
   they are no longer doing anything (freeze's loads moved to port_own in
-  e20bf7c4). Harmless, but not to be counted on.
+  e20bf7c4). Harmless, but not to be counted on. [Removed from AmigaCD.qsf
+  2026-10-20 after the same table on run 39341492928 (row 21's netlist) still
+  listed only write_req.]
 - Registering CIA-B's pins plainly. That makes drive select one 7 MHz cycle
   late, which is not cycle-exact; row 2 did it with a lookahead instead.
 - A timing exception on the CIA timer outputs. They are real single-cycle

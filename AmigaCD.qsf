@@ -327,25 +327,22 @@ set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to SDIO_DAT[*]
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to SD_SPI*
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to USER_IO[*]
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to VGA_EN
-# The save-state freeze and peek-scan registers: synthesis duplicates them so no
-# copy drives more than MAX_FANOUT loads. freeze drives ~145 loads across the
-# design, and from there through ss_port_own and the SDRAM CPU port mux into
-# sdram_ctrl's sd_addr and cpu_cache -- a clk_114 path that missed setup in 20
-# of 58 seeds of the 68030 netlist (-0.54 median, -1.05 worst), most of it
-# routing. Duplication changes no logic: every copy is the same register.
-set_instance_assignment -name MAX_FANOUT 24 -to "*ss_quiesce:quiesce|freeze"
-set_instance_assignment -name MAX_FANOUT 24 -to "*ss_ctrl:savestate|peek_scan"
-# The SDRAM controller's CPU-side activate select, act_cpu = st0_cpu &
-# (write_req | cache_req): three registers into row_new and on to the sd_addr
-# I/O registers, a single clk_114 cycle with ~5 ns of it the route to the far
-# pins. In panel 2 (run 39054803706) this was negative in 17 of 20 seeds
-# (-0.39 median) and the worst path of seeds 9 and 13, which start with
-# 1.4-2.1 ns of routing from write_req (fanout 19) or sdr_read_req placed among
-# their other loads. Duplicating them lets a copy sit beside the mux; every copy
-# is the same register.
+# The SDRAM controller's CPU-side write request, a load of act_cpu =
+# st0_cpu & (write_req | cache_req): into row_new and on to the sd_addr I/O
+# registers, a single clk_114 cycle with ~5 ns of it the route to the far
+# pins. In panel 2 (run 39054803706) this was negative in 17 of 20 seeds and
+# the worst path of seeds 9 and 13, starting with 1.4-2.1 ns of routing from
+# write_req (fanout 19). Duplicating it lets a copy sit beside the mux; every
+# copy is the same register. The map report's "Registers Duplicated to Honor
+# Maximum Fanout Requirements" table lists 3 copies (run 39341492928).
+#
+# Removed 2026-10-20, because that table showed they created no copies on
+# any netlist since 0a8fe3b7, the current one included: MAX_FANOUT 24 on
+# ss_quiesce's freeze and ss_ctrl's peek_scan (their loads moved to
+# port_own in e20bf7c4), and MAX_FANOUT 6 on sdram_ctrl's st0_cpu and the
+# cache's sdr_read_req (registered in c496d5b1). An assignment that does
+# nothing reads as a fix that is in place. docs/seed-lottery.md rows 1 and 4.
 set_instance_assignment -name MAX_FANOUT 6 -to "*sdram_ctrl:ram1|write_req"
-set_instance_assignment -name MAX_FANOUT 6 -to "*sdram_ctrl:ram1|st0_cpu"
-set_instance_assignment -name MAX_FANOUT 6 -to "*sdram_ctrl:ram1|cpu_cache_new:cpu_cache|sdr_read_req"
 set_global_assignment -name QIP_FILE rtl/A2065/a2065.qip
 set_global_assignment -name QIP_FILE rtl/akiko.qip
 set_global_assignment -name QIP_FILE rtl/cdtv.qip
