@@ -566,3 +566,27 @@ reverted. Kept because it replaces row 18's multicycle with registers: the
 readback no longer depends on a timing exception being right, and the
 equivalence is a bench (rtl/sim/regshadow, falsified four ways) rather than
 an argument in the SDC.
+
+### 40-seed sweep on c8103f94 (item 1) -- no seed closes; row 22's baseline
+
+Run 39375965435: the netlist with the 68030 MMU save state (format 1.5), row
+21 kept and the dead MAX_FANOUT lines removed, seeds 21-38, 41-62. No seed
+closes. Nearest: seed 47 at -0.009 (hold +0.155) and seed 61 at -0.072;
+then 31 (-0.226), 33 (-0.269), 56 (-0.308). Seeds 24 and 55 also failed hold
+(-0.559, -0.435), the first hold failures since row 19.
+
+| family | median | worst | seeds < 0 (of 40) |
+|---|---|---|---|
+| D sdram data into the CPU | -0.344 | -1.422 | 38 |
+| G ddram data into the CPU | -0.363 | -1.615 | 37 |
+| H.ddram_ctrl | -0.275 | -0.784 | 37 |
+| F.ddram_cache | -0.206 | -0.501 | 30 |
+| L.ss_ctrl_internal | -0.225 | -0.763 | 30 |
+| M.ascal | -0.025 | -0.502 | 22 |
+| C.sdram_cache | +0.348 | -0.362 | 4 |
+| all_setup | -0.518 | -1.615 | 40 |
+
+On the fixed panel list alone (seeds 21-38, 41, 42) the all_setup median is
+-0.556, 0/20 close: the figure row 22 is judged against. D and G are the
+CPU input wall again and the target of row 22. No QSF seed was set from this
+sweep, since row 22 changes the netlist.
