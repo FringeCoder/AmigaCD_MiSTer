@@ -60,7 +60,7 @@ including the ones that are reverted.
 | 19 | hold | false path into `ss_dbg_meta` (first stage of the diagnostics' 2-FF synchroniser); same panel as row 18 | d6f02c61 | 0 hold failures in 20 (worst +0.174), against 2 on the panel before | kept |
 | 20 | D, G | row 6 again: `cpu_rdq`, the RAM return registered at clk_114 with the port select applied (lookahead; equal to the old mux on every clk_sys edge), on the merged netlist | ad8aa2a7 | S (was D) -0.255 (20/20) -> +0.101 (6/20), G -0.211 -> +1.139 (0/20); but C +0.510 -> -0.129 (12/20), F -0.005 -> -0.399 (20/20), H -0.105 -> -0.596 (20/20), L -0.159 -> -0.323 (19/20); median -0.519 -> -0.728, 0/20 close either way | reverted (row 6's result again: the wall moves to the caches and ddram_ctrl, and the total gets worse) |
 | 21 | L | the RTL answer to row 18: `ss_regshadow` registers its set/clear readback (DMACON/INTENA/ADKCON) on the array read's clk_sys edge, so nothing from `shadow_rd_addr` reaches ss_ctrl and row 18's multicycle is removed (proven in rtl/sim/regshadow) -- panelled on cf8f795c, i.e. without row 20 and with the 68030-no-MMU save state change (75772818: a 7-bit CACR restore mux and a reset term in the kernel), which is small and on the CPU side | 89e08f32 | L -0.159 (14/20) -> -0.275 (17/20), median -0.519 -> -0.582, 0/20 close either way; best seed 31 -0.290 (run 39341492928) | kept on the owner's call (2026-10-20): within noise, not an improvement by the rule, but an RTL fact in place of an SDC exception, proven equivalent in rtl/sim/regshadow |
-| 22 | D, G | the TG68K takes a RAM read only when its data is two clk_114 old (cpu_rdgate: ready one clk_114 behind ack, data ANDed with it) and AmigaCD.sdc says so with a -start multicycle; the caches ack read hits from IDLE (fast_hit) so hits keep their latency. Costs a clk_sys on ~10% of TG68K reads (misses/fills ending on the tight edge), none on hits; fx68k untouched. Proven in rtl/sim/rdgate | d7823233 | panel pending (compare with the c8103f94 sweep's seeds 21-38, 41, 42) | -- |
+| 22 | D, G | the TG68K takes a RAM read only when its data is two clk_114 old (cpu_rdgate: ready one clk_114 behind ack, data ANDed with it) and AmigaCD.sdc says so with a -start multicycle; the caches ack read hits from IDLE (fast_hit) so hits keep their latency. Costs a clk_sys on ~10% of TG68K reads (misses/fills ending on the tight edge), none on hits; fx68k untouched. Proven in rtl/sim/rdgate | d7823233 | median -0.556 -> -0.877, 0/20 close; D -0.344 -> -0.310, G -0.363 -> -0.233 (both still failing in 16-18/20); C +0.348 -> -0.335 (19/20), F -0.206 -> -0.520, H -0.275 -> -0.605, L -0.225 -> -0.448 (all 20/20) | reverted: the target barely moved and every cache family paid for it |
 
 Ideas recorded and not done, with the reason:
 - [Done as row 21, 2026-10-19, with no added latency: the set/clear select
@@ -590,3 +590,46 @@ On the fixed panel list alone (seeds 21-38, 41, 42) the all_setup median is
 -0.556, 0/20 close: the figure row 22 is judged against. D and G are the
 CPU input wall again and the target of row 22. No QSF seed was set from this
 sweep, since row 22 changes the netlist.
+
+### Read gate and fast cache hits (d7823233, row 22) -- reverted
+
+Run 39383054413, seeds 21-38, 41, 42, against the same seeds of the c8103f94
+sweep (run 39375965435):
+
+| family | c8103f94 | row 22 |
+|---|---|---|
+| D sdram data into the CPU | -0.344 | -0.310 (16/20) |
+| G ddram data into the CPU | -0.363 | -0.233 (18/20) |
+| C.sdram_cache | +0.348 | -0.335 (19/20) |
+| F.ddram_cache | -0.206 | -0.520 (20/20) |
+| H.ddram_ctrl | -0.275 | -0.605 (20/20) |
+| L.ss_ctrl_internal | -0.225 | -0.448 (20/20) |
+| M.ascal | -0.025 | -0.345 (17/20) |
+| all_setup median | -0.556 | **-0.877** |
+
+0/20 close; best seed 23 at -0.450; seed 22 failed hold (-0.387). Reverted
+in the commit after this section's: every RTL, SDC and CI file is
+byte-identical to c8103f94 again.
+
+Two things went wrong. D and G hardly improved, which says the multicycle
+took little of them: what remains of D and G on this netlist was not the
+cpu_dat_r launches it names -- most likely the ack -> ready -> TG68K clock
+enable paths, which stayed single-cycle by design -- and that was not
+checked before building it (the family report puts every ram1/ram2 cache
+register into D/G, not only the data). And the fast hit put the tag compare
+into IDLE's next-state and cpu_dat_r's load enable, the same cache output
+cones cpu_rdq loaded (rows 6, 20), and C, F and H paid as they did then.
+
+Before trying the CPU input path again: split D and G by launch register
+(cpu_dat_r vs cpu_ack vs the rest) on a fit's family_paths report, so the
+change is aimed at what actually fails. The bench (rtl/sim/rdgate) and the
+module are in d7823233 for reuse.
+
+### Item 1 closed: SEED 47
+
+The netlist is c8103f94's again, so its 40-seed sweep stands: no seed
+closes, and seed 47 is the nearest at setup -0.009, hold +0.155. AmigaCD.qsf's
+SEED goes from 56 (-0.308 on this netlist) to 47. A local build with it
+misses timing by 9 ps at the slow 100 C corner -- not a closing build.
+releases/AmigaCD_20261019.rbf (seed 35 of c496d5b1, +0.051) remains the only
+closing bitstream; it predates the 68030 save states.
