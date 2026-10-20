@@ -292,6 +292,7 @@ end
 // ---- standalone caches on random inputs -----------------------------------------
 reg        c_rst = 1, c_cs = 0, c_we = 0, c_ir = 0, c_dr = 0, c_inh = 0, c_sw = 1, c_snoop = 0;
 reg        c_rack = 0, c_bufok = 0, c_long = 0, c_fast = 1;
+reg        c_cs_n;
 reg  [3:0] c_ctrl = 4'b0011;
 reg [28:1] c_adr = 0, c_sadr = 0;
 reg  [1:0] c_bs = 0, c_sbs = 0;
@@ -322,12 +323,18 @@ cpu_cache_new #(.LINE_TAKE(1)) cache1 (
 always @(posedge clk_114) begin
 	if ($urandom % 30000 == 0) c_rst <= 1;
 	else if ($urandom % 20 == 0) c_rst <= 0;
-	c_cs    <= ($urandom % 4 != 0) ? c_cs : ~c_cs;
-	c_we    <= ($urandom % 3 == 0);
-	c_ir    <= ($urandom % 3 == 0);
-	c_dr    <= ($urandom % 2);
-	c_adr   <= {16'd0, 2'($urandom), 2'd0, 8'($urandom)};
-	c_bs    <= $urandom;
+	c_cs_n   = ($urandom % 4 != 0) ? c_cs : ~c_cs;
+	c_cs    <= c_cs_n;
+	if (!c_cs && !c_cs_n) c_we    <= ($urandom % 3 == 0);
+	if (!c_cs && !c_cs_n) c_ir    <= ($urandom % 3 == 0);
+	if (!c_cs && !c_cs_n) c_dr    <= ($urandom % 2);
+	// the address moves only while deselected, as the CPU's does (it holds
+	// the address for the access, and ram_cs is registered): the fast hit
+	// rests on that, and check H below proves it of the system caches
+	// and at least one clock before the select rises, as AmigaCD.sv's
+	// registered ram_cs guarantees
+	if (!c_cs && !c_cs_n) c_adr <= {16'd0, 2'($urandom), 2'd0, 8'($urandom)};
+	if (!c_cs && !c_cs_n) c_bs    <= $urandom;
 	c_dw    <= $urandom;
 	c_dwlo  <= $urandom;
 	c_sdr   <= $urandom;
@@ -338,7 +345,7 @@ always @(posedge clk_114) begin
 	c_sbs   <= $urandom;
 	c_bufok <= ($urandom % 4 == 0);
 	c_buf   <= {$urandom, $urandom};
-	c_long  <= ($urandom % 2);
+	if (!c_cs && !c_cs_n) c_long  <= ($urandom % 2);
 	c_fast  <= ($urandom % 8 != 0);
 	c_inh   <= ($urandom % 30 == 0);
 	c_sw    <= ($urandom % 30 != 0);
@@ -427,6 +434,23 @@ integer fg = 0, n_fast = 0, n_fast_l = 0, n_gskip = 0;
 		FH``_a = C.cpu_adr; \
 	end
 `ifdef FAST_HIT
+// ---- H: the protocol the fast hit has no comparator for --------------------------
+// Wherever a system cache could take a fast hit (IDLE, selected, a TG68K read,
+// the RAMs clean on the last edge), the address is the one the RAMs took on
+// that edge. ram_cs is registered from the CPU's select, so a select never
+// arrives on the clock the address moves; this is that, checked.
+integer fh = 0, n_h = 0;
+`define H_CHECK(AQ, C, NAME) \
+	reg [28:1] AQ = 0; \
+	always @(posedge clk_114) begin \
+		if (C.cpu_sm_state == C.CPU_SM_IDLE && C.cpu_cs && C.fast_ld && C.fh_ram_q && !C.rst) begin \
+			n_h = n_h + 1; \
+			if (C.cpu_adr !== AQ) fail(fh, {"H: address moved under a fast-hit select, ", NAME}); \
+		end \
+		AQ = C.cpu_adr; \
+	end
+`H_CHECK(hq_r1, ram1.cpu_cache, "ram1")
+`H_CHECK(hq_r2, ram2.cpu_cache, "ram2")
 `G_CHECK(fh_r1, ram1.cpu_cache, "ram1")
 `G_CHECK(fh_r2, ram2.cpu_cache, "ram2")
 `G_CHECK(fh_c0, cache0, "cache0")
@@ -449,6 +473,11 @@ initial begin
 	$display("reads taken %0d (long %0d, a clk_sys later than before %0d), writes %0d; g clocks %0d (long %0d), gated-off %0d, fx68k clocks %0d, ack rises %0d, takes checked %0d, write acks %0d, mode moves %0d",
 		rd_takes, l_takes, delayed, wr_takes, n_g, n_gl, n_off, n_en0, n_rise, n_s, n_ws, mode_moves);
 	$display("fast hits checked %0d (long %0d, skipped for a same-edge snoop or a moved address %0d)", n_fast, n_fast_l, n_gskip);
+`ifdef FAST_HIT
+	$display("fast-hit selects with the address checked (H) %0d, failures %0d", n_h, fh);
+	if (fh != 0) fg = fg + fh;
+	if (n_h == 0) begin $display("FAIL: H never exercised"); fg = fg + 1; end
+`endif
 	$display("failures: A %0d B %0d C %0d D %0d E %0d F %0d G %0d standalone-A %0d", fa, fb, fc, fd, fe, ff, fg, fs);
 	if (rd_takes == 0 || l_takes == 0 || delayed == 0 || wr_takes == 0 || n_g == 0 || n_gl == 0 ||
 	    n_off == 0 || n_en0 == 0 || n_rise == 0 || n_s == 0 || n_ws == 0 || mode_moves == 0

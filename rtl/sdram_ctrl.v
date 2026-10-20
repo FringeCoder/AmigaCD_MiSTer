@@ -36,6 +36,7 @@ module sdram_ctrl
 	input             reset_n,
 	input             cache_rst,
 	input             cache_inhibit,
+	input             fast_hit,       // cpu_cache_new: read hits acked from IDLE
 	input       [3:0] cpu_cache_ctrl,
 	// D-cache software toggle: gates dtag matches independently
 	// of cpu_cache_ctrl[0]. See cpu_cache_new.cc_den.
@@ -148,6 +149,7 @@ cpu_cache_new cpu_cache
 	.cpu_cache_ctrl   (cpu_cache_ctrl),        // CPU cache control
 	.dcache_sw_en     (dcache_sw_en),
 	.cache_inhibit    (cache_inhibit),         // cache inhibit
+	.fast_hit         (fast_hit),              // read hits acked from IDLE (cpu_cache_new)
 	.cpu_cs           (ramsel),                // cpu activity
 	.cpu_adr          (cpuAddr),               // cpu address
 	.cpu_bs           ({!cpuU, !cpuL}),        // cpu byte selects

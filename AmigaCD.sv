@@ -1066,9 +1066,9 @@ wire        ram_ready_raw = zram_sel ? ram_ready2 : ram_ready1;
 // What the CPU sees of the read return: cpu_rdgate. While the TG68K runs, a
 // read is acked one clk_114 after the controller acks it and the data is zero
 // until then, so the read data registers reach the TG68K as a two-clock path
-// (AmigaCD.sdc). The cost: a read acked on the clk_114 edge just before a
-// clk_sys edge -- every cache hit, by the caches' own timing -- is taken one
-// clk_sys later. fx68k (cpucfg[1:0] == 0) sees everything unchanged.
+// (AmigaCD.sdc). The caches ack a read hit one clock early to pay for it
+// (cpu_cache_new fast_hit, row 25), so a hit is taken on the same clk_sys edge
+// as without the gate. fx68k (cpucfg[1:0] == 0) sees everything unchanged.
 wire        cpu_tg68k = |cpucfg[1:0];
 wire [15:0] ram_dout;
 wire        ram_ready;
@@ -1324,6 +1324,7 @@ sdram_ctrl ram1
 	.cache_rst    (cpu_rst         ),
 	.cpu_cache_ctrl(ss_cache_ctrl),
 	.dcache_sw_en (dcache_sw_en_w  ),
+	.fast_hit     (cpu_tg68k & ~ss_port_own),
 	.sdram_big    (sdram_big_114   ),
 
 	.sd_data      (SDRAM_DQ        ),
@@ -1495,6 +1496,7 @@ ddram_ctrl ram2
 	.cache_rst    (cpu_rst         ),
 	.cpu_cache_ctrl(ss_cache_ctrl),
 	.dcache_sw_en (dcache_sw_en_w  ),
+	.fast_hit     (cpu_tg68k       ),
 
 	.DDRAM_CLK    (DDRAM_CLK       ),
 	.DDRAM_BUSY   (DDRAM_BUSY      ),

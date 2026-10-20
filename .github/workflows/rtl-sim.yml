@@ -419,10 +419,11 @@ jobs:
       # periods old (AmigaCD.sv's cpu_rdgate: ready delayed one clk_114 behind
       # the controller's ack, data ANDed with that condition), which is what
       # AmigaCD.sdc's multicycle from the caches' read data registers into the
-      # TG68K rests on. (Row 24, the gate alone: a read acked on the clk_114
-      # edge before a clk_sys edge -- every cache hit -- is taken a clk_sys
-      # later. The bench's fast-hit checks (G) are behind FAST_HIT, for the
-      # variant that acks hits early.) Runs the real sdram_ctrl and ddram_ctrl under AmigaCD.sv's
+      # TG68K rests on. The caches ack a read hit from IDLE one clock earlier
+      # (cpu_cache_new fast_hit, row 25: the tag compare drives only ack, state
+      # and tag write, and there is no address comparator -- check H proves the
+      # protocol that replaces it: the address never moves under a fast-hit
+      # select). Runs the real sdram_ctrl and ddram_ctrl under AmigaCD.sv's
       # handshake, in all three CPU modes, plus two standalone caches on random
       # inputs: data stable under the gate (A), zero outside it (B), the taken
       # word is the ack word (C), a read's ready exactly one clk_114 behind ack
@@ -431,7 +432,9 @@ jobs:
       # Falsified on 2026-10-20: the gate without the delayed ack (B), ready not
       # delayed (C, D), the fast path without its RAM-write guard (G), without
       # its address compare (G), on a miss (G), and the cache reloading its
-      # data in WAIT (A) each fail it.
+      # data in WAIT (A) each fail it. Row 25's lean fast hit, falsified on
+      # 2026-10-20: without its RAM-write guard (G), without the hit (G), and
+      # the cache reloading its data in WAIT (A).
       - name: CPU read return gate and fast cache hits (tb_cpu_rdgate.sv)
         run: |
           set -euo pipefail
