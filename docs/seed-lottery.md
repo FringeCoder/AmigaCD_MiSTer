@@ -59,7 +59,7 @@ including the ones that are reverted.
 | 18 | L | multicycle 2 from ss_ctrl's `shadow_rd_addr` into ss_ctrl (the shadow readback round trip; the address is held >= 6 clk_114 cycles at every read, checked in rtl/sim/ssown) | d6f02c61 | L -0.285 (19/20, worst -1.083) -> -0.159 (14/20, worst -0.696); vs the same RTL's 2b894af6 panel -0.316 (18/20, worst -2.960); median -0.355 -> -0.519 (D, G, M re-rolled) | kept: a proven constraint, its own family better on median, count and worst, the median drop in families it does not reach |
 | 19 | hold | false path into `ss_dbg_meta` (first stage of the diagnostics' 2-FF synchroniser); same panel as row 18 | d6f02c61 | 0 hold failures in 20 (worst +0.174), against 2 on the panel before | kept |
 | 20 | D, G | row 6 again: `cpu_rdq`, the RAM return registered at clk_114 with the port select applied (lookahead; equal to the old mux on every clk_sys edge), on the merged netlist | ad8aa2a7 | S (was D) -0.255 (20/20) -> +0.101 (6/20), G -0.211 -> +1.139 (0/20); but C +0.510 -> -0.129 (12/20), F -0.005 -> -0.399 (20/20), H -0.105 -> -0.596 (20/20), L -0.159 -> -0.323 (19/20); median -0.519 -> -0.728, 0/20 close either way | reverted (row 6's result again: the wall moves to the caches and ddram_ctrl, and the total gets worse) |
-| 21 | L | the RTL answer to row 18: `ss_regshadow` registers its set/clear readback (DMACON/INTENA/ADKCON) on the array read's clk_sys edge, so nothing from `shadow_rd_addr` reaches ss_ctrl and row 18's multicycle is removed (proven in rtl/sim/regshadow) -- panelled on cf8f795c, i.e. without row 20 and with the 68030-no-MMU save state change (75772818: a 7-bit CACR restore mux and a reset term in the kernel), which is small and on the CPU side | 89e08f32 | panel pending, after row 20 is judged | -- |
+| 21 | L | the RTL answer to row 18: `ss_regshadow` registers its set/clear readback (DMACON/INTENA/ADKCON) on the array read's clk_sys edge, so nothing from `shadow_rd_addr` reaches ss_ctrl and row 18's multicycle is removed (proven in rtl/sim/regshadow) -- panelled on cf8f795c, i.e. without row 20 and with the 68030-no-MMU save state change (75772818: a 7-bit CACR restore mux and a reset term in the kernel), which is small and on the CPU side | 89e08f32 | L -0.159 (14/20) -> -0.275 (17/20), median -0.519 -> -0.582, 0/20 close either way; best seed 31 -0.290 (run 39341492928) | kept on the owner's call (2026-10-20): within noise, not an improvement by the rule, but an RTL fact in place of an SDC exception, proven equivalent in rtl/sim/regshadow |
 
 Ideas recorded and not done, with the reason:
 - [Done as row 21, 2026-10-19, with no added latency: the set/clear select
@@ -539,3 +539,27 @@ by 0.21. Reverted in cf8f795c. Two fits of the
 same idea on two netlists agree, so this is not placement luck: do not try the
 registered RAM return a third time without a change that also takes load off
 the cache outputs.
+
+### Registered shadow readback (89e08f32, row 21) -- kept on the owner's call
+
+Run 39341492928 on 9bd03194 (row 20 reverted, with the 68030-no-MMU save
+state change, which is small and on the CPU side), seeds 21-38, 41, 42,
+against d6f02c61's panel:
+
+| family | d6f02c61 | row 21 |
+|---|---|---|
+| L.ss_ctrl_internal | -0.159 (14/20) | -0.275 (17/20) |
+| D sdram data into the CPU | -0.255 (20/20) | -0.243 (18/20) |
+| G ddram data into the CPU | -0.211 (15/20) | -0.279 (16/20) |
+| H.ddram_ctrl | -0.105 (14/20) | -0.292 (17/20) |
+| F.ddram_cache | -0.005 (10/20) | -0.147 (13/20) |
+| C.sdram_cache | +0.510 | +0.131 (6/20) |
+| M.ascal | -0.198 (16/20) | -0.047 (11/20) |
+| all_setup median | -0.519 | -0.582 |
+
+0/20 close; best seed 31 at -0.290. Every move is inside the 0.3 ns noise
+line, L's included, so by the rule this is "no change" and would be
+reverted. Kept because it replaces row 18's multicycle with registers: the
+readback no longer depends on a timing exception being right, and the
+equivalence is a bench (rtl/sim/regshadow, falsified four ways) rather than
+an argument in the SDC.
