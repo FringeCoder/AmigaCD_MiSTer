@@ -271,20 +271,6 @@ set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_data[*]} -to {*a2065_ddram*
 # rejected by the pick job, which is the correct outcome.
 set_false_path -from {*a2065_ddr3_mailbox*|a2065_int2}       -to {*a2065_inst|int2_s1}
 
-# The read data registers into the TG68K: two clk_114 periods, by construction.
-# AmigaCD.sv's cpu_rdgate acks a read to the TG68K only once the controller's ack
-# has been up for a clock, and ANDs the data with that same condition, so on any
-# clk_sys edge either the TG68K's input is a constant zero or the data was
-# loaded at least two clk_114 edges earlier (cpu_cache_new loads cpu_dat_r and
-# cpu_dat_hi only on the edge its ack rises, and ack falls with the select).
-# -start: the multiplier is in launch (clk_114) periods; the latch is clk_sys.
-# Only the TG68K: fx68k sees the ungated path and is timed as before. Proven
-# against the real controllers in rtl/sim/rdgate. These paths were families D
-# and G, the worst after the 2026-10-17 sync (docs/seed-lottery.md, row 22).
-set rd_launch {emu|ram1|cpu_cache|cpu_dat_r[*] emu|ram2|cpu_cache|cpu_dat_r[*] emu|ram2|cpu_cache|cpu_dat_hi[*]}
-set_multicycle_path -start -setup 2 -from $rd_launch -to {emu|cpu_wrapper|cpu_inst_p|*}
-set_multicycle_path -start -hold  1 -from $rd_launch -to {emu|cpu_wrapper|cpu_inst_p|*}
-
 # ss_ctrl's shadow readback needs no exception. It carried a multicycle from
 # shadow_rd_addr into ss_ctrl while ss_regshadow's set/clear select was
 # combinational on the address (L's worst path, -2.960 on seed 35 of run

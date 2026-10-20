@@ -26,10 +26,6 @@ module cpu_cache_new
   // doesn't drive it, preserving current behavior. See module top doc.
   input             dcache_sw_en,
   input             cache_inhibit,  // cache inhibit
-  // A read hit acked from IDLE, one clock earlier than through READ; see
-  // fast_ok below. Off when unconnected (GND in Quartus, a false condition in
-  // Icarus), so every instance that does not ask for it behaves as before.
-  input             fast_hit,
 
   // cpu    
   input             cpu_cs,         // cpu activity
@@ -322,32 +318,6 @@ wire  [3:0] rd_tw_op  = rd_i0 ? TW_I0 : rd_i1 ? TW_I1 : rd_d0 ? TW_D0 : rd_d1 ? 
 // next-state decode first, two LUTs more from the tag RAM output, and that
 // was the worst path of ram2's cache (families F and H) on most seeds.
 wire rd_hit   = rd_i0 | rd_i1 | rd_d0 | rd_d1;
-
-// The fast hit (row 25). The cache RAMs' CPU-side addresses are combinational
-// on cpu_adr, so they register the CPU's address on the clock ram_cs rises --
-// one clock before IDLE sees cs and moves to READ, where the tags are compared
-// against that same RAM output. A hit can therefore be acked from IDLE, one
-// clock sooner, which takes the common case off the clk_114 edge just before a
-// clk_sys edge (AmigaCD.sv, cpu_rdgate).
-//
-// Kept lean, because row 22's version cost the cache cones (C, F, H) more than
-// it gave: the tag compare drives only ack, the next state and the tag write.
-// The data and tag-write words load in IDLE on every TG68K read select, hit or
-// not -- ack is low there, and READ loads them again on a miss -- so the
-// compare is not a load enable on 32 data bits. And there is no address
-// comparator: the RAMs registered the CPU's address on the last edge whenever
-// that edge had no port-A write and fast_hit was already on (the save state,
-// which moves the SDRAM CPU port on clk_114, turns fast_hit off while it owns
-// the port, so the first clock after it hands back cannot take a fast hit).
-// The B-port snoop is no different from READ's.
-reg  fh_ram_q = 1'b0;
-always @ (posedge clk) begin
-  fh_ram_q <= fast_hit && !rst && !inv_sel && !fill &&
-              !cpu_sm_iram0_we && !cpu_sm_iram1_we && !cpu_sm_dram0_we && !cpu_sm_dram1_we &&
-              !cpu_sm_itag_we && !cpu_sm_dtag_we && !cpu_sm_dline0_we && !cpu_sm_dline1_we;
-end
-wire fast_ld  = fast_hit && !cpu_we;          // IDLE loads the hit candidates
-wire fast_ok  = fh_ram_q && fast_ld && rd_hit;
 wire rd_buf   = LINE_TAKE && buf_ok_r && !snoop_act && !cpu_ir && cc_den && !cache_inhibit;
 wire rq_read  = (cpu_sm_state == CPU_SM_READ) && !rd_buf;
 wire rq_fill1 = (cpu_sm_state == CPU_SM_FILL1) && !sdr_read_ack;
@@ -408,25 +378,8 @@ always @ (posedge clk) begin
       CPU_SM_IDLE : begin
         // waiting for CPU access
         if (cpu_cs) begin
-          if (fast_ld) begin
-            // READ's loads, a clock early and unconditional (fast_ok above)
-            tw_i       <= itram_cpu_dat_r;
-            tw_d       <= dtram_cpu_dat_r;
-            tw_tag     <= cpu_adr_tag;
-            cpu_dat_r  <= rd_dat;
-            cpu_dat_hi <= rd_dat_hi;
-            tw_op      <= rd_tw_op;
-          end
           if (cpu_we) begin
             cpu_sm_state <= CPU_SM_WRITE;
-          end else if (fast_ok) begin
-            cpu_ack <= 1'b1;
-            if (rd_i0 | rd_i1) cpu_sm_itag_we <= 1'b1;
-            else begin
-              cpu_ack_l      <= long_rd;
-              cpu_sm_dtag_we <= 1'b1;
-            end
-            cpu_sm_state <= CPU_SM_WAIT;
           end else begin
             cpu_sm_state <= CPU_SM_READ;
           end

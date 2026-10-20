@@ -1007,7 +1007,7 @@ always @(posedge clk_114) begin
 		end
 	end
 
-	ram_cs <= ~(ram_ready & cyc & cpu_type) & ram_sel;   // the CPU's ready: cpu_rdgate
+	ram_cs <= ~(ram_ready & cyc & cpu_type) & ram_sel;
 end
 
 wire  [1:0] cpu_state;
@@ -1061,39 +1061,13 @@ wire        ram_sel;
 wire        ram_lds;
 wire        ram_uds;
 wire [15:0] ram_din;
-wire [15:0] ram_dout_raw  = zram_sel ? ram_dout2  : ram_dout1;
-wire        ram_ready_raw = zram_sel ? ram_ready2 : ram_ready1;
-// What the CPU sees of the read return: cpu_rdgate. While the TG68K runs, a
-// read is acked one clk_114 after the controller acks it and the data is zero
-// until then, so the read data registers reach the TG68K as a two-clock path
-// (AmigaCD.sdc). The caches ack a read hit one clock early to pay for it
-// (cpu_cache_new fast_hit, row 25), so a hit is taken on the same clk_sys edge
-// as without the gate. fx68k (cpucfg[1:0] == 0) sees everything unchanged.
-wire        cpu_tg68k = |cpucfg[1:0];
-wire [15:0] ram_dout;
-wire        ram_ready;
-wire [15:0] ram_dout_hi_cpu;
-wire        ram_ready_l_cpu;
+wire [15:0] ram_dout  = zram_sel ? ram_dout2  : ram_dout1;
+wire        ram_ready = zram_sel ? ram_ready2 : ram_ready1;
 wire        zram_sel  = |ram_addr[28:26];
 wire        ram_l1;
 wire [15:0] ram_din_lo;
 wire [15:0] ram_dout2_hi;
 wire        ram_ready2_l;
-
-cpu_rdgate cpu_rdgate
-(
-	.clk        (clk_114),
-	.en         (cpu_tg68k),
-	.wr         (cpu_state == 2'b11),
-	.ready_in   (ram_ready_raw),
-	.ready_l_in (zram_sel & ram_ready2_l),
-	.dout_in    (ram_dout_raw),
-	.dout_hi_in (ram_dout2_hi),
-	.ready      (ram_ready),
-	.ready_l    (ram_ready_l_cpu),
-	.dout       (ram_dout),
-	.dout_hi    (ram_dout_hi_cpu)
-);
 wire        ramshared;
 
 wire [7:0] toccata_base;
@@ -1237,8 +1211,8 @@ cpu_wrapper cpu_wrapper
 	.ramshared    (ramshared       ),
 	.ramlong1     (ram_l1          ),
 	.ramdin_lo    (ram_din_lo      ),
-	.ramdout_hi   (ram_dout_hi_cpu ),
-	.ramready_l   (ram_ready_l_cpu ),
+	.ramdout_hi   (ram_dout2_hi    ),
+	.ramready_l   (zram_sel & ram_ready2_l),
 
 	//custom CPU signals
 	.cpustate     (cpu_state       ),
@@ -1324,7 +1298,6 @@ sdram_ctrl ram1
 	.cache_rst    (cpu_rst         ),
 	.cpu_cache_ctrl(ss_cache_ctrl),
 	.dcache_sw_en (dcache_sw_en_w  ),
-	.fast_hit     (cpu_tg68k & ~ss_port_own),
 	.sdram_big    (sdram_big_114   ),
 
 	.sd_data      (SDRAM_DQ        ),
@@ -1496,7 +1469,6 @@ ddram_ctrl ram2
 	.cache_rst    (cpu_rst         ),
 	.cpu_cache_ctrl(ss_cache_ctrl),
 	.dcache_sw_en (dcache_sw_en_w  ),
-	.fast_hit     (cpu_tg68k       ),
 
 	.DDRAM_CLK    (DDRAM_CLK       ),
 	.DDRAM_BUSY   (DDRAM_BUSY      ),

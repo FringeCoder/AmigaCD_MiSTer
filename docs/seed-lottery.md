@@ -62,8 +62,8 @@ including the ones that are reverted.
 | 21 | L | the RTL answer to row 18: `ss_regshadow` registers its set/clear readback (DMACON/INTENA/ADKCON) on the array read's clk_sys edge, so nothing from `shadow_rd_addr` reaches ss_ctrl and row 18's multicycle is removed (proven in rtl/sim/regshadow) -- panelled on cf8f795c, i.e. without row 20 and with the 68030-no-MMU save state change (75772818: a 7-bit CACR restore mux and a reset term in the kernel), which is small and on the CPU side | 89e08f32 | L -0.159 (14/20) -> -0.275 (17/20), median -0.519 -> -0.582, 0/20 close either way; best seed 31 -0.290 (run 39341492928) | kept on the owner's call (2026-10-20): within noise, not an improvement by the rule, but an RTL fact in place of an SDC exception, proven equivalent in rtl/sim/regshadow |
 | 22 | D, G | the TG68K takes a RAM read only when its data is two clk_114 old (cpu_rdgate: ready one clk_114 behind ack, data ANDed with it) and AmigaCD.sdc says so with a -start multicycle; the caches ack read hits from IDLE (fast_hit) so hits keep their latency. Costs a clk_sys on ~10% of TG68K reads (misses/fills ending on the tight edge), none on hits; fx68k untouched. Proven in rtl/sim/rdgate | d7823233 | median -0.556 -> -0.877, 0/20 close; D -0.344 -> -0.310, G -0.363 -> -0.233 (both still failing in 16-18/20); C +0.348 -> -0.335 (19/20), F -0.206 -> -0.520, H -0.275 -> -0.605, L -0.225 -> -0.448 (all 20/20) | reverted: the target barely moved and every cache family paid for it |
 | 23 | all (area) | remove five save-state retiming banks that re-time crossings AmigaCD.sdc already false-paths: the restore vector bank ss_state_out_q (2346), the CIA capture regs (394) and restore regs (394), Akiko's capture (1052) and restore (1052) -- 5238 flops, ~10% of the design's registers. Not a path fix: the D/G split showed every seed still 0.34-0.54 ns short without D/G, each in a different family, at 84% ALMs | b80fca71 | median -0.556 -> -0.496, 0/20 close (best seed 27, -0.039); H -0.275 -> -0.177, L -0.225 -> -0.054, F -0.206 -> -0.100, G -0.363 -> -0.405, D, C, M unchanged; no hold failures; registers 52,321 -> 48,441 but ALMs only 35,075 -> 34,913 | kept: the median and three families better, none clearly worse -- though every shift is under the noise line |
-| 24 | D, G | option 1: row 22's read gate and multicycle WITHOUT the fast hit, on row 23's netlist. Costs a clk_sys on every TG68K cache hit (44% of reads in rtl/sim/rdgate); fx68k untouched | 04926004 | median -0.496 -> -0.493, 0/20 close (best 38, -0.200); D -0.344 -> -0.100 (14/20), G -0.405 -> -0.026 (11/20); C +0.379 -> +0.100, H -0.177 -> -0.209, L -0.054 -> -0.096, F, M unchanged | owner's choice pending: the target moves a lot, the total does not |
-| 25 | D, G | option 2: row 24's gate plus a LEAN fast hit -- the tag compare drives only ack/state/tag write (data and tag-write words load in IDLE on every TG68K read select), no address comparator (a registered fast_hit-was-on guard instead; rtl/sim/rdgate check H proves the address never moves under a fast-hit select). Hits keep their latency; ~9.5% of TG68K reads (misses ending on the tight edge) a clk_sys later | 406e0a62 | median -0.496 -> -0.764, 0/20 close (best 36, -0.236); D -0.574, G -0.637 (19/20 each), L -0.231 (20/20), H -0.265 | owner's choice pending: worse than row 23 and row 24 on every count |
+| 24 | D, G | option 1: row 22's read gate and multicycle WITHOUT the fast hit, on row 23's netlist. Costs a clk_sys on every TG68K cache hit (44% of reads in rtl/sim/rdgate); fx68k untouched | 04926004 | median -0.496 -> -0.493, 0/20 close (best 38, -0.200); D -0.344 -> -0.100 (14/20), G -0.405 -> -0.026 (11/20); C +0.379 -> +0.100, H -0.177 -> -0.209, L -0.054 -> -0.096, F, M unchanged | reverted on the owner's call: the target moves a lot, the total does not, and every TG68K cache hit pays a clk_sys |
+| 25 | D, G | option 2: row 24's gate plus a LEAN fast hit -- the tag compare drives only ack/state/tag write (data and tag-write words load in IDLE on every TG68K read select), no address comparator (a registered fast_hit-was-on guard instead; rtl/sim/rdgate check H proves the address never moves under a fast-hit select). Hits keep their latency; ~9.5% of TG68K reads (misses ending on the tight edge) a clk_sys later | 406e0a62 | median -0.496 -> -0.764, 0/20 close (best 36, -0.236); D -0.574, G -0.637 (19/20 each), L -0.231 (20/20), H -0.265 | reverted: worse than row 23 and row 24 on every count |
 
 Ideas recorded and not done, with the reason:
 - [Done as row 21, 2026-10-19, with no added latency: the set/clear select
@@ -696,7 +696,7 @@ the caveat that each shift is inside the 0.3 ns placement noise. D and G
 are the wall again and untouched: row 22's gate is the proven fix for them,
 and its fast-hit half is what has to change.
 
-### The read gate, two ways (rows 24 and 25) -- owner's choice pending
+### The read gate, two ways (rows 24 and 25) -- both reverted
 
 Runs 39444091321 (row 24, 04926004) and 39445766384 (row 25, 406e0a62),
 seeds 21-38, 41, 42, against row 23 (run 39417638838). Medians are over the
@@ -721,3 +721,9 @@ by H, L, F or M at about the same depth, as the D/G split predicted. Row 25's
 fast hit, even lean, puts D and G back behind where they started, so the
 early ack itself (tag compare -> ack -> the CPU's clock enable) is on the
 critical path, not only the loads row 22 gated. Neither closes a seed.
+
+Both reverted on the owner's call (2026-10-20): every RTL, SDC, QSF and CI
+file is byte-identical to row 23 (f8a30137) again. The gate (cpu_rdgate) and
+its bench stay in 04926004 / 406e0a62 for reuse; it is the proven fix for
+D and G, and worth bringing back only once the families behind them (H, L,
+F, M) have moved, since on its own it buys D and G but not a closing seed.
