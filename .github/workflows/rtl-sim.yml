@@ -415,6 +415,28 @@ jobs:
           set -euo pipefail
           bash rtl/sim/regshadow/run.sh
 
+      # The TG68K takes a RAM read only once the data under it is two clk_114
+      # periods old (AmigaCD.sv's cpu_rdgate: ready delayed one clk_114 behind
+      # the controller's ack, data ANDed with that condition), which is what
+      # AmigaCD.sdc's multicycle from the caches' read data registers into the
+      # TG68K rests on. (Row 24, the gate alone: a read acked on the clk_114
+      # edge before a clk_sys edge -- every cache hit -- is taken a clk_sys
+      # later. The bench's fast-hit checks (G) are behind FAST_HIT, for the
+      # variant that acks hits early.) Runs the real sdram_ctrl and ddram_ctrl under AmigaCD.sv's
+      # handshake, in all three CPU modes, plus two standalone caches on random
+      # inputs: data stable under the gate (A), zero outside it (B), the taken
+      # word is the ack word (C), a read's ready exactly one clk_114 behind ack
+      # (D), fx68k untouched (E), writes undelayed (F), a fast hit's word equal
+      # to what READ would have loaded (G). Coverage counters fail on zero.
+      # Falsified on 2026-10-20: the gate without the delayed ack (B), ready not
+      # delayed (C, D), the fast path without its RAM-write guard (G), without
+      # its address compare (G), on a miss (G), and the cache reloading its
+      # data in WAIT (A) each fail it.
+      - name: CPU read return gate and fast cache hits (tb_cpu_rdgate.sv)
+        run: |
+          set -euo pipefail
+          bash rtl/sim/rdgate/run.sh
+
       # drive_sounds registers the DDR3 read data (dd_q) before its 4:1 sample
       # select, because the HPS port's readdata straight into smp missed setup
       # in 4 of 58 seeds. That costs one clock per read; this proves the module
