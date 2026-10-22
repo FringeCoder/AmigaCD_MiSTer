@@ -63,6 +63,13 @@ tb*
 !tb*.sv
 !tb*.vh
 out*.log
+# The copper and denise benches also write their stimulus and their dumps
+# beside the source (rtl-sim.yml generates the .memh and case lists, runs the
+# bench to a _sim.txt, and checks that). All regenerated on every run.
+rtl/sim/copper/*.memh
+rtl/sim/copper/*_sim.txt
+rtl/sim/copper/planelimit_cases.txt
+rtl/sim/denise/dpf.txt
 seed_sweep/.fit.lock
 seed_sweep/*.out
 seed_sweep/*.log
