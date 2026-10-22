@@ -347,23 +347,3 @@ set_global_assignment -name QIP_FILE rtl/A2065/a2065.qip
 set_global_assignment -name QIP_FILE rtl/akiko.qip
 set_global_assignment -name QIP_FILE rtl/cdtv.qip
 set_global_assignment -name VERILOG_FILE rtl/video_testpattern.v
-
-# Row 27 (docs/seed-lottery.md): one floating, auto-sized, non-reserved
-# LogicLock region holding the TG68K/fx68k wrapper and both CPU caches. It
-# fixes no coordinates and keeps nothing else out; it only tells the placer
-# to keep these three together, so the cache -> cpu_din -> ALU route (D and G,
-# 72% routing on seed 47, X40 to X79) stops crossing the die. The risk is the
-# one rows 20 and 22 showed: what the caches gain, ddram_ctrl (H) and ss_ctrl
-# (L) may lose. Kept or reverted on a 20-seed panel.
-set_global_assignment -name LL_ENABLED ON -section_id LL_CPU_CLUSTER
-set_global_assignment -name LL_AUTO_SIZE ON -section_id LL_CPU_CLUSTER
-set_global_assignment -name LL_STATE FLOATING -section_id LL_CPU_CLUSTER
-set_global_assignment -name LL_RESERVED OFF -section_id LL_CPU_CLUSTER
-set_global_assignment -name LL_CORE_ONLY OFF -section_id LL_CPU_CLUSTER
-set_global_assignment -name LL_SECURITY_ROUTING_INTERFACE OFF -section_id LL_CPU_CLUSTER
-set_global_assignment -name LL_WIDTH 1 -section_id LL_CPU_CLUSTER
-set_global_assignment -name LL_HEIGHT 1 -section_id LL_CPU_CLUSTER
-set_global_assignment -name LL_ORIGIN X1_Y1 -section_id LL_CPU_CLUSTER
-set_instance_assignment -name LL_MEMBER_OF LL_CPU_CLUSTER -to "emu:emu|cpu_wrapper:cpu_wrapper" -section_id LL_CPU_CLUSTER
-set_instance_assignment -name LL_MEMBER_OF LL_CPU_CLUSTER -to "emu:emu|sdram_ctrl:ram1|cpu_cache_new:cpu_cache" -section_id LL_CPU_CLUSTER
-set_instance_assignment -name LL_MEMBER_OF LL_CPU_CLUSTER -to "emu:emu|ddram_ctrl:ram2|cpu_cache_new:cpu_cache" -section_id LL_CPU_CLUSTER

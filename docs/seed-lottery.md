@@ -64,7 +64,31 @@ including the ones that are reverted.
 | 23 | all (area) | remove five save-state retiming banks that re-time crossings AmigaCD.sdc already false-paths: the restore vector bank ss_state_out_q (2346), the CIA capture regs (394) and restore regs (394), Akiko's capture (1052) and restore (1052) -- 5238 flops, ~10% of the design's registers. Not a path fix: the D/G split showed every seed still 0.34-0.54 ns short without D/G, each in a different family, at 84% ALMs | b80fca71 | median -0.556 -> -0.496, 0/20 close (best seed 27, -0.039); H -0.275 -> -0.177, L -0.225 -> -0.054, F -0.206 -> -0.100, G -0.363 -> -0.405, D, C, M unchanged; no hold failures; registers 52,321 -> 48,441 but ALMs only 35,075 -> 34,913 | kept: the median and three families better, none clearly worse -- though every shift is under the noise line |
 | 24 | D, G | option 1: row 22's read gate and multicycle WITHOUT the fast hit, on row 23's netlist. Costs a clk_sys on every TG68K cache hit (44% of reads in rtl/sim/rdgate); fx68k untouched | 04926004 | median -0.496 -> -0.493, 0/20 close (best 38, -0.200); D -0.344 -> -0.100 (14/20), G -0.405 -> -0.026 (11/20); C +0.379 -> +0.100, H -0.177 -> -0.209, L -0.054 -> -0.096, F, M unchanged | reverted on the owner's call: the target moves a lot, the total does not, and every TG68K cache hit pays a clk_sys |
 | 25 | D, G | option 2: row 24's gate plus a LEAN fast hit -- the tag compare drives only ack/state/tag write (data and tag-write words load in IDLE on every TG68K read select), no address comparator (a registered fast_hit-was-on guard instead; rtl/sim/rdgate check H proves the address never moves under a fast-hit select). Hits keep their latency; ~9.5% of TG68K reads (misses ending on the tight edge) a clk_sys later | 406e0a62 | median -0.496 -> -0.764, 0/20 close (best 36, -0.236); D -0.574, G -0.637 (19/20 each), L -0.231 (20/20), H -0.265 | reverted: worse than row 23 and row 24 on every count |
-| 26 | all (tool) | `PLACEMENT_EFFORT_MULTIPLIER 4.0` and `ROUTER_TIMING_OPTIMIZATION_LEVEL MAXIMUM` in AmigaCD.qsf on row 23's sources: no added logic, fit time only (raised by an external review) | 8312cd4a | median -0.496 -> -0.737, 0/20 close (best 34, -0.320); D -0.344 -> -0.707 (20/20), G -0.405 -> -0.614 (20/20), H -0.177 -> -0.321 (19/20), F -0.100 -> -0.156, L -0.054 -> -0.151, C, M unchanged; hold clean (worst +0.184); fit 27-44 min per seed | reverted: worse on the median and in every failing family |
+| 26 | all (tool) | `PLACEMENT_EFFORT_MULTIPLIER 4.0` and `ROUTER_TIMING_OPTIMIZATION_LEVEL MAXIMUM` in AmigaCD.qsf on row 23's sources (raised by an external review) | 8312cd4a | **a no-op**: `OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"` already sets both -- the fit report of row 27, which does not assign them, lists them at 4.0 and MAXIMUM, and rows 26 and 27 match on every seed to the picosecond. Its panel, median -0.737 (0/20; D -0.707, G -0.614, H -0.321), is row 23's sources fitted on 2026-10-22 instead of 2026-10-20: the build date (see "The build date is a seed" below) | reverted (75c43a38); finding: the gap to row 23 is the calendar, not the settings |
+| 27 | D, G | a floating, auto-sized, non-reserved LogicLock region over cpu_wrapper and both cpu_cache_new instances (raised by an external review) | ea22b845 | **never applied**: "Current license file does not support LogicLock regions. The Quartus Prime software removes all the LogicLock regions" (Critical Warning 140003) -- 17.0 Lite has no LogicLock. Fit identical to row 26 on all 20 seeds | reverted; floorplanning is closed to this toolchain |
+
+### The build date is a seed
+
+sys/build_id.tcl writes today's date into build_id.v before every compile and
+AmigaCD.sv puts it in the OSD config string, so the netlist differs from one
+day to the next and the fitter places everything differently. Rows 26 and 27
+are row 23's sources fitted on 2026-10-22 (build date 261022); row 23 was
+fitted on 2026-10-20 (261020):
+
+| | row 23 (261020) | rows 26/27 (261022) |
+|---|---:|---:|
+| median | -0.496 | -0.737 |
+| best | 27, -0.039 | 34, -0.320 |
+| seed 27 | -0.039 | -1.429 |
+| D / G median | -0.344 / -0.405 | -0.707 / -0.614 |
+
+So a panel run on a different day from the one it is compared with carries a
+date term of up to ~0.25 ns on the median, as large as most rows here. Rows
+compared across days (any row whose panel and its baseline's ran on different
+dates) are weaker evidence than the table makes them look. From now on a
+comparison pins the date: fit.yml's `build_date` input (scripts/ci-fit.sh),
+recorded in each seed's fit.json. It also means a release bitstream's timing
+depends on the day it is built.
 
 Ideas recorded and not done, with the reason:
 - [Done as row 21, 2026-10-19, with no added latency: the set/clear select
