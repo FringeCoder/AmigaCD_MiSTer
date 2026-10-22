@@ -125,12 +125,9 @@ sdram_ctrl dut (
 	.sdram_ready(sdram_ready),
 	.cpuAddr(24'd0), .cpuCS(1'b0), .cpustate(2'b01),
 	.cpuL(1'b1), .cpuU(1'b1), .cpuWR(16'h0), .cpuRD(), .ramready(),
-	// 32-bit chip cycles and the SDRAM fast port (upstream 26eb46a), idle:
-	// this bench is about the bridge's single-byte DMA slot.
-	.sdram_big(1'b0), .chip32(1'b0), .chipWR2(16'h0), .chipRD2(),
-	.fast_req(1'b0), .fast_we(1'b0), .fast_addr(26'd0), .fast_dqm(2'b11),
-	.fast_wdat(16'h0), .fast_w2(1'b0), .fast_dqm2(2'b11), .fast_wdat2(16'h0),
-	.fast_ack(), .fast_rvalid(), .fast_rdat()
+	// 32-bit chip cycles, idle: this bench is about the bridge's single-byte
+	// DMA slot.
+	.chip32(1'b0), .chipWR2(16'h0), .chipRD2()
 );
 
 chipdma_arb arb (
@@ -154,8 +151,6 @@ chipdma_arb arb (
 	// No Zorro RAM, so memory_router always sends the slot to chip_out_*.
 	.z2ram_ena(1'b0), .z3ram_base0(5'd0), .z3ram_ena0(1'b0),
 	.z3ram_base1(4'd0), .z3ram_ena1(1'b0),
-	.z3sdr_base0(8'd0), .z3sdr_ena0(1'b0), .z3sdr_base1(8'd0), .z3sdr_ena1(1'b0),
-	.z3sdr_base2(8'd0), .z3sdr_ena2(1'b0), .sdram_big(1'b0),
 	.ddr_out_addr(), .ddr_out_l(), .ddr_out_u(), .ddr_out_we(),
 	.ddr_out_cs(), .ddr_out_wr(), .ddr_in_ack(1'b0),
 	.dma_hold(1'b0), .dma_busy(), .ddr_in_rd(16'h0)

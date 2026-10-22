@@ -115,13 +115,7 @@ module tb_ddram_readreturn;
 
 		.dmaAddr(dmaAddr), .dmaCS(dmaCS), .dmaWE(dmaWE),
 		.dmaL(dmaL), .dmaU(dmaU), .dmaWR(dmaWR), .dmaRD(dmaRD),
-		.dmaACK(dmaACK),
-
-		// SDRAM fast RAM (upstream 26eb46a). Nothing here decodes to it, and
-		// sdr_hi is held low so the 3'b011 window does not either.
-		.sdr_hi(1'b0), .sdr_req(), .sdr_we(), .sdr_addr(), .sdr_dqm(),
-		.sdr_wdat(), .sdr_w2(), .sdr_dqm2(), .sdr_wdat2(),
-		.sdr_ack(1'b0), .sdr_rvalid(1'b0), .sdr_rdat(16'd0)
+		.dmaACK(dmaACK)
 	);
 
 	// ---- Avalon slave model ------------------------------------------------
