@@ -100,6 +100,26 @@ comparison pins the date: fit.yml's `build_date` input (scripts/ci-fit.sh),
 recorded in each seed's fit.json. It also means a release bitstream's timing
 depends on the day it is built.
 
+### SEED 22, and the release candidate of 2026-10-22
+
+AmigaCD.qsf's seed moves from 47 to 22, the best of row 31's four closes:
+setup +0.103, hold +0.250 at the slow 100 C gate, on 09a2f928 built with
+BUILD_DATE 261022 (run 39828635926). The fit is deterministic, so that
+seed's artifact IS the release candidate a pinned rebuild would produce:
+sha256 86873d43edbeffa7ea2e18c459dfbf49fa2ab582927cb5fda06a51163f116bf0.
+
+Two things follow from "The build date is a seed" above:
+
+- A push build fits SEED 22 with the date it runs on, which is a different
+  netlist; it is not expected to close, and saying it did not is not news.
+  Rebuild a closing bitstream with fit.yml's build_date input set to 261022.
+- A release on another day either ships this bitstream (its OSD says
+  261022) or runs a fresh seed panel pinned to that day's date.
+
+Not yet measured: what the read gate costs real software (about half of
+TG68K RAM reads and writes take a clk_sys more, by rtl/sim/rdgate's count),
+and the candidate on hardware at all.
+
 Ideas recorded and not done, with the reason:
 - [Done as row 21, 2026-10-19, with no added latency: the set/clear select
   loads on the array read's edge rather than behind it.] Registering
