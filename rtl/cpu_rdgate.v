@@ -12,29 +12,44 @@
 //
 // The cache loads its read data only on the edge its ack rises (CPU_SM_READ,
 // CPU_SM_FILL1), and ack falls when the select does, so while ack is high the
-// data does not move. ready_q is ack one clk_114 later. g = ack & ready_q is
-// therefore high only when the data has been stable since at least the edge
-// before last, and:
+// data does not move.
 //
-//   - the read ready the CPU sees is g, so it takes the word one clk_114
-//     later than ack, which is a clk_sys later only when ack rose on the
-//     clk_114 edge just before a clk_sys edge -- one read in four;
-//   - the read data the CPU sees is ANDed with g, so on the clock where it is
-//     younger than that the CPU's input is a constant zero and no register in
-//     the TG68K can depend on it, whatever that register's enable.
+// Row 29 (docs/seed-lottery.md) gated with ack itself, g = ack & ack_q. That
+// made the DATA a two-clock path, but put the cache's ack register, through
+// zram_sel's mux and the gate, in front of the TG68K in one clk_114 period --
+// and on the resynced tree that path, not the data, was the worst of D and G.
+// So everything the CPU sees here is now decided by registers alone:
 //
-// Together they make the path from the data registers into the TG68K a true
-// two-clk_114 path, which AmigaCD.sdc says with a -start multicycle.
-// rtl/sim/rdgate proves the data stable under g against the real controllers.
+//   v = ack_q & cs & cs_q
 //
-// Writes are not delayed: the CPU takes no data from a write. en is low when
-// fx68k runs (cpucfg[1:0] == 0), and then every output is its input: the
-// 68000's timing does not move, and the multicycle names only the TG68K.
+// ack_q is ack one clk_114 later; cs is AmigaCD.sv's ram_cs, the registered
+// select; cs_q is cs one clk_114 later. cs & cs_q says the select has been up
+// over the last two edges without a break, so the ack that ack_q saw was this
+// request's, not the tail of the one before; and cs drops on the very edge
+// the request ends, which is when ack falls with it. No input of v is
+// combinational on anything the cache drives.
+//
+//   - the ready the CPU sees is v, for writes as well as reads (row 29 left
+//     writes undelayed, which kept the live ack in front of clkena). The CPU
+//     takes a read or completes a write one clk_114 after ack, which is a
+//     clk_sys later only when ack rose on the clk_114 edge just before a
+//     clk_sys edge;
+//   - the data the CPU sees is ANDed with v, so on the clock where it is
+//     younger than that the CPU's input is a constant zero.
+//
+// The data registers into the TG68K are then a true two-clk_114 path, which
+// AmigaCD.sdc says with a -start multicycle; what remains single-cycle starts
+// at ack_q, cs and cs_q. rtl/sim/rdgate proves, against the real controllers,
+// the data stable under v and v never true without an ack inside the select.
+//
+// en is low when fx68k runs (cpucfg[1:0] == 0), and then every output is its
+// input: the 68000's timing does not move, and the multicycle names only the
+// TG68K.
 module cpu_rdgate
 (
 	input             clk,         // clk_114
 	input             en,          // the TG68K is the running CPU
-	input             wr,          // the access is a write (clk_sys domain, held)
+	input             cs,          // ram_cs, AmigaCD.sv's registered select
 
 	input             ready_in,    // ram1/ram2 ready, as muxed by zram_sel
 	input             ready_l_in,  // ddram's long-word ready
@@ -49,15 +64,19 @@ module cpu_rdgate
 
 reg ready_q   = 1'b0;
 reg ready_l_q = 1'b0;
+reg cs_q      = 1'b0;
 always @(posedge clk) begin
 	ready_q   <= ready_in;
 	ready_l_q <= ready_l_in;
+	cs_q      <= cs;
 end
 
-wire g = ~en | (ready_in & ready_q);
+wire v   = ready_q   & cs & cs_q;
+wire v_l = ready_l_q & cs & cs_q;
+wire g   = ~en | v;
 
-assign ready   = ready_in   & (~en | wr | ready_q);
-assign ready_l = ready_l_in & (~en | wr | ready_l_q);
+assign ready   = en ? v   : ready_in;
+assign ready_l = en ? v_l : ready_l_in;
 assign dout    = dout_in    & {16{g}};
 assign dout_hi = dout_hi_in & {16{g}};
 

@@ -267,17 +267,20 @@ set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_data[*]} -to {*a2065_ddram*
 set_false_path -from {*a2065_ddr3_mailbox*|a2065_int2}       -to {*a2065_inst|int2_s1}
 
 # The read data registers into the TG68K: two clk_114 periods, by construction.
-# AmigaCD.sv's cpu_rdgate acks a read to the TG68K only once the controller's ack
-# has been up for a clock, and ANDs the data with that same condition, so on any
-# clk_sys edge either the TG68K's input is a constant zero or the data was
-# loaded at least two clk_114 edges earlier (cpu_cache_new loads cpu_dat_r and
-# cpu_dat_hi only on the edge its ack rises, and ack falls with the select).
+# AmigaCD.sv's cpu_rdgate gives the TG68K a ready, and lets its data through,
+# only when the controller's ack was up on the edge before, inside a select
+# (ram_cs) that has been up over both edges -- registered terms only, since
+# row 30 -- and ANDs the data with that same condition. So on any clk_sys edge
+# either the TG68K's input is a constant zero or the data was loaded at least
+# two clk_114 edges earlier (cpu_cache_new loads cpu_dat_r and cpu_dat_hi only
+# on the edge its ack rises, and ack falls with the select).
 # -start: the multiplier is in launch (clk_114) periods; the latch is clk_sys.
 # Only the TG68K: fx68k sees the ungated path and is timed as before. Proven
 # against the real controllers in rtl/sim/rdgate. These paths are families D
 # and G: the worst after the 2026-10-17 sync (docs/seed-lottery.md, row 22),
 # and after the 2026-10-22 resync nearly the only ones left failing (row 28).
-# Row 29 is this gate re-panelled on that tree.
+# Row 29 gated with the live ack, and the cache's ack register became D and
+# G's worst launch; row 30 takes it out of every single-cycle path to the CPU.
 set rd_launch {emu|ram1|cpu_cache|cpu_dat_r[*] emu|ram2|cpu_cache|cpu_dat_r[*] emu|ram2|cpu_cache|cpu_dat_hi[*]}
 set_multicycle_path -start -setup 2 -from $rd_launch -to {emu|cpu_wrapper|cpu_inst_p|*}
 set_multicycle_path -start -hold  1 -from $rd_launch -to {emu|cpu_wrapper|cpu_inst_p|*}

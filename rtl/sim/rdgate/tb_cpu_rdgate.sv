@@ -12,9 +12,11 @@
 //      two clk_114 edges back. This is the multicycle.
 //   B. wherever g is low (TG68K running), the data the CPU sees is zero.
 //   C. the word the CPU takes is the word that was there when ack rose.
-//   D. a read's ready reaches the CPU exactly one clk_114 after ack does.
+//   D. the ready the CPU sees, read or write, is ack one clk_114 late inside
+//      an unbroken select (cs & cs_q): registered terms only (row 30).
 //   E. with fx68k running (en low) every output is its input, on every clock.
-//   F. a write's ready is not delayed.
+//   F. no ready without an ack inside the current select -- the previous
+//      request's ack never completes the next one.
 //
 // Plus A on two standalone caches (LINE_TAKE 0 and 1) driven with random
 // inputs on every clock, protocol or not, for corners the system never
@@ -66,7 +68,7 @@ wire        raw_ready_l = zram_sel & ram_ready2_l;
 wire [15:0] cpu_dout, cpu_dout_hi;
 wire        cpu_ready, cpu_ready_l;
 cpu_rdgate dut (
-	.clk(clk_114), .en(en), .wr(cpu_state == 2'd3),
+	.clk(clk_114), .en(en), .cs(ram_cs),
 	.ready_in(raw_ready), .ready_l_in(raw_ready_l), .dout_in(raw_dout), .dout_hi_in(ram_dout2_hi),
 	.ready(cpu_ready), .ready_l(cpu_ready_l), .dout(cpu_dout), .dout_hi(cpu_dout_hi));
 
@@ -343,10 +345,12 @@ end
 integer fa = 0, fb = 0, fc = 0, fd = 0, fe = 0, ff = 0, fs = 0;
 integer n_g = 0, n_gl = 0, n_off = 0, n_en0 = 0, n_rise = 0, n_s = 0, n_ws = 0;
 reg [15:0] raw_p = 0, hi_p = 0, word_at_ack = 0;
-reg        rr_p = 0, rq_p = 0;
+reg        rr_p = 0, rq_p = 0, cs_p = 0, acked = 0;
+wire       acked_n = acked;
+wire       cs_p_n  = cs_p;
 reg [15:0] c0_p = 0, c0h_p = 0, c1_p = 0, c1h_p = 0;
 reg        c0a_p = 0, c1a_p = 0;
-wire       g_now = raw_ready & dut.ready_q;
+wire       g_now = dut.v;
 
 task fail(inout integer n, input [8*48-1:0] what);
 	begin
@@ -366,12 +370,16 @@ always @(posedge clk_114) if (reset_n && cyc_n > 4) begin
 			n_off = n_off + 1;
 			if (cpu_dout !== 16'd0 || cpu_dout_hi !== 16'd0) fail(fb, "B: data visible without g");
 		end
-		// D: a read's ready, one clk_114 behind ack, and only that
-		if (cpu_state != 2'd3 && ram_sel) begin
-			if (raw_ready && !rr_p) begin n_rise = n_rise + 1; word_at_ack = raw_dout; end
-			if (cpu_ready !== (raw_ready && rr_p)) fail(fd, "D: read ready not ack delayed by one");
-		end
-		if (cpu_state == 2'd3 && cpu_ready !== raw_ready) fail(ff, "F: write ready delayed");
+		// D: the ready the CPU sees, read or write, is ack one clk_114 late
+		// inside an unbroken select -- the registered v and nothing else.
+		if (raw_ready && !rr_p && cpu_state != 2'd3 && ram_sel) begin n_rise = n_rise + 1; word_at_ack = raw_dout; end
+		if (cpu_ready !== (rr_p && ram_cs && cs_p)) fail(fd, "D: ready is not ack_q & cs & cs_q");
+		// F: never a ready the request did not earn. acked is set by an ack
+		// seen inside this select and cleared whenever the select drops, so a
+		// ready without it is the tail of the previous request's ack.
+		if (cpu_ready && !acked) fail(ff, "F: ready without an ack in this select");
+		// and v implies the ack is still up: the data under it is the ack's.
+		if (g_now && !raw_ready) fail(fa, "A: v up with the ack down");
 		if (cpu_state == 2'd3 && raw_ready) n_ws = n_ws + 1;
 	end
 	else begin
@@ -388,6 +396,8 @@ always @(posedge clk_114) if (reset_n && cyc_n > 4) begin
 	if (c0_ack && c0a_p && (c0_r !== c0_p || c0_hi !== c0h_p)) fail(fs, "A: cache0 data moved under ack");
 	if (c1_ack && c1a_p && (c1_r !== c1_p || c1_hi !== c1h_p)) fail(fs, "A: cache1 data moved under ack");
 	raw_p = raw_dout; hi_p = ram_dout2_hi; rr_p = raw_ready;
+	acked = ram_cs && (acked_n || (raw_ready && cs_p_n));
+	cs_p = ram_cs;
 	c0_p = c0_r; c0h_p = c0_hi; c0a_p = c0_ack;
 	c1_p = c1_r; c1h_p = c1_hi; c1a_p = c1_ack;
 end

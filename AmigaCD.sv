@@ -1072,7 +1072,7 @@ cpu_rdgate cpu_rdgate
 (
 	.clk        (clk_114),
 	.en         (cpu_tg68k),
-	.wr         (cpu_state == 2'b11),
+	.cs         (ram_cs),
 	.ready_in   (ram_ready_raw),
 	.ready_l_in (zram_sel & ram_ready2_l),
 	.dout_in    (ram_dout_raw),
