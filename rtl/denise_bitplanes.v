@@ -97,32 +97,17 @@ always @(hpos)
     2'b11 : extra_delay_f0 = 8'b00_0100_00;
   endcase
 
-// FMODE 1/2 and 3 key the load phase on hpos[4:3] and hpos[5:4] only, which
-// rounds it to 8 and 16 lores pixels. Against WinUAE's copy rule that is wrong
-// for a load between those steps (T28, rtl/sim/denise measures it), and an
-// exact (-phase) mod unit was tried here on 2026-10-11 -- and taken back out.
-// On hardware it changed nothing that has a photograph: vAmigaTS AGADDF
-// agaddf1/11/12/15 were pixel-identical either way. The one test it did change,
-// agaddf16 (FMODE 3, DDFSTRT $3C), has no photo, and its README says a real
-// A1200 produces SCRAMBLED lores output there and quantises DDFSTRT to the fetch
-// unit -- neither of which WinUAE's model, nor this exact delay, reproduces. A
-// change that real silicon contradicts and no photo supports stays out until
-// one does. The mid-line BPLCON1 half of T28 below is kept.
-always @(hpos)
-  case (hpos[4:3])
-    2'b00 : extra_delay_f12 = 8'b00_0000_00;
-    2'b01 : extra_delay_f12 = 8'b01_1000_00;
-    2'b10 : extra_delay_f12 = 8'b01_0000_00;
-    2'b11 : extra_delay_f12 = 8'b00_1000_00;
-  endcase
+// FMODE 1/2 and 3 start the load at the exact (-phase) mod the fetch unit, as
+// WinUAE's copy rule has it (upstream f3ab2c18, #278). This fork tried the same
+// delay on 2026-10-11 and took it back out: it changed no vAmigaTS AGADDF test
+// that has a photograph, and agaddf16's README says a real A1200 scrambles
+// lores there. Upstream's case is a game, not a test card -- Turrican 2 AGA's
+// world 3 status bar sat shifted and its background jumped while scrolling
+// (#158) -- which is the hardware evidence the 2026-10-11 note said was
+// missing. Taken. The mid-line BPLCON1 half of T28 below is unaffected.
+always @(hpos) extra_delay_f12 = {1'b0, 3'd0 - hpos[4:2], 4'b0000};
 
-always @(hpos)
-  case (hpos[5:4])
-    2'b00 : extra_delay_f3 = 8'b00_0000_00;
-    2'b01 : extra_delay_f3 = 8'b11_0000_00;
-    2'b10 : extra_delay_f3 = 8'b10_0000_00;
-    2'b11 : extra_delay_f3 = 8'b01_0000_00;
-  endcase
+always @(hpos) extra_delay_f3 = {4'd0 - hpos[5:2], 4'b0000};
 
 always @ (posedge clk) begin
   if (clk7_en) begin

@@ -48,13 +48,12 @@ entity tg68k_ss_tb is
 		FREEZE_N  : integer := 80;
 		-- Clocks spent in the main loop before the first freeze point.
 		FREEZE_LO : integer := 200;
-		-- 1 runs the kernel as cpu_wrapper does for "68030 no MMU": CPU030
-		-- high, MMU030 low. CI runs the bench both ways, since the 68030 is
-		-- allowed save states without its MMU since 2026-10-19.
-		CPU030_G  : integer := 0;
-		-- 1, with CPU030_G, is the 68030 with its MMU (MMU030 high), which
-		-- PHASE 8 needs; save states carry the MMU registers since format 1.5.
-		MMU_G     : integer := 0
+		-- 1 runs the kernel as the 68030, which always has its MMU since
+		-- upstream ec1353dc (the "68030 no MMU" variant, and the kernel's
+		-- MMU030 input with it, are gone). PHASE 8 runs only here: save
+		-- states carry the MMU registers since format 1.5. CI runs the bench
+		-- both ways.
+		CPU030_G  : integer := 0
 	);
 end entity;
 
@@ -65,7 +64,7 @@ architecture sim of tg68k_ss_tb is
 		if b then return '1'; else return '0'; end if;
 	end function;
 	constant C030 : std_logic := to_sl(CPU030_G /= 0);
-	constant CMMU : std_logic := to_sl(CPU030_G /= 0 and MMU_G /= 0);
+	constant CMMU : std_logic := C030;
 
 	constant MEMW : integer := 16384;			-- words, i.e. 32 KB
 	-- Words put back between scan iterations: the program plus the sentinels.
@@ -237,7 +236,6 @@ begin
 			berr           => '0',
 			CPU            => "11",				-- as cpu_wrapper instantiates it
 			CPU030         => C030,
-			MMU030         => CMMU,
 			addr_out       => addr_out,
 			data_write     => data_write,
 			nWr            => nWr,
@@ -1219,7 +1217,7 @@ begin
 			check(meml(16#614#) = X"CAFEF00D",
 			      "the restored machine translates through A's table, not B's ATC");
 		else
-			note("  (skipped: needs CPU030_G=1 MMU_G=1)");
+			note("  (skipped: needs CPU030_G=1)");
 		end if;
 
 		if errors = 0 then

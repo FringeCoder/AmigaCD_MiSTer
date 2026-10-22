@@ -26,23 +26,23 @@ set_multicycle_path -from {emu|chipdma_arb|*}    -to {emu|ram1|*} -hold 1
 # the 113 MHz SDRAM clock. -from matches the LAUNCH register (c1), not the
 # chipdma_arb pass-through nodes, so the chipdma_arb|* and cck* relaxations
 # above do NOT cover it and sd_addr violates by -0.49 ns. clk_114:clk_28 is
-# 4:1; sdram_ctrl edge-detects ~old_7m&c_7m (sdram_ctrl.v:237-243), so a c1
+# 4:1; sdram_ctrl edge-detects ~old_7m&c_7m (sdram_ctrl.v:289-296), so a c1
 # launch at fast edge N is detected at N+1 and the state-0 RAS capture
-# (sdram_ctrl.v:301-318) is at N+2 — exactly 2 clk_114 cycles, never the
+# (sdram_ctrl.v:370-385) is at N+2 — exactly 2 clk_114 cycles, never the
 # adjacent edge. setup 2 matches; setup >= 3 would NOT be safe.
 set_multicycle_path -from {emu|amiga_clk|c1*} -to {emu|ram1|*} -setup 2
 set_multicycle_path -from {emu|amiga_clk|c1*} -to {emu|ram1|*} -hold 1
 set_multicycle_path -from {emu|amiga_clk|c3*} -to {emu|ram1|*} -setup 2
 set_multicycle_path -from {emu|amiga_clk|c3*} -to {emu|ram1|*} -hold 1
 
-# No multicycle on init_done any more. It had a setup 2 here, added for the
-# split sd_addr this fork used to carry, on the grounds that nothing needs
-# init_done within a cycle of its 0->1 edge. Upstream 26eb46a's controller,
-# which replaced that one, does: init_n arms st0_go on the very edge init_done
-# rises, so the first state 0 issues its ACTIVATE regardless, and the same
-# state 0 picks slot_type / cas_sd_cas / casaddr by `if(!init_done)`. Seen a
-# cycle late, that frame would open a bank and never close it. Single cycle,
-# as upstream constrains it.
+# No multicycle on init_done. It had a setup 2 here, added for the split
+# sd_addr this fork used to carry, on the grounds that nothing needs init_done
+# within a cycle of its 0->1 edge -- an argument that did not survive upstream
+# 26eb46a's controller. The one back in place since upstream ec1353dc sets
+# init_done on the edge where sdram_state is 15 (sdram_ctrl.v:271-284) and
+# reads it on the very next, state 0 (sdram_ctrl.v:331), so the edge it is
+# needed on is the adjacent one. Nobody has argued a relaxation for this
+# controller; single cycle, as upstream constrains it.
 
 # Bridge DMA write port on ram2 (DDR3) is a CDC handshake. chipdma_arb
 # (clk_sys) registers dma_ddr_cs_r plus the entire DDR bus (addr / wr / l / u)
@@ -151,11 +151,6 @@ set_false_path -from {*ss_ctrl*|shadow_ld_data[*]} -to $ss_clksys
 
 set_false_path -from {emu|cpu_wrapper|z3ram_*}
 set_false_path -from {emu|cpu_wrapper|z2ram_*}
-# Upstream 26eb46a: the SDRAM-backed Zorro III windows are set by autoconfig
-# and the SDRAM size by the Main, both once per boot.
-set_false_path -from {emu|cpu_wrapper|z3sdr_*}
-set_false_path -from {emu|sdram_big*}
-set_false_path -from {emu|sdram_dual*}
 
 set_false_path -from {emu|minimig|USERIO1|cpu_config*}
 # chipset_config and memory_config (all but bit 6) are latched only while
@@ -298,6 +293,16 @@ set_false_path -to {emu|ss_dbg_meta[*]}
 set_multicycle_path -setup 2 -from [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[1\].output_counter|divclk"] -to [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[0\].output_counter|divclk"]
 set_multicycle_path -hold 1 -from [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[1\].output_counter|divclk"] -to [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[0\].output_counter|divclk"]
 
+# Upstream c55ecd91 / ec1353dc: the CPU throttle (cpu_cycles' hold and
+# cpu_wrapper's inflight) reaches the RAM controllers in one clk_114 cycle,
+# not the two the clk_sys -> clk_114 multicycle above allows -- the controller
+# acts on them the very next fast edge. Without these the throttle would be
+# timed at 17.6 ns and a fit could pass a build that mis-sequences a request.
+set_multicycle_path -from {emu|cpu_wrapper|cycles|hold} -to {emu|ram*} -setup 1
+set_multicycle_path -from {emu|cpu_wrapper|cycles|hold} -to {emu|ram*} -hold 0
+set_multicycle_path -from {emu|cpu_wrapper|inflight} -to {emu|ram*} -setup 1
+set_multicycle_path -from {emu|cpu_wrapper|inflight} -to {emu|ram*} -hold 0
+
 #these constraints aren't really correct, but help fitting.
 #28MHz pixel clock might be affected when scandoubler fx is used.
 set_multicycle_path -to {*Hq2x*} -setup 2
@@ -320,7 +325,7 @@ set_multicycle_path -from [get_clocks { *|pll|pll_inst|altera_pll_i|*[0].*|divcl
 # fetches its reset vectors through this bus. See
 # ../../docs/sdram-timing-headroom.md.
 #
-# SDRAM_CLK is sd_clk (sdram_ctrl.v:338), which toggles on every sysclk, so the
+# SDRAM_CLK is sd_clk (sdram_ctrl.v:312), which toggles on every sysclk, so the
 # bus runs at half the 113.5 MHz core clock: 56.75 MHz, 17.616 ns.
 #
 # The module fitted to this board (a Retro Remake SuperStation) has not been
@@ -359,8 +364,8 @@ set sdram_launch [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter
 
 # Read data comes back a cycle after the SDRAM launches it. sdram_ctrl captures
 # SDRAM_DQ into sdata_reg on the sysclk edges where sdram_state[0] is high
-# (sdram_ctrl.v:348), while SDRAM_CLK is the REGISTERED version of that same bit
-# (sdram_ctrl.v:338) -- so the clock the SDRAM sees, and everything it launches
+# (sdram_ctrl.v:329), while SDRAM_CLK is the REGISTERED version of that same bit
+# (sdram_ctrl.v:312) -- so the clock the SDRAM sees, and everything it launches
 # in reply, sits one sysclk behind the internal state that captures it. Both
 # directions of this interface carry that offset, which is what the 2 encodes.
 #
@@ -372,7 +377,7 @@ set sdram_launch [get_clocks {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter
 
 # Both directions carry a two-cycle relationship. sysclk runs at twice
 # SDRAM_CLK, and SDRAM_CLK is a REGISTERED output of sdram_state[0]
-# (sdram_ctrl.v:338) while the state that drives the address and captures read
+# (sdram_ctrl.v:312) while the state that drives the address and captures read
 # data is the internal one -- so the external side sits one sysclk behind.
 #
 # Measured on the seed 1 netlist, which is how each piece earned its place:
