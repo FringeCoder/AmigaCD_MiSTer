@@ -31,6 +31,24 @@ sed -i -E "s/^(set_global_assignment -name SEED) .*/\1 $seed/" "$proj.qsf"
 grep -q "^set_global_assignment -name SEED $seed\$" "$proj.qsf" || \
 	echo "set_global_assignment -name SEED $seed" >> "$proj.qsf"
 
+# The build date is part of the netlist. sys/build_id.tcl writes today's date
+# into build_id.v before every compile, AmigaCD.sv puts it in the OSD's config
+# string, and a different constant there is a different netlist, so the fitter
+# places everything differently. On identical sources, the 20-seed panel of
+# 2026-10-20 (row 23, run 39417638838) had a median of -0.496 and that of
+# 2026-10-22 (rows 26 and 27) -0.737: the calendar alone moved it further than
+# most changes in docs/seed-lottery.md. A panel that compares two changes has
+# to hold the date still, so BUILD_DATE (yymmdd) pins it -- in this checkout's
+# copy of sys/build_id.tcl only, never in the repository. A release leaves it
+# empty and gets the real date, as MiSTer builds always do.
+if [ -n "${BUILD_DATE:-}" ]; then
+	case "$BUILD_DATE" in [0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+		*) echo "BUILD_DATE must be yymmdd: '$BUILD_DATE'" >&2; exit 2;; esac
+	sed -i "s/\[clock format \[ clock seconds \] -format %y%m%d\]/$BUILD_DATE/" sys/build_id.tcl
+	grep -qF "BUILD_DATE \\\"$BUILD_DATE\\\"" sys/build_id.tcl || \
+		{ echo "could not pin BUILD_DATE in sys/build_id.tcl" >&2; exit 2; }
+fi
+
 status=0
 docker run --rm -v "$PWD":/project -w /project "$IMAGE" \
 	quartus_sh --flow compile "$proj" -c "$proj" > "fit_$seed.log" 2>&1 || status=$?
@@ -87,8 +105,10 @@ if [ -d db ]; then
 	fi
 fi
 
-printf '{"seed": %s, "setup": %s, "hold": %s, "ok": %s, "flow_status": %s, "families": %s}\n' \
-	"$seed" "${setup:-null}" "${hold:-null}" "$ok" "$status" "$fams" | tee fit.json
+# Which date the netlist carried, so two panels can be checked comparable.
+built=$(sed -nE 's/.*BUILD_DATE "([0-9]+)".*/\1/p' build_id.v 2>/dev/null | head -1)
+printf '{"seed": %s, "setup": %s, "hold": %s, "ok": %s, "flow_status": %s, "build_date": "%s", "families": %s}\n' \
+	"$seed" "${setup:-null}" "${hold:-null}" "$ok" "$status" "${built:-unknown}" "$fams" | tee fit.json
 
 # The flow failing outright is this job's failure. Missing timing is reported
 # in fit.json and judged by the caller, which knows whether it is a release.
