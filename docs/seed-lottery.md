@@ -82,6 +82,12 @@ fitted on 2026-10-20 (261020):
 | seed 27 | -0.039 | -1.429 |
 | D / G median | -0.344 / -0.405 | -0.707 / -0.614 |
 
+Proven, not inferred: four seeds of today's sources refitted with the date
+pinned to 261020 (run 39769895205, 18ad6597) reproduce row 23's run
+39417638838 to the picosecond -- seed 22 -0.185 / +0.240, 27 -0.039 / +0.205,
+30 -1.128 / +0.173, 42 -1.331 / +0.125 (setup / hold). The fit is
+deterministic; the date is the whole difference.
+
 So a panel run on a different day from the one it is compared with carries a
 date term of up to ~0.25 ns on the median, as large as most rows here. Rows
 compared across days (any row whose panel and its baseline's ran on different
