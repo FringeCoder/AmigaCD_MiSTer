@@ -58,9 +58,17 @@ including the ones that are reverted.
 | 17 | H | MAX_FANOUT 16 on ddram_ctrl's `ss_port_own` (DDR3 port-0 grant, >100 loads) | 2b894af6 | took effect (8 copies), ss_port_own paths gone; H -0.052 -> -0.055 (11/20 both), median -0.355 -> -0.393, 1 -> 0 close | reverted (85328d13): it removed one seed's outlier, which the panel does not count |
 | 18 | L | multicycle 2 from ss_ctrl's `shadow_rd_addr` into ss_ctrl (the shadow readback round trip; the address is held >= 6 clk_114 cycles at every read, checked in rtl/sim/ssown) | d6f02c61 | L -0.285 (19/20, worst -1.083) -> -0.159 (14/20, worst -0.696); vs the same RTL's 2b894af6 panel -0.316 (18/20, worst -2.960); median -0.355 -> -0.519 (D, G, M re-rolled) | kept: a proven constraint, its own family better on median, count and worst, the median drop in families it does not reach |
 | 19 | hold | false path into `ss_dbg_meta` (first stage of the diagnostics' 2-FF synchroniser); same panel as row 18 | d6f02c61 | 0 hold failures in 20 (worst +0.174), against 2 on the panel before | kept |
+| 20 | D, G | row 6 again: `cpu_rdq`, the RAM return registered at clk_114 with the port select applied (lookahead; equal to the old mux on every clk_sys edge), on the merged netlist | ad8aa2a7 | S (was D) -0.255 (20/20) -> +0.101 (6/20), G -0.211 -> +1.139 (0/20); but C +0.510 -> -0.129 (12/20), F -0.005 -> -0.399 (20/20), H -0.105 -> -0.596 (20/20), L -0.159 -> -0.323 (19/20); median -0.519 -> -0.728, 0/20 close either way | reverted (row 6's result again: the wall moves to the caches and ddram_ctrl, and the total gets worse) |
+| 21 | L | the RTL answer to row 18: `ss_regshadow` registers its set/clear readback (DMACON/INTENA/ADKCON) on the array read's clk_sys edge, so nothing from `shadow_rd_addr` reaches ss_ctrl and row 18's multicycle is removed (proven in rtl/sim/regshadow) -- panelled on cf8f795c, i.e. without row 20 and with the 68030-no-MMU save state change (75772818: a 7-bit CACR restore mux and a reset term in the kernel), which is small and on the CPU side | 89e08f32 | L -0.159 (14/20) -> -0.275 (17/20), median -0.519 -> -0.582, 0/20 close either way; best seed 31 -0.290 (run 39341492928) | kept on the owner's call (2026-10-20): within noise, not an improvement by the rule, but an RTL fact in place of an SDC exception, proven equivalent in rtl/sim/regshadow |
+| 22 | D, G | the TG68K takes a RAM read only when its data is two clk_114 old (cpu_rdgate: ready one clk_114 behind ack, data ANDed with it) and AmigaCD.sdc says so with a -start multicycle; the caches ack read hits from IDLE (fast_hit) so hits keep their latency. Costs a clk_sys on ~10% of TG68K reads (misses/fills ending on the tight edge), none on hits; fx68k untouched. Proven in rtl/sim/rdgate | d7823233 | median -0.556 -> -0.877, 0/20 close; D -0.344 -> -0.310, G -0.363 -> -0.233 (both still failing in 16-18/20); C +0.348 -> -0.335 (19/20), F -0.206 -> -0.520, H -0.275 -> -0.605, L -0.225 -> -0.448 (all 20/20) | reverted: the target barely moved and every cache family paid for it |
+| 23 | all (area) | remove five save-state retiming banks that re-time crossings AmigaCD.sdc already false-paths: the restore vector bank ss_state_out_q (2346), the CIA capture regs (394) and restore regs (394), Akiko's capture (1052) and restore (1052) -- 5238 flops, ~10% of the design's registers. Not a path fix: the D/G split showed every seed still 0.34-0.54 ns short without D/G, each in a different family, at 84% ALMs | b80fca71 | median -0.556 -> -0.496, 0/20 close (best seed 27, -0.039); H -0.275 -> -0.177, L -0.225 -> -0.054, F -0.206 -> -0.100, G -0.363 -> -0.405, D, C, M unchanged; no hold failures; registers 52,321 -> 48,441 but ALMs only 35,075 -> 34,913 | kept: the median and three families better, none clearly worse -- though every shift is under the noise line |
+| 24 | D, G | option 1: row 22's read gate and multicycle WITHOUT the fast hit, on row 23's netlist. Costs a clk_sys on every TG68K cache hit (44% of reads in rtl/sim/rdgate); fx68k untouched | 04926004 | median -0.496 -> -0.493, 0/20 close (best 38, -0.200); D -0.344 -> -0.100 (14/20), G -0.405 -> -0.026 (11/20); C +0.379 -> +0.100, H -0.177 -> -0.209, L -0.054 -> -0.096, F, M unchanged | reverted on the owner's call: the target moves a lot, the total does not, and every TG68K cache hit pays a clk_sys |
+| 25 | D, G | option 2: row 24's gate plus a LEAN fast hit -- the tag compare drives only ack/state/tag write (data and tag-write words load in IDLE on every TG68K read select), no address comparator (a registered fast_hit-was-on guard instead; rtl/sim/rdgate check H proves the address never moves under a fast-hit select). Hits keep their latency; ~9.5% of TG68K reads (misses ending on the tight edge) a clk_sys later | 406e0a62 | median -0.496 -> -0.764, 0/20 close (best 36, -0.236); D -0.574, G -0.637 (19/20 each), L -0.231 (20/20), H -0.265 | reverted: worse than row 23 and row 24 on every count |
 
 Ideas recorded and not done, with the reason:
-- Registering ss_regshadow's rd_data (its set/clear mux) on clk_sys: the RTL
+- [Done as row 21, 2026-10-19, with no added latency: the set/clear select
+  loads on the array read's edge rather than behind it.] Registering
+  ss_regshadow's rd_data (its set/clear mux) on clk_sys: the RTL
   alternative to row 18's multicycle. ss_ctrl's 6-cycle wait would cover the
   extra stage, and the replay walk would not see it (it reads mem_q, not
   rd_data; d6f02c61's message wrongly says otherwise). Not done because the
@@ -71,13 +79,9 @@ Ideas recorded and not done, with the reason:
   the 0a8fe3b7 netlist it lists only sdram_ctrl's write_req (3 copies): row 1's
   freeze and peek_scan and row 4's st0_cpu and sdr_read_req created none, so
   they are no longer doing anything (freeze's loads moved to port_own in
-  e20bf7c4). Harmless, but not to be counted on.
-- Checking a MAX_FANOUT assignment took effect: the map report's "Registers
-  Duplicated to Honor Maximum Fanout Requirements" table lists the copies. On
-  the 0a8fe3b7 netlist it lists only sdram_ctrl's write_req (3 copies): row 1's
-  freeze and peek_scan and row 4's st0_cpu and sdr_read_req created none, so
-  they are no longer doing anything (freeze's loads moved to port_own in
-  e20bf7c4). Harmless, but not to be counted on.
+  e20bf7c4). Harmless, but not to be counted on. [Removed from AmigaCD.qsf
+  2026-10-20 after the same table on run 39341492928 (row 21's netlist) still
+  listed only write_req.]
 - Registering CIA-B's pins plainly. That makes drive select one 7 MHz cycle
   late, which is not cycle-exact; row 2 did it with a lookahead instead.
 - A timing exception on the CIA timer outputs. They are real single-cycle
@@ -477,10 +481,14 @@ rules (cycle-exact, nothing upstream changed):
   READ), so no exception applies -- unlike the CPU -> RAM direction, which the
   SDC's first lines make multicycle. cpu_wrapper's own mux in front is two
   levels; the other 10-25 are inside TG68KdotC_Kernel, which is upstream. The
-  only lever left is row 6's: a registered return, one clk_114 cycle more on
-  every RAM read. Row 6 was judged on a single panel before the noise line was
-  measured (D/G better, C/F/H/L worse, median -0.524 -> -0.661). Retrying it is
-  a performance trade, not a timing fix, and is the owner's call.
+  only lever left is row 6's registered return (cpu_rdq). Row 6 was judged on a
+  single panel before the noise line was measured (D/G better, C/F/H/L worse,
+  median -0.524 -> -0.661).
+  [Corrected 2026-10-19: an earlier version of this note said cpu_rdq costs a
+  clk_114 cycle on every RAM read. It does not. It is a lookahead register --
+  each port hands over the value its return registers take at the next clock
+  -- and on every clk_sys edge, the only edges the CPU samples, it equals the
+  mux it replaces, which its bench checks. It changes no CPU-visible timing.]
 - **M -- ascal (16/20).** sys/ascal.vhd, the framework's scaler. Not ours to
   change; row 3 (disabling the adaptive filter) is the only lever and was
   rejected as a feature loss.
@@ -497,9 +505,8 @@ rules (cycle-exact, nothing upstream changed):
 
 The owner chose to stop after row 19. Row 6's registered RAM return (the only
 lever left on D/G) was offered for a re-run under the noise-line rules and
-declined: it costs a clk_114 cycle on every RAM read, a performance trade.
-It stays in the ledger as reverted, with the note above that its single-panel
-verdict predates the noise line.
+first declined on the strength of that wrong cost note (corrected above); the
+owner then asked for it anyway, which is row 20.
 
 The one closing build since the 10-17 sync is seed 35 of c496d5b1's panel
 (run 39175622637, setup +0.051, hold +0.234), the `core` artifact
@@ -513,3 +520,210 @@ since the CI artifact expires on 2026-11-02. Its fit.json reports all_setup
 -0.101: the family report takes the minimum over every corner (the slow -40 C
 one here), while the gate is the slow 100 C corner only, where it is +0.051.
 Not yet run on hardware.
+
+### cpu_rdq again (ad8aa2a7, row 20) -- reverted
+
+Run 39335315169, seeds 21-38, 41, 42, against d6f02c61's panel (run
+39192993535) on the same list:
+
+| family | d6f02c61 | + cpu_rdq |
+|---|---|---|
+| D / S (sdram data into the CPU) | -0.255 (20/20) | S +0.101 (6/20) |
+| G ddram data into the CPU | -0.211 (15/20) | +1.139 (0/20) |
+| C.sdram_cache | +0.510 | -0.129 (12/20) |
+| F.ddram_cache | -0.005 | -0.399 (20/20) |
+| H.ddram_ctrl | -0.105 | -0.596 (20/20) |
+| L.ss_ctrl_internal | -0.159 | -0.323 (19/20) |
+| M.ascal | -0.198 | -0.127 (12/20) |
+| all_setup median | -0.519 | **-0.728** |
+
+0/20 close; best seed 35 at -0.366. This is row 6's panel again, nearly
+family for family: the CPU input wall goes, and C, F and H -- the caches'
+output cones, which now also feed cpu_rdq's D input, and the DDR3 controller
+beside them -- each lose more than the 0.3 ns noise line. The median is worse
+by 0.21. Reverted in cf8f795c. Two fits of the
+same idea on two netlists agree, so this is not placement luck: do not try the
+registered RAM return a third time without a change that also takes load off
+the cache outputs.
+
+### Registered shadow readback (89e08f32, row 21) -- kept on the owner's call
+
+Run 39341492928 on 9bd03194 (row 20 reverted, with the 68030-no-MMU save
+state change, which is small and on the CPU side), seeds 21-38, 41, 42,
+against d6f02c61's panel:
+
+| family | d6f02c61 | row 21 |
+|---|---|---|
+| L.ss_ctrl_internal | -0.159 (14/20) | -0.275 (17/20) |
+| D sdram data into the CPU | -0.255 (20/20) | -0.243 (18/20) |
+| G ddram data into the CPU | -0.211 (15/20) | -0.279 (16/20) |
+| H.ddram_ctrl | -0.105 (14/20) | -0.292 (17/20) |
+| F.ddram_cache | -0.005 (10/20) | -0.147 (13/20) |
+| C.sdram_cache | +0.510 | +0.131 (6/20) |
+| M.ascal | -0.198 (16/20) | -0.047 (11/20) |
+| all_setup median | -0.519 | -0.582 |
+
+0/20 close; best seed 31 at -0.290. Every move is inside the 0.3 ns noise
+line, L's included, so by the rule this is "no change" and would be
+reverted. Kept because it replaces row 18's multicycle with registers: the
+readback no longer depends on a timing exception being right, and the
+equivalence is a bench (rtl/sim/regshadow, falsified four ways) rather than
+an argument in the SDC.
+
+### 40-seed sweep on c8103f94 (item 1) -- no seed closes; row 22's baseline
+
+Run 39375965435: the netlist with the 68030 MMU save state (format 1.5), row
+21 kept and the dead MAX_FANOUT lines removed, seeds 21-38, 41-62. No seed
+closes. Nearest: seed 47 at -0.009 (hold +0.155) and seed 61 at -0.072;
+then 31 (-0.226), 33 (-0.269), 56 (-0.308). Seeds 24 and 55 also failed hold
+(-0.559, -0.435), the first hold failures since row 19.
+
+| family | median | worst | seeds < 0 (of 40) |
+|---|---|---|---|
+| D sdram data into the CPU | -0.344 | -1.422 | 38 |
+| G ddram data into the CPU | -0.363 | -1.615 | 37 |
+| H.ddram_ctrl | -0.275 | -0.784 | 37 |
+| F.ddram_cache | -0.206 | -0.501 | 30 |
+| L.ss_ctrl_internal | -0.225 | -0.763 | 30 |
+| M.ascal | -0.025 | -0.502 | 22 |
+| C.sdram_cache | +0.348 | -0.362 | 4 |
+| all_setup | -0.518 | -1.615 | 40 |
+
+On the fixed panel list alone (seeds 21-38, 41, 42) the all_setup median is
+-0.556, 0/20 close: the figure row 22 is judged against. D and G are the
+CPU input wall again and the target of row 22. No QSF seed was set from this
+sweep, since row 22 changes the netlist.
+
+### Read gate and fast cache hits (d7823233, row 22) -- reverted
+
+Run 39383054413, seeds 21-38, 41, 42, against the same seeds of the c8103f94
+sweep (run 39375965435):
+
+| family | c8103f94 | row 22 |
+|---|---|---|
+| D sdram data into the CPU | -0.344 | -0.310 (16/20) |
+| G ddram data into the CPU | -0.363 | -0.233 (18/20) |
+| C.sdram_cache | +0.348 | -0.335 (19/20) |
+| F.ddram_cache | -0.206 | -0.520 (20/20) |
+| H.ddram_ctrl | -0.275 | -0.605 (20/20) |
+| L.ss_ctrl_internal | -0.225 | -0.448 (20/20) |
+| M.ascal | -0.025 | -0.345 (17/20) |
+| all_setup median | -0.556 | **-0.877** |
+
+0/20 close; best seed 23 at -0.450; seed 22 failed hold (-0.387). Reverted
+in the commit after this section's: every RTL, SDC and CI file is
+byte-identical to c8103f94 again.
+
+[Corrected 2026-10-20, from the artifacts: the multicycle DID apply -- no new
+332174 warnings, and on row 22's seed 34 the cpu_dat_r launches are gone from
+D/G, leaving only cpu_ack / cpu_ack_l paths at -0.015 / -0.009. On c8103f94,
+109 of the 120 worst D/G paths start at cpu_dat_r. So the gate worked; the
+panel was lost to the fast hit's cost in C, F, H and to placement, and with
+D/G set aside every c8103f94 seed is still 0.34-0.54 ns short in some other
+family. The paragraph below is the guess this replaces.]
+
+Two things went wrong. D and G hardly improved, which says the multicycle
+took little of them: what remains of D and G on this netlist was not the
+cpu_dat_r launches it names -- most likely the ack -> ready -> TG68K clock
+enable paths, which stayed single-cycle by design -- and that was not
+checked before building it (the family report puts every ram1/ram2 cache
+register into D/G, not only the data). And the fast hit put the tag compare
+into IDLE's next-state and cpu_dat_r's load enable, the same cache output
+cones cpu_rdq loaded (rows 6, 20), and C, F and H paid as they did then.
+
+Before trying the CPU input path again: split D and G by launch register
+(cpu_dat_r vs cpu_ack vs the rest) on a fit's family_paths report, so the
+change is aimed at what actually fails. The bench (rtl/sim/rdgate) and the
+module are in d7823233 for reuse.
+
+### Item 1 closed: SEED 47
+
+The netlist is c8103f94's again, so its 40-seed sweep stands: no seed
+closes, and seed 47 is the nearest at setup -0.009, hold +0.155. AmigaCD.qsf's
+SEED goes from 56 (-0.308 on this netlist) to 47. A local build with it
+misses timing by 9 ps at the slow 100 C corner -- not a closing build.
+releases/AmigaCD_20261019.rbf (seed 35 of c496d5b1, +0.051) remains the only
+closing bitstream; it predates the 68030 save states.
+
+### 85 C measurement (policy, not a design change) -- not adopted
+
+Run 39394305042: c8103f94's netlist with `MAX_CORE_JUNCTION_TEMP 85` instead
+of the device's 100 (1093bb7d, reverted straight after), seeds 21-38, 41, 42,
+against the same seeds at 100 C in run 39375965435:
+
+| | 100 C | 85 C |
+|---|---|---|
+| all_setup median | -0.556 | -0.402 |
+| best seed | 31, -0.226 | 21, -0.130 |
+| close | 0/20 | 0/20 |
+| D / G (CPU input) | -0.344 / -0.363 | -0.164 / -0.324 |
+| H.ddram_ctrl | -0.275 | -0.273 |
+| L.ss_ctrl_internal | -0.225 | -0.155 |
+
+The cooler corner buys about 0.15 ns of median (the fit also re-places, so
+family figures mix both effects), and no seed closes with it either. With
+seed 47 at -0.009 on the 100 C sweep, an 85 C bar would very likely pass
+that seed -- but adopting it means signing off on a junction never above
+85 C on every board, which is the owner's call, and on its own it does not
+make the design close. Left at 100 C.
+
+### Five save-state retiming banks removed (b80fca71, row 23) -- kept
+
+Run 39417638838, seeds 21-38, 41, 42, against the same seeds of the
+c8103f94 sweep:
+
+| family | c8103f94 | row 23 |
+|---|---|---|
+| D sdram data into the CPU | -0.344 (38/40) | -0.344 (19/20) |
+| G ddram data into the CPU | -0.363 | -0.405 (18/20) |
+| H.ddram_ctrl | -0.275 | -0.177 (17/20) |
+| F.ddram_cache | -0.206 | -0.100 (15/20) |
+| L.ss_ctrl_internal | -0.225 | -0.054 (11/20) |
+| M.ascal | -0.025 | -0.017 (10/20) |
+| C.sdram_cache | +0.348 | +0.379 (2/20) |
+| all_setup median | -0.556 | **-0.496** |
+
+0/20 close; best seed 27 at -0.039, then 22 (-0.185) and 41 (-0.259). No
+hold failures (worst +0.115), so the existing false paths do cover the
+crossings the banks used to re-time; the only 332174 warnings are the two
+pre-existing ones. Seed 27's fit: 48,441 registers (was 52,321) but
+34,913 ALMs (was 35,075, 83%) -- the flops were packed into ALMs that also
+carry logic, so the logic footprint barely moved. Removing registers is not
+the area lever this design needs; ALM-level logic is.
+
+Kept by the rule (median and H, L, F better, nothing clearly worse), with
+the caveat that each shift is inside the 0.3 ns placement noise. D and G
+are the wall again and untouched: row 22's gate is the proven fix for them,
+and its fast-hit half is what has to change.
+
+### The read gate, two ways (rows 24 and 25) -- both reverted
+
+Runs 39444091321 (row 24, 04926004) and 39445766384 (row 25, 406e0a62),
+seeds 21-38, 41, 42, against row 23 (run 39417638838). Medians are over the
+gate's per-seed setup figures.
+
+| | row 23 | row 24: gate only | row 25: gate + lean fast hit |
+|---|---|---|---|
+| median | -0.496 | -0.493 | -0.764 |
+| close | 0/20 | 0/20 | 0/20 |
+| best seed | 27, -0.039 | 38, -0.200 | 36, -0.236 |
+| D (sdram data into CPU) | -0.344 (19/20) | -0.100 (14/20) | -0.574 (19/20) |
+| G (ddram data into CPU) | -0.405 (18/20) | -0.026 (11/20) | -0.637 (19/20) |
+| C.sdram_cache | +0.379 | +0.100 | +0.176 |
+| F.ddram_cache | -0.100 | -0.087 | -0.058 |
+| H.ddram_ctrl | -0.177 | -0.209 | -0.265 |
+| L.ss_ctrl_internal | -0.054 | -0.096 | -0.231 |
+| TG68K reads a clk_sys later | -- | 44% (every hit) | ~9.5% |
+
+Row 24 does what it was built for -- D and G move by +0.24 and +0.38 ns --
+and the median does not move: with the CPU input wall down, each seed is held
+by H, L, F or M at about the same depth, as the D/G split predicted. Row 25's
+fast hit, even lean, puts D and G back behind where they started, so the
+early ack itself (tag compare -> ack -> the CPU's clock enable) is on the
+critical path, not only the loads row 22 gated. Neither closes a seed.
+
+Both reverted on the owner's call (2026-10-20): every RTL, SDC, QSF and CI
+file is byte-identical to row 23 (f8a30137) again. The gate (cpu_rdgate) and
+its bench stay in 04926004 / 406e0a62 for reuse; it is the proven fix for
+D and G, and worth bringing back only once the families behind them (H, L,
+F, M) have moved, since on its own it buys D and G but not a closing seed.

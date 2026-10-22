@@ -500,7 +500,7 @@ localparam SS_MAGIC   = 32'h53534341;
 // after it moved. A 1.3 file has no mask; the host upgrades one in memory
 // before it is uploaded (all entries marked written, which is what 1.3
 // replayed), so this core only ever reads 1.4. See minimig_savestate.cpp.
-localparam SS_VERSION = 32'h00010004;
+localparam SS_VERSION = 32'h00010005;   // bumped with ss_ctrl.v: a header constant, not what this copy is frozen for
 
 // Sized copies of CORE_WORDS for the comparisons on the restore path, so a
 // 24-bit counter and a 32-bit header word are each compared against something

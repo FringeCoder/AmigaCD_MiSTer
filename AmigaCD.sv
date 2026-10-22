@@ -545,6 +545,10 @@ wire        ss_cpu_halted;
 wire [31:0] ss_vbr;
 wire  [3:0] ss_cacr;
 wire  [2:0] ss_sfc, ss_dfc;
+wire  [6:0] ss_cacr_hi;
+wire [31:0] ss_mmu_tc, ss_mmu_tt0, ss_mmu_tt1;
+wire [63:0] ss_mmu_crp, ss_mmu_srp;
+wire [15:0] ss_mmu_sr;
 reg  [31:0] ss_cpu_d0, ss_cpu_d1, ss_cpu_d2, ss_cpu_d3;
 reg  [31:0] ss_cpu_d4, ss_cpu_d5, ss_cpu_d6, ss_cpu_d7;
 reg  [31:0] ss_cpu_a0, ss_cpu_a1, ss_cpu_a2, ss_cpu_a3;
@@ -890,6 +894,7 @@ wire        ss_fanout_sr_wr;
 wire        ss_fanout_usp_wr;
 wire        ss_fanout_vbr_wr;
 wire        ss_fanout_cacr_wr;
+wire        ss_fanout_mmu_wr;
 wire        ss_fanout_resume;
 wire  [3:0] ss_fanout_map_in;
 wire        ss_fanout_map_we;
@@ -915,12 +920,13 @@ wire [14:0] ss_restored_intreq;
 wire [190:0] ss_cia_a_raw;
 wire [202:0] ss_cia_b_raw;
 
-reg  [190:0] ss_cia_a;
-reg  [202:0] ss_cia_b;
-always @(posedge clk_114) begin
-	ss_cia_a <= ss_cia_a_raw;
-	ss_cia_b <= ss_cia_b_raw;
-end
+// [2026-10-20, row 23] No longer registered. AmigaCD.sdc false-paths every
+// clk_sys source into the serdes shifter, which covers these crossings as they
+// stand, and the 394 flops only bought what that exception already says: the
+// data is static while it is read. Removed for area -- the design is at 84%
+// of the ALMs and short of timing by about the same margin in every family.
+wire [190:0] ss_cia_a = ss_cia_a_raw;
+wire [202:0] ss_cia_b = ss_cia_b_raw;
 wire [190:0] ss_restored_cia_a;
 wire [202:0] ss_restored_cia_b;
 wire         ss_restored_cia_we;
@@ -934,12 +940,11 @@ wire         ss_restored_cia_we;
 // Safe for the same reason too. ss_state_out is loaded once and held, and the
 // fan-out does not pulse cia_we until step 22 of its sequence, so these have
 // been stable for twenty-odd cycles by the time anything samples them.
-reg  [190:0] ss_restored_cia_a_q;
-reg  [202:0] ss_restored_cia_b_q;
-always @(posedge clk_sys) begin
-	ss_restored_cia_a_q <= ss_restored_cia_a;
-	ss_restored_cia_b_q <= ss_restored_cia_b;
-end
+// [row 23] No longer registered either: the false path from ss_serdes
+// state_out into clk_sys covers these, and the CIAs take them on a pulse at
+// step 22 of the fan-out, twenty-odd cycles after state_out last moved.
+wire [190:0] ss_restored_cia_a_q = ss_restored_cia_a;
+wire [202:0] ss_restored_cia_b_q = ss_restored_cia_b;
 // Akiko, the same shape as the CIAs above and registered across the same
 // clock boundary for the same reason: akiko.v runs on clk_sys, ss_serdes
 // shifts on clk_114, and 1052 raw bits into one shift register is another few
@@ -950,13 +955,13 @@ end
 // granted -- see akiko.v's ss_idle); the restore side has been held stable for
 // twenty-odd cycles by the time the fan-out's akiko_we pulses at step 22.
 wire [`SS_AKIKO_W-1:0] ss_akiko_raw;
-reg  [`SS_AKIKO_W-1:0] ss_akiko;
-always @(posedge clk_114) ss_akiko <= ss_akiko_raw;
+// [row 23] Not registered, as for the CIAs above: 1052 flops for a crossing
+// the shifter's false path already covers.
+wire [`SS_AKIKO_W-1:0] ss_akiko = ss_akiko_raw;
 
 wire [`SS_AKIKO_W-1:0] ss_restored_akiko;
 wire                   ss_restored_akiko_we;
-reg  [`SS_AKIKO_W-1:0] ss_restored_akiko_q;
-always @(posedge clk_sys) ss_restored_akiko_q <= ss_restored_akiko;
+wire [`SS_AKIKO_W-1:0] ss_restored_akiko_q = ss_restored_akiko;   // [row 23] see the CIAs
 
 // Akiko has no DMA in flight and nothing staged. One of ss_quiesce's freeze
 // conditions; without it a snapshot taken mid-sector-ship would drop the
@@ -1158,6 +1163,13 @@ cpu_wrapper cpu_wrapper
 	.ss_cacr      (ss_cacr         ),
 	.ss_sfc       (ss_sfc          ),
 	.ss_dfc       (ss_dfc          ),
+	.ss_cacr_hi   (ss_cacr_hi      ),
+	.ss_mmu_tc    (ss_mmu_tc       ),
+	.ss_mmu_tt0   (ss_mmu_tt0      ),
+	.ss_mmu_tt1   (ss_mmu_tt1      ),
+	.ss_mmu_crp   (ss_mmu_crp      ),
+	.ss_mmu_srp   (ss_mmu_srp      ),
+	.ss_mmu_sr    (ss_mmu_sr       ),
 
 	// Restore write port into the TG68K register file, driven by
 	// ss_state_fanout at the bottom of this file. One shared data bus and one
@@ -1172,6 +1184,7 @@ cpu_wrapper cpu_wrapper
 	.ss_usp_wr    (ss_fanout_usp_wr  ),
 	.ss_vbr_wr    (ss_fanout_vbr_wr  ),
 	.ss_cacr_wr   (ss_fanout_cacr_wr ),
+	.ss_mmu_wr    (ss_fanout_mmu_wr  ),
 	.ss_resume    (ss_fanout_resume  ),
 	.fastramcfg   (memcfg[6:4]     ),
 	.bootrom      (bootrom         ),
@@ -1994,17 +2007,17 @@ wire       ss_load_req_osd = status[54];
 // is enough: save_busy (and therefore freeze, the CPU park and every port
 // takeover below) can only ever rise out of ss_ctrl's S_IDLE on save_req.
 //
-// *** 68030 lockout *** (since upstream 26eb46a). The 68030 is TG68K, but with
-// state the vector does not carry: the MMU (TC, TT0, TT1, CRP, SRP, MMUSR and
-// whatever the walker has cached), the upper CACR bits, CAAR, MSP and ISP. A
-// program that never touches the MMU would restore fine, but the save cannot
-// tell, and a restored machine with its translation tables gone is wrong in a
-// way that shows up wherever the program next takes a fault, not at the
-// restore. Same answer as fx68k: refused, not silently partial. Its Zorro III
-// fast RAM, which the payload has no section for, would be a second reason.
-//
-// "68030 no MMU" (upstream a5f1637) is refused as well: it has no MMU state,
-// but the rest of the list -- upper CACR, CAAR, MSP, ISP, Zorro III -- stands.
+// *** the 68030 *** Refused from upstream 26eb46a until 2026-10-19: the
+// 68030 is TG68K, but with state the vector did not carry -- the MMU (TC, TT0,
+// TT1, CRP, SRP, MMUSR and whatever the walker has cached), the upper CACR
+// bits, CAAR, MSP and ISP. Now the vector carries the MMU registers (format
+// 1.5) and the upper CACR bits (ss_cacr_hi), and the rest is what the 68020
+// has: MSP and ISP are covered by the master-stack refusal below and CAAR is
+// harmless to lose (below). The ATC and the walker are not saved; the restore
+// flushes them on ss_resume, on the same edge it loads the MMU registers, and
+// the restored tables repopulate the ATC on the next walk
+// (TG68KdotC_Kernel.vhd ss_mmu_wr, TG68K_MMU030.vhd ss_flush). Its Zorro III
+// fast RAM keeps its own refusal, below.
 //
 // The 68020 has MSP and ISP too (upstream 894266e). It is not refused for
 // them outright, because AmigaOS never uses the master stack; a save is
@@ -2022,8 +2035,7 @@ wire       ss_load_req_osd = status[54];
 // The OSD already refuses it (menu.cpp, minimig_ss_blocked); this is the core
 // not relying on that. The decode is cpu_wrapper's ac_memcard and fast_ena's
 // below: memcfg[6] is a Zorro III board exactly when cpu_type & ~ec020.
-wire ss_supported   = (cpucfg[1:0] != 2'b00) & (cpucfg[1:0] != 2'b10)
-                    & ~(cpu_type & ~ss_ec020 & memcfg[6]);
+wire ss_supported   = (cpucfg[1:0] != 2'b00) & ~(cpu_type & ~ss_ec020 & memcfg[6]);
 // A save is refused, at the request, once the 68020's master stack has been in
 // use since reset: MSP and ISP are not in the vector, so such a save would
 // restore with whatever stacks the running machine has. AmigaOS never sets M,
@@ -2700,7 +2712,9 @@ always @(posedge clk_114) begin
 	else if (ss_state_we)    ss_fanout_req <= 1'b1;
 end
 
-// The vector, retimed into clk_sys.
+// The vector into clk_sys. Retimed here from 2026-10-01 until row 23 removed
+// the vector bank (2026-10-20, see the note at the end); the history is kept
+// because it is why the SDC false path exists.
 //
 // It used to go to the fan-out raw, on the argument that ss_serdes holds
 // state_out in a register until the next load and so needs no latch of its
@@ -2739,13 +2753,19 @@ end
 // this flop becomes the only thing keeping a back-to-back restore off the
 // previous vector.
 //
-// Cost is `SS_STATE_W` flops, 2099 of them, and one clk_sys cycle of extra
+// Cost is `SS_STATE_W` flops, 2346 of them, and one clk_sys cycle of extra
 // latency on a 23-cycle sequence that is followed by a million SDRAM word
 // writes (see the ORDERING NOTE below).
-reg [`SS_STATE_W-1:0] ss_state_out_q;
+// [2026-10-20, row 23] The vector half of this bank is gone: AmigaCD.sdc
+// false-paths ss_serdes state_out into clk_sys, so the bank re-timed a crossing
+// that is not timed, for 2346 flops, and the comment above already records that
+// a retiming flop does not fix the coincident-edge hold check. state_out is
+// loaded with ss_state_we and held until the next restore, so the fan-out reads
+// a vector that was stable a full clk_sys before the request reaches it.
+// rtl/sim/ssfanout's raw arm is this wiring. The request keeps its flop.
+wire [`SS_STATE_W-1:0] ss_state_out_q = ss_state_out;
 reg                   ss_fanout_req_q;
 always @(posedge clk_sys) begin
-	ss_state_out_q  <= ss_state_out;
 	ss_fanout_req_q <= ss_fanout_req;
 end
 
@@ -2773,6 +2793,7 @@ ss_state_fanout #(.STATE_W(`SS_STATE_W)) ss_fanout
 	.cpu_usp_wr   (ss_fanout_usp_wr),
 	.cpu_vbr_wr   (ss_fanout_vbr_wr),
 	.cpu_cacr_wr  (ss_fanout_cacr_wr),
+	.cpu_mmu_wr   (ss_fanout_mmu_wr),
 	.cpu_resume   (ss_fanout_resume),
 
 	.map_in       (ss_fanout_map_in),

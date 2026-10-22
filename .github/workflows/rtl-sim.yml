@@ -235,6 +235,9 @@ jobs:
       # skewed by a cycle -- at all four clk_sys phases, all required to agree.
       # The retiming is three lines in a file no bench compiles, and what it
       # changes is which vector a restore acts on, which no timing report sees.
+      # Also checks the eight MMU register writes (format 1.5) carry TC, TT0,
+      # TT1, CRP, SRP and MMUSR at the kernel's indices; CRP's halves swapped
+      # and the index off by one each fail it (2026-10-19).
       - name: Restore fan-out vector retiming
         run: |
           set -euo pipefail
@@ -354,13 +357,14 @@ jobs:
       # change mid-transfer. Falsified on 2026-10-18: following fast_ena live
       # fails it ~100k times.
       #
-      # Third, it backs AmigaCD.sdc's multicycle from shadow_rd_addr into
-      # ss_ctrl: at every read of shadow_rd_data (S_SHADOW_LOW's last hold
-      # cycle, S_SHADOW_Q) the address must have been on the port for at least
-      # the 2 clk_114 cycles the SDC grants; it reports the shortest (6) and
-      # fails on zero reads. Falsified on 2026-10-19: S_SHADOW_LOW going
+      # Third, it checks the shadow readback's address age: at every read of
+      # shadow_rd_data (S_SHADOW_LOW's last hold cycle, S_SHADOW_Q) the address
+      # must have been on the port for at least 5 clk_114 cycles (up to 4 to
+      # reach a clk_sys edge, where ss_regshadow registers the read, and one
+      # more for the value to arrive); it reports the shortest (6)
+      # and fails on zero reads. Falsified on 2026-10-19: S_SHADOW_LOW going
       # straight to S_SHADOW_Q (a read 1 clock after the address moves), and a
-      # claimed multicycle of 7, each fail it.
+      # required age of 7, each fail it.
       - name: Save-state port claim register matches freeze | peek_scan (tb_ss_port_own.sv)
         run: |
           set -euo pipefail
@@ -392,6 +396,24 @@ jobs:
           iverilog -g2012 -o tb tb_ciab_lookahead_equiv.sv ../../amiga_clk.v ../../ciab.v ../../cia_timera.v ../../cia_timerb.v ../../cia_int.v ../../cia_timerd.v ciab_ref.v cia_timera_ref.v cia_timerb_ref.v
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
+
+      # ss_regshadow's readback is registered end to end: the set/clear select
+      # (DMACON/INTENA/ADKCON), which was combinational on rd_addr, now loads on
+      # the same clk_sys edge as the array read. As a comb path it ran from
+      # ss_ctrl's shadow_rd_addr straight back into ss_ctrl and was L's worst
+      # path (AmigaCD.sdc carried a multicycle for it, now removed). This
+      # compares the module with the previous version (frozen as
+      # ss_regshadow_ref.v): every other output on every clock, and rd_data on
+      # every clock where the address and the three registers held across the
+      # last edge, which is what ss_ctrl's frozen, held-address readback
+      # guarantees. Coverage counters fail on zero. Falsified on 2026-10-19:
+      # DMACON for every set/clear entry, the select dropped, the select taken
+      # from the replay walk's address, and the value a clock late each fail it
+      # (also in rtl/sim/run-mutations.py).
+      - name: Shadow readback register matches the comb select it replaced (tb_ss_regshadow_rd_equiv.sv)
+        run: |
+          set -euo pipefail
+          bash rtl/sim/regshadow/run.sh
 
       # drive_sounds registers the DDR3 read data (dd_q) before its 4:1 sample
       # select, because the HPS port's readdata straight into smp missed setup
@@ -856,6 +878,10 @@ jobs:
       # PHASE 6: SFC and DFC, in the state vector since 2026-10-18, show on the
       # capture export after MOVEC and come back on the restore's CACR write.
       # Falsified: SFC not restored, and SFC/DFC swapped, each fail it.
+      # PHASE 7: the rest of CACR (ss_cacr_hi: the 68030's bits 4, 8, 9, 12, 13
+      # and the D-cache heuristic pair), in the vector since 2026-10-19. Falsified
+      # on the 68030 run below: the restore's 68030 mask dropped, CACR_DC_owned
+      # not restored, and two export bits swapped each fail it.
       #
       # Runs from the repo root: the testbench opens its program image by a
       # path relative to the working directory.
@@ -863,6 +889,32 @@ jobs:
         run: |
           set -euo pipefail
           bash rtl/sim/tg68k/run.sh
+
+      # The same bench with the kernel as cpu_wrapper runs it for "68030 no
+      # MMU" (CPU030 high, MMU030 low), which save states are allowed on since
+      # 2026-10-19. The whole freeze-point scan runs again on the 68030 decode,
+      # and PHASE 7 checks the 68030 half of the CACR restore: its upper bits
+      # come back and bits 3:2, clear strobes there, are masked as MOVEC masks
+      # them. Its own work directory, so the two elaborations do not collide.
+      - name: TG68K savestate restore, 68030 no MMU
+        run: |
+          set -euo pipefail
+          WORKDIR=build/ghdl030 bash rtl/sim/tg68k/run.sh -gCPU030_G=1
+
+      # And the 68030 with its MMU (MMU030 high), which save states carry since
+      # format 1.5. The freeze-point scan runs a third time, and PHASE 8 runs:
+      # two page tables, a machine whose ATC holds a mapping that the restored
+      # machine's tables contradict, and the restored machine must read through
+      # the restored tables. That needs the MMU registers to arrive (through
+      # the kernel's stage, applied on ss_resume) AND the ATC to be flushed --
+      # the ATC is not keyed by the root pointer. Falsified on 2026-10-19: the
+      # ATC flush removed, the stage never applied, the MMU written straight
+      # rather than staged, and CRP exported from SRP each fail the check that
+      # names them.
+      - name: TG68K savestate restore, 68030 with MMU
+        run: |
+          set -euo pipefail
+          WORKDIR=build/ghdlmmu bash rtl/sim/tg68k/run.sh -gCPU030_G=1 -gMMU_G=1
 
       # The save state register bus through the real minimig: the snoop tap,
       # the replay mux, the replay's register-decode tick and the memory map

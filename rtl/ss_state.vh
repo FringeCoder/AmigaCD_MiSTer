@@ -58,7 +58,8 @@
 //
 // Not an oversight, a budget. SS_STATE_W was 2093 and STATE_WORDS rounds it to
 // 66 words = 2112 bits, so there were 19 bits of free padding to grow into
-// before the state section lengthens (13 since SFC/DFC took 6, below). The
+// before the state section lengthens (13 since SFC/DFC took 6, 6 since
+// ss_cacr_hi took 7, below). The
 // list above is 23 bits, which does not fit -- and lengthening the section moves every section after it, which
 // is the 1.2 case in ss_ctrl.v's version notes and would refuse every save
 // file already on disk.
@@ -80,7 +81,28 @@
 // section length (STATE_WORDS, 66) is unchanged, a save file written before
 // restores with SFC = DFC = 0, and one written now is read by an older core
 // with the two fields ignored. No format version change for that reason.
+//
+// ss_cacr_hi (7 bits: the 68030's CACR bits 4, 8, 9, 12, 13 and the D-cache
+// heuristic's CACR_DC / CACR_DC_owned) was added 2026-10-19 the same way, ahead
+// of SFC/DFC, for the 68030 without its MMU. A file written before restores
+// all seven as zero: no 68030 upper bits, which is right for every file a core
+// that refused the 68030 could have written, and the heuristic at its reset
+// value (not owned, D-cache on). 6 bits of padding are left.
+//
+// The 68030's MMU registers (format 1.5, 2026-10-19): TC, TT0, TT1 (32 each),
+// CRP and SRP (64 each) and MMUSR (16), 240 bits. They do not fit the padding,
+// so the state section grows from 66 words to 74 and every section after it
+// moves, which is a format version (ss_ctrl.v, 1.5). Put at the front for the
+// same reason as the fields above: the extra words land at the END of the
+// state section, so the host upgrades a 1.4 file by inserting eight zero words
+// there (minimig_savestate.cpp), and zero is a machine with no translation --
+// which is what every 1.4 file describes, since 1.4 refused the 68030's MMU.
+// The ATC and the table walker are not saved: the restore flushes them
+// (TG68K_MMU030.vhd, ss_flush), and a walk repopulates the ATC from the
+// restored tables.
 `define SS_STATE_LIST { \
+	ss_mmu_sr, ss_mmu_tt1, ss_mmu_tt0, ss_mmu_srp, ss_mmu_crp, ss_mmu_tc, \
+	ss_cacr_hi, \
 	ss_sfc, ss_dfc, \
 	ss_cpu_d0, ss_cpu_d1, ss_cpu_d2, ss_cpu_d3, \
 	ss_cpu_d4, ss_cpu_d5, ss_cpu_d6, ss_cpu_d7, \
@@ -126,7 +148,7 @@
 // directions take it from here, so the choice is free; the length is not,
 // and it changes with this.
 
-// SFC + DFC (3 each) + 16 registers + PC + USP + VBR (32 each) + SR (16) + CACR (4) + 4 map bits
+// MMU (16 + 32 + 32 + 64 + 64 + 32) + CACR hi (7) + SFC + DFC (3 each) + 16 registers + PC + USP + VBR (32 each) + SR (16) + CACR (4) + 4 map bits
 // + INTREQ (15) + CIA A (191) + CIA B (203) + Akiko (1052)
 // The CIAs, by value: 191 bits for CIA A and 203 for CIA B. Both sit on the
 // CPU bus, invisible to the chipset register shadow, and cannot be read back
@@ -134,6 +156,6 @@
 // pending interrupts, reading TOD moves its latch. ciaa.v and ciab.v carry the
 // bit layouts; the widths are stated there and here and nowhere else.
 
-`define SS_STATE_W (3 + 3 + 16*32 + 32 + 32 + 32 + 16 + 4 + 4 + 15 + 191 + 203 + `SS_AKIKO_W)
+`define SS_STATE_W (240 + 7 + 3 + 3 + 16*32 + 32 + 32 + 32 + 16 + 4 + 4 + 15 + 191 + 203 + `SS_AKIKO_W)
 
 `endif

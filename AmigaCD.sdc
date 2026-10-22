@@ -136,29 +136,18 @@ set ss_clksys [get_clocks "emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter\[1
 # Capture: clk_sys state sources into the serdes shift register.
 set_false_path -from $ss_clksys -to {*ss_serdes*|shifter[*]}
 
-# Restore: the held vector out to its clk_sys consumers (ss_state_out_q, and
-# whatever else unpacks it).
+# Restore: the held vector out to its clk_sys consumers -- the fan-out, the
+# CIAs and Akiko directly since row 23 removed the clk_sys banks in between.
 set_false_path -from {*ss_serdes*|state_out[*]} -to $ss_clksys
 
 # Restore: ss_ctrl's chipset-shadow replay bus into ss_regshadow, which is
 # clk_sys. Same vector, same freeze, carried on its own bus.
 set_false_path -from {*ss_ctrl*|shadow_ld_data[*]} -to $ss_clksys
 
-# Capture: the CIA words' clk_114 retiming registers (AmigaCD.sv, ss_cia_a /
-# ss_cia_b). They were added to move the CIAs' crossing off the shifter, and
-# they take the same coincident-edge hold check the shifter did: -0.569 at
-# seed 4 after upstream 26eb46a moved the placement, CIAA1|sdr_latch[5] ->
-# ss_cia_a[25]. Their only consumer is the state vector (ss_state.vh), read
-# inside the freeze, so the argument above covers them word for word.
-set_false_path -from $ss_clksys -to {emu|ss_cia_a[*] emu|ss_cia_b[*]}
-
-# Capture: Akiko's clk_114 retiming register (AmigaCD.sv, ss_akiko), the same
-# shape as the CIAs' and added for the same reason. It took the same hold check
-# once 26eb46a moved the placement: -0.198 at seed 1 and -0.077 at seed 8,
-# akiko|g_cd.cdrom_result_buffer -> ss_akiko[718] / [671]. Its only consumer is
-# the state vector (ss_state.vh), and Akiko is required idle before the freeze
-# is granted (akiko.v ss_idle), so its state is static while the vector is read.
-set_false_path -from $ss_clksys -to {emu|ss_akiko[*]}
+# The CIA and Akiko capture registers (ss_cia_a/b, ss_akiko) had their own
+# false paths here. They were removed on 2026-10-20 (row 23, for area): the
+# CIA and Akiko words now go into the shifter raw, under the shifter's false
+# path above, which is what those registers' exceptions said anyway.
 
 set_false_path -from {emu|cpu_wrapper|z3ram_*}
 set_false_path -from {emu|cpu_wrapper|z2ram_*}
@@ -282,18 +271,13 @@ set_false_path -from {*a2065_ddr3_mailbox*|bram_resp_data[*]} -to {*a2065_ddram*
 # rejected by the pick job, which is the correct outcome.
 set_false_path -from {*a2065_ddr3_mailbox*|a2065_int2}       -to {*a2065_inst|int2_s1}
 
-# ss_ctrl's shadow readback: shadow_rd_addr out to ss_regshadow, whose rd_data
-# is combinational on it (a set/clear decode and a mux over 256 entries), and
-# back into ss_ctrl. ss_ctrl reads shadow_rd_data in two places, S_SHADOW_LOW's
-# last hold cycle and S_SHADOW_Q, and the address is held SS_HOLD_MAX+1 cycles
-# before either because ss_regshadow registers its array read on clk_sys: the
-# shortest the address is ever on the port at a read is 6 clk_114 cycles.
-# shadow_rd_addr is not read inside ss_ctrl, so every path from it to an
-# ss_ctrl register goes through that read. Timed as one cycle it was L's worst
-# path, -2.960 on seed 35 of run 39186900101. rtl/sim/ssown checks the address
-# age at every read against the 2 granted here and fails under it.
-set_multicycle_path -from {emu|savestate|shadow_rd_addr*} -to {emu|savestate|*} -setup 2
-set_multicycle_path -from {emu|savestate|shadow_rd_addr*} -to {emu|savestate|*} -hold 1
+# ss_ctrl's shadow readback needs no exception. It carried a multicycle from
+# shadow_rd_addr into ss_ctrl while ss_regshadow's set/clear select was
+# combinational on the address (L's worst path, -2.960 on seed 35 of run
+# 39186900101); ss_regshadow now registers that select with its array read, so
+# shadow_rd_addr reaches only clk_sys registers there and rd_data comes only from
+# registers. rtl/sim/regshadow proves the registered read equal at every point
+# ss_ctrl could sample it.
 
 # clk_114 -> clk_sys: the save-state diagnostics' 2-FF synchroniser in
 # AmigaCD.sv. ss_dbg_meta is its first stage, taking a 64-bit vector of ss_ctrl

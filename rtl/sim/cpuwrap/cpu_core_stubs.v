@@ -74,6 +74,13 @@ module TG68KdotC_Kernel
 	output            ss_halted,
 	output      [2:0] ss_sfc,
 	output      [2:0] ss_dfc,
+	output      [6:0] ss_cacr_hi,
+	output     [31:0] ss_mmu_tc,
+	output     [31:0] ss_mmu_tt0,
+	output     [31:0] ss_mmu_tt1,
+	output     [63:0] ss_mmu_crp,
+	output     [63:0] ss_mmu_srp,
+	output     [15:0] ss_mmu_sr,
 
 	input       [3:0] ss_wr_index,
 	input      [31:0] ss_wr_data,
@@ -83,6 +90,7 @@ module TG68KdotC_Kernel
 	input             ss_usp_wr,
 	input             ss_vbr_wr,
 	input             ss_cacr_wr,
+	input             ss_mmu_wr,
 	input             ss_resume
 );
 
@@ -130,6 +138,13 @@ module TG68KdotC_Kernel
 	assign ss_halted      = 1'b0;
 	assign ss_sfc         = 3'd0;
 	assign ss_dfc         = 3'd0;
+	assign ss_cacr_hi     = 7'd0;
+	assign ss_mmu_tc      = 32'd0;
+	assign ss_mmu_tt0     = 32'd0;
+	assign ss_mmu_tt1     = 32'd0;
+	assign ss_mmu_crp     = 64'd0;
+	assign ss_mmu_srp     = 64'd0;
+	assign ss_mmu_sr      = 16'd0;
 
 endmodule
 

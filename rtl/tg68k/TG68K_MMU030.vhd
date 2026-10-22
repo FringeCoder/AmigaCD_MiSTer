@@ -7,6 +7,14 @@ entity TG68K_MMU030 is
 		clk        : in  std_logic;
 		reset      : in  std_logic;
 		k_ena      : in  std_logic;
+		-- Save state restore: the kernel's ss_resume. Flushes the ATC and puts
+		-- the walker back where reset puts it, on the edge the kernel loads the
+		-- restored MMU registers. The ATC describes the machine being replaced,
+		-- and its own flushes (PMOVE, PFLUSH) need k_ena, which is low for the
+		-- whole restore; reset does not clear it at all. A walk the old machine
+		-- left parked mid-fetch is abandoned the same way, so it can never
+		-- complete into the restored one.
+		ss_flush   : in  std_logic := '0';
 
 		tc         : in  std_logic_vector(31 downto 0);
 		crp        : in  std_logic_vector(63 downto 0);
@@ -256,10 +264,10 @@ begin
 	begin
 		if rising_edge(clk) then
 			mmusr_we <= '0';
-			if reset = '1' or f_ack = '1' then
+			if reset = '1' or f_ack = '1' or ss_flush = '1' then
 				f_hold <= '0';
 			end if;
-			if reset = '1' then
+			if reset = '1' or ss_flush = '1' then
 				st <= S_IDLE;
 				xv <= '0';
 				c_act <= '0';
@@ -645,6 +653,10 @@ begin
 					end if;
 
 				end case;
+			end if;
+			-- After the case, so it wins over a fill in the same clock.
+			if ss_flush = '1' then
+				a_v <= (others => '0');
 			end if;
 		end if;
 	end process;
