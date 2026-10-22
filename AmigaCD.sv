@@ -1062,6 +1062,7 @@ wire [15:0] ram_dout;
 wire        ram_ready;
 wire [15:0] ram_dout_hi_cpu;
 wire        ram_ready_l_cpu;
+wire        ram_ready_fx;
 wire        zram_sel  = |ram_addr[28:26];
 wire        ram_l1;
 wire [15:0] ram_din_lo;
@@ -1079,6 +1080,7 @@ cpu_rdgate cpu_rdgate
 	.dout_hi_in (ram_dout2_hi),
 	.ready      (ram_ready),
 	.ready_l    (ram_ready_l_cpu),
+	.ready_fx   (ram_ready_fx),
 	.dout       (ram_dout),
 	.dout_hi    (ram_dout_hi_cpu)
 );
@@ -1221,6 +1223,7 @@ cpu_wrapper cpu_wrapper
 	.ramdout      (ram_dout        ),
 	.ramdin       (ram_din         ),
 	.ramready     (ram_ready       ),
+	.ramready_fx  (ram_ready_fx    ),
 	.ramshared    (ramshared       ),
 	.ramlong1     (ram_l1          ),
 	.ramdin_lo    (ram_din_lo      ),

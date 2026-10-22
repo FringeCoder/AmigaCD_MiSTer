@@ -143,7 +143,8 @@ module cpu_wrapper
 	output     [28:1] ramaddr,
 	output     [15:0] ramdin,
 	input      [15:0] ramdout,
-	input             ramready,
+	input             ramready,       // the TG68K's (cpu_rdgate: registered terms)
+	input             ramready_fx,    // the fx68k's, raw: its DTACK only
 	output            ramlds,
 	output            ramuds,
 	output            ramshared,
@@ -467,7 +468,7 @@ fx68k cpu_inst_o
 	.ASn(as_o),
 	.LDSn(lds_o),
 	.UDSn(uds_o),
-	.DTACKn(ramsel ? ~ramready : chip_dtack),
+	.DTACKn(ramsel ? ~ramready_fx : chip_dtack),
 
 	.FC0(fc_o[0]),
 	.FC1(fc_o[1]),

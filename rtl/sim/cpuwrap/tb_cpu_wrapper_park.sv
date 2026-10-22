@@ -89,7 +89,7 @@ module tb_cpu_wrapper_park;
 		.fastchip_selack(fastchip_selack), .fastchip_ready(fastchip_ready),
 
 		.ramsel(ramsel), .ramaddr(), .ramdin(), .ramdout(16'd0),
-		.ramready(ramready), .ramlds(), .ramuds(), .ramshared(),
+		.ramready(ramready), .ramready_fx(ramready), .ramlds(), .ramuds(), .ramshared(),
 
 		.toccata_ena(), .toccata_base(), .a2065_ena(), .a2065_base(),
 

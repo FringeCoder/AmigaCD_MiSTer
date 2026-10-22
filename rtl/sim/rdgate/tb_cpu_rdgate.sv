@@ -14,7 +14,9 @@
 //   C. the word the CPU takes is the word that was there when ack rose.
 //   D. the ready the CPU sees, read or write, is ack one clk_114 late inside
 //      an unbroken select (cs & cs_q): registered terms only (row 30).
-//   E. with fx68k running (en low) every output is its input, on every clock.
+//   E. with fx68k running (en low) the data and ready_fx (its DTACK) are their
+//      inputs, on every clock. The TG68K's ready and ready_l are the
+//      registered v whatever en is (row 31): nothing reads them then.
 //   F. no ready without an ack inside the current select -- the previous
 //      request's ack never completes the next one.
 //
@@ -66,11 +68,11 @@ wire        raw_ready   = zram_sel ? ram_ready2 : ram_ready1;
 wire        raw_ready_l = zram_sel & ram_ready2_l;
 
 wire [15:0] cpu_dout, cpu_dout_hi;
-wire        cpu_ready, cpu_ready_l;
+wire        cpu_ready, cpu_ready_l, cpu_ready_fx;
 cpu_rdgate dut (
 	.clk(clk_114), .en(en), .cs(ram_cs),
 	.ready_in(raw_ready), .ready_l_in(raw_ready_l), .dout_in(raw_dout), .dout_hi_in(ram_dout2_hi),
-	.ready(cpu_ready), .ready_l(cpu_ready_l), .dout(cpu_dout), .dout_hi(cpu_dout_hi));
+	.ready(cpu_ready), .ready_l(cpu_ready_l), .ready_fx(cpu_ready_fx), .dout(cpu_dout), .dout_hi(cpu_dout_hi));
 
 always @(posedge clk_114) begin
 	cyc <= (phase == 3);
@@ -251,9 +253,10 @@ task new_access;
 	end
 endtask
 
-// As in rtl/sim/rdq: not while ddram_ctrl is still taking a forwarded SDRAM
-// read, an upstream hazard outside this change.
-wire fwd_busy = (ram2.state == 6) || (ram2.state == 7);
+// As in rtl/sim/rdq this held new accesses off while ddram_ctrl took a
+// forwarded SDRAM read (states 6 and 7). Upstream ec1353dc removed that path;
+// kept as a constant so the scheduling below reads as before.
+wire fwd_busy = 1'b0;
 
 integer rd_takes = 0, l_takes = 0, wr_takes = 0, delayed = 0, mode_moves = 0;
 reg     raw_seen = 0;   // raw ready was already up at the previous clk_sys edge
@@ -268,7 +271,7 @@ always @(posedge clk_sys) if (reset_n) begin
 		end
 		raw_seen <= 0;
 	end
-	else if (cpu_ready) begin
+	else if (en ? cpu_ready : cpu_ready_fx) begin   // the fx68k's DTACK takes ready_fx
 		if (cpu_state == 2'd3) wr_takes <= wr_takes + 1;
 		else begin
 			rd_takes <= rd_takes + 1;
@@ -384,7 +387,7 @@ always @(posedge clk_114) if (reset_n && cyc_n > 4) begin
 	end
 	else begin
 		n_en0 = n_en0 + 1;
-		if ({cpu_dout, cpu_dout_hi, cpu_ready, cpu_ready_l} !== {raw_dout, ram_dout2_hi, raw_ready, raw_ready_l})
+		if ({cpu_dout, cpu_dout_hi, cpu_ready_fx} !== {raw_dout, ram_dout2_hi, raw_ready})
 			fail(fe, "E: fx68k path not transparent");
 	end
 	// C: at a clk_sys edge the CPU takes a read on, it gets the word from ack

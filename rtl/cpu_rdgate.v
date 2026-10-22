@@ -42,9 +42,16 @@
 // at ack_q, cs and cs_q. rtl/sim/rdgate proves, against the real controllers,
 // the data stable under v and v never true without an ack inside the select.
 //
-// en is low when fx68k runs (cpucfg[1:0] == 0), and then every output is its
-// input: the 68000's timing does not move, and the multicycle names only the
-// TG68K.
+// The TG68K's ready and long ready are v and v_l UNCONDITIONALLY. Row 30 gave
+// them an en mux for the fx68k's sake (en ? v : ready_in), and timing analysis
+// times both inputs of a mux whatever en is: the live ack still reached the
+// TG68K through the en = 0 side (seed 41: cpu_ack_l -> long_ack -> data_read
+// -> opcode, -1.274). en is static while the machine runs, so the fx68k gets
+// the raw ready on an output of its own, ready_fx, which cpu_wrapper wires to
+// its DTACK and nothing else: the 68000's timing does not move. When the TG68K
+// is not running nothing reads its ready. The data is ANDed with ~en | v, so
+// with the fx68k running it passes as it is; en comes from the CPU config,
+// whose paths are false (AmigaCD.sdc). Row 31.
 module cpu_rdgate
 (
 	input             clk,         // clk_114
@@ -56,8 +63,9 @@ module cpu_rdgate
 	input      [15:0] dout_in,
 	input      [15:0] dout_hi_in,
 
-	output            ready,
-	output            ready_l,
+	output            ready,       // TG68K
+	output            ready_l,     // TG68K, long word
+	output            ready_fx,    // fx68k: the raw ready, for its DTACK only
 	output     [15:0] dout,
 	output     [15:0] dout_hi
 );
@@ -75,8 +83,9 @@ wire v   = ready_q   & cs & cs_q;
 wire v_l = ready_l_q & cs & cs_q;
 wire g   = ~en | v;
 
-assign ready   = en ? v   : ready_in;
-assign ready_l = en ? v_l : ready_l_in;
+assign ready    = v;
+assign ready_l  = v_l;
+assign ready_fx = ready_in;
 assign dout    = dout_in    & {16{g}};
 assign dout_hi = dout_hi_in & {16{g}};
 
