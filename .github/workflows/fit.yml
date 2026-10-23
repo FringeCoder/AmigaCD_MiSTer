@@ -29,6 +29,13 @@ on:
         description: 'Comma-separated placement seeds. Empty: the seed in AmigaCD.qsf.'
         required: false
         default: ''
+      # A panel compares two changes; the build date is a netlist input that
+      # moves every seed (scripts/ci-fit.sh says how much), so both panels of
+      # a comparison must carry the same one. Empty: today's, as a release.
+      build_date:
+        description: 'Pin the build date (yymmdd) so panels on different days compare. Empty: today.'
+        required: false
+        default: ''
   workflow_call:
     inputs:
       seeds:
@@ -95,6 +102,8 @@ jobs:
         run: docker pull theypsilon/quartus-lite-c5:17.0.2.docker1
 
       - name: Fit seed ${{ matrix.seed }}
+        env:
+          BUILD_DATE: ${{ inputs.build_date }}
         run: ./scripts/ci-fit.sh AmigaCD "${{ matrix.seed }}"
 
       # The reports are what a timing failure is read from, so they travel

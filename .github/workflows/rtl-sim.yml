@@ -415,6 +415,28 @@ jobs:
           set -euo pipefail
           bash rtl/sim/regshadow/run.sh
 
+      # The TG68K takes a RAM read only once the data under it is two clk_114
+      # periods old (AmigaCD.sv's cpu_rdgate: ready = ack one clk_114 late
+      # inside an unbroken select, registered terms only, and data ANDed with
+      # it), which is what AmigaCD.sdc's multicycle from the caches' read data
+      # registers into the TG68K rests on. Runs the real sdram_ctrl and
+      # ddram_ctrl under AmigaCD.sv's handshake, in all three CPU modes, plus
+      # two standalone caches on random inputs: data stable under the gate and
+      # the ack still up (A), zero outside it (B), the taken word is the ack
+      # word (C), ready exactly ack_q & cs & cs_q for reads and writes (D),
+      # fx68k untouched (E), no ready without an ack inside the current select
+      # (F), a fast hit's word equal to what READ would have loaded (G, behind
+      # FAST_HIT). Coverage counters fail on zero. Falsified on 2026-10-20: the
+      # gate without the delayed ack (B), ready not delayed (C, D), the fast
+      # path without its RAM-write guard, without its address compare, on a
+      # miss (G), and the cache reloading its data in WAIT (A). On 2026-10-22,
+      # for row 30: the gate without cs_q fails F (a ready on the previous
+      # request's ack) and A, without cs fails A.
+      - name: CPU read return gate and fast cache hits (tb_cpu_rdgate.sv)
+        run: |
+          set -euo pipefail
+          bash rtl/sim/rdgate/run.sh
+
       # drive_sounds registers the DDR3 read data (dd_q) before its 4:1 sample
       # select, because the HPS port's readdata straight into smp missed setup
       # in 4 of 58 seeds. That costs one clock per read; this proves the module
@@ -890,31 +912,24 @@ jobs:
           set -euo pipefail
           bash rtl/sim/tg68k/run.sh
 
-      # The same bench with the kernel as cpu_wrapper runs it for "68030 no
-      # MMU" (CPU030 high, MMU030 low), which save states are allowed on since
-      # 2026-10-19. The whole freeze-point scan runs again on the 68030 decode,
-      # and PHASE 7 checks the 68030 half of the CACR restore: its upper bits
-      # come back and bits 3:2, clear strobes there, are masked as MOVEC masks
-      # them. Its own work directory, so the two elaborations do not collide.
-      - name: TG68K savestate restore, 68030 no MMU
+      # The 68030, which always has its MMU since upstream ec1353dc (the
+      # "68030 no MMU" variant of 2026-10-19 is gone, and with it the bench's
+      # second 68030 run). The whole freeze-point scan runs again on the 68030
+      # decode; PHASE 7 checks the 68030 half of the CACR restore -- its upper
+      # bits come back and bits 3:2, clear strobes there, are masked as MOVEC
+      # masks them; and PHASE 8 runs: two page tables, a machine whose ATC
+      # holds a mapping that the restored machine's tables contradict, and the
+      # restored machine must read through the restored tables. That needs the
+      # MMU registers to arrive (through the kernel's stage, applied on
+      # ss_resume) AND the ATC to be flushed -- the ATC is not keyed by the
+      # root pointer. Falsified on 2026-10-19: the ATC flush removed, the stage
+      # never applied, the MMU written straight rather than staged, and CRP
+      # exported from SRP each fail the check that names them. Its own work
+      # directory, so the two elaborations do not collide.
+      - name: TG68K savestate restore, 68030
         run: |
           set -euo pipefail
           WORKDIR=build/ghdl030 bash rtl/sim/tg68k/run.sh -gCPU030_G=1
-
-      # And the 68030 with its MMU (MMU030 high), which save states carry since
-      # format 1.5. The freeze-point scan runs a third time, and PHASE 8 runs:
-      # two page tables, a machine whose ATC holds a mapping that the restored
-      # machine's tables contradict, and the restored machine must read through
-      # the restored tables. That needs the MMU registers to arrive (through
-      # the kernel's stage, applied on ss_resume) AND the ATC to be flushed --
-      # the ATC is not keyed by the root pointer. Falsified on 2026-10-19: the
-      # ATC flush removed, the stage never applied, the MMU written straight
-      # rather than staged, and CRP exported from SRP each fail the check that
-      # names them.
-      - name: TG68K savestate restore, 68030 with MMU
-        run: |
-          set -euo pipefail
-          WORKDIR=build/ghdlmmu bash rtl/sim/tg68k/run.sh -gCPU030_G=1 -gMMU_G=1
 
       # The save state register bus through the real minimig: the snoop tap,
       # the replay mux, the replay's register-decode tick and the memory map

@@ -191,21 +191,9 @@ hps_io #(.CONF_STR(CONF_STR), .CONF_STR_BRAM(0)) hps_io
 
 	.RTC(RTC),
 	.gamma_bus(gamma_bus),
-	.sdram_sz(sdram_sz),
 
 	.EXT_BUS(EXT_BUS)
 );
-
-// SDRAM module size from the Main (upstream 26eb46a). A big (64 MB) or dual
-// (128 MB) module carries Zorro III fast RAM above the chip RAM region; see
-// memory_router.v. Quasi-static: false paths in AmigaCD.sdc.
-wire [15:0] sdram_sz;
-reg         sdram_big = 0;
-reg         sdram_dual = 0;
-always @(posedge clk_sys) begin
-	sdram_big  <= sdram_sz[15] & sdram_sz[1];
-	sdram_dual <= sdram_sz[15] & (sdram_sz[1:0] == 2'd3);
-end
 
 wire [15:0] ide_din;
 wire [15:0] ide_dout;
@@ -1007,7 +995,7 @@ always @(posedge clk_114) begin
 		end
 	end
 
-	ram_cs <= ~(ram_ready & cyc & cpu_type) & ram_sel;
+	ram_cs <= ~(ram_ready & cyc & cpu_type) & ram_sel;   // the CPU's ready: cpu_rdgate
 end
 
 wire  [1:0] cpu_state;
@@ -1061,13 +1049,41 @@ wire        ram_sel;
 wire        ram_lds;
 wire        ram_uds;
 wire [15:0] ram_din;
-wire [15:0] ram_dout  = zram_sel ? ram_dout2  : ram_dout1;
-wire        ram_ready = zram_sel ? ram_ready2 : ram_ready1;
+wire [15:0] ram_dout_raw  = zram_sel ? ram_dout2  : ram_dout1;
+wire        ram_ready_raw = zram_sel ? ram_ready2 : ram_ready1;
+// What the CPU sees of the read return: cpu_rdgate. While the TG68K runs, a
+// read is acked one clk_114 after the controller acks it and the data is zero
+// until then, so the read data registers reach the TG68K as a two-clock path
+// (AmigaCD.sdc). The cost: a read acked on the clk_114 edge just before a
+// clk_sys edge -- every cache hit, by the caches' own timing -- is taken one
+// clk_sys later. fx68k (cpucfg[1:0] == 0) sees everything unchanged.
+wire        cpu_tg68k = |cpucfg[1:0];
+wire [15:0] ram_dout;
+wire        ram_ready;
+wire [15:0] ram_dout_hi_cpu;
+wire        ram_ready_l_cpu;
+wire        ram_ready_fx;
 wire        zram_sel  = |ram_addr[28:26];
 wire        ram_l1;
 wire [15:0] ram_din_lo;
 wire [15:0] ram_dout2_hi;
 wire        ram_ready2_l;
+
+cpu_rdgate cpu_rdgate
+(
+	.clk        (clk_114),
+	.en         (cpu_tg68k),
+	.cs         (ram_cs),
+	.ready_in   (ram_ready_raw),
+	.ready_l_in (zram_sel & ram_ready2_l),
+	.dout_in    (ram_dout_raw),
+	.dout_hi_in (ram_dout2_hi),
+	.ready      (ram_ready),
+	.ready_l    (ram_ready_l_cpu),
+	.ready_fx   (ram_ready_fx),
+	.dout       (ram_dout),
+	.dout_hi    (ram_dout_hi_cpu)
+);
 wire        ramshared;
 
 wire [7:0] toccata_base;
@@ -1128,9 +1144,8 @@ cpu_wrapper cpu_wrapper
 	.fastchip_lw     (fastchip_lw     ),
 
 	.cpucfg       (cpucfg          ),
+	.ntsc         (ntsc            ),
 	.cachecfg     (cachecfg        ),
-	.sdram_big    (sdram_big       ),
-	.sdram_dual   (sdram_dual      ),
 
 	// Save state export, and the park request that makes it meaningful.
 	//
@@ -1208,11 +1223,12 @@ cpu_wrapper cpu_wrapper
 	.ramdout      (ram_dout        ),
 	.ramdin       (ram_din         ),
 	.ramready     (ram_ready       ),
+	.ramready_fx  (ram_ready_fx    ),
 	.ramshared    (ramshared       ),
 	.ramlong1     (ram_l1          ),
 	.ramdin_lo    (ram_din_lo      ),
-	.ramdout_hi   (ram_dout2_hi    ),
-	.ramready_l   (zram_sel & ram_ready2_l),
+	.ramdout_hi   (ram_dout_hi_cpu ),
+	.ramready_l   (ram_ready_l_cpu ),
 
 	//custom CPU signals
 	.cpustate     (cpu_state       ),
@@ -1225,22 +1241,10 @@ cpu_wrapper cpu_wrapper
 	.z3ram_ena0_out  (z3ram_ena0_w    ),
 	.z3ram_base1_out (z3ram_base1_w   ),
 	.z3ram_ena1_out  (z3ram_ena1_w    ),
-	.z3sdr_base0  (z3sdr_base0     ),
-	.z3sdr_ena0   (z3sdr_ena0      ),
-	.z3sdr_base1  (z3sdr_base1     ),
-	.z3sdr_ena1   (z3sdr_ena1      ),
-	.z3sdr_base2  (z3sdr_base2     ),
-	.z3sdr_ena2   (z3sdr_ena2      ),
 	// Constant 1 since upstream 26eb46a; see cpu_wrapper.
 	.dcache_sw_en    (dcache_sw_en_w  )
 );
 
-wire  [7:0] z3sdr_base0;
-wire        z3sdr_ena0;
-wire  [7:0] z3sdr_base1;
-wire        z3sdr_ena1;
-wire  [7:0] z3sdr_base2;
-wire        z3sdr_ena2;
 
 wire dcache_sw_en_w;
 
@@ -1273,22 +1277,6 @@ wire [15:0] dma_ddr_rd_w;
 wire [15:0] ram_dout1;
 wire        ram_ready1;
 
-// ddram_ctrl's way into SDRAM fast RAM (upstream 26eb46a).
-wire        sdr_req;
-wire        sdr_we;
-wire [26:1] sdr_addr;
-wire  [1:0] sdr_dqm;
-wire [15:0] sdr_wdat;
-wire        sdr_ack;
-wire        sdr_rvalid;
-wire [15:0] sdr_rdat;
-wire        sdr_w2;
-wire  [1:0] sdr_dqm2;
-wire [15:0] sdr_wdat2;
-
-reg         sdram_big_114 = 0;
-always @(posedge clk_114) sdram_big_114 <= sdram_big;
-
 sdram_ctrl ram1
 (
 	.sysclk       (clk_114         ),
@@ -1298,7 +1286,6 @@ sdram_ctrl ram1
 	.cache_rst    (cpu_rst         ),
 	.cpu_cache_ctrl(ss_cache_ctrl),
 	.dcache_sw_en (dcache_sw_en_w  ),
-	.sdram_big    (sdram_big_114   ),
 
 	.sd_data      (SDRAM_DQ        ),
 	.sd_addr      (SDRAM_A         ),
@@ -1355,19 +1342,7 @@ sdram_ctrl ram1
 	.chip48       (chip48          ),
 	.chip32       (arb_chip_long   ),
 	.chipWR2      (arb_chip_wr2    ),
-	.chipRD2      (chip_rd2        ),
-
-	.fast_req     (sdr_req         ),
-	.fast_we      (sdr_we          ),
-	.fast_addr    (sdr_addr        ),
-	.fast_dqm     (sdr_dqm         ),
-	.fast_wdat    (sdr_wdat        ),
-	.fast_w2      (sdr_w2          ),
-	.fast_dqm2    (sdr_dqm2        ),
-	.fast_wdat2   (sdr_wdat2       ),
-	.fast_ack     (sdr_ack         ),
-	.fast_rvalid  (sdr_rvalid      ),
-	.fast_rdat    (sdr_rdat        )
+	.chipRD2      (chip_rd2        )
 );
 
 // M5: chip-RAM master arbiter. Sits between minimig's chipset DMA signals
@@ -1430,13 +1405,6 @@ chipdma_arb chipdma_arb
 	.z3ram_ena0      (z3ram_ena0_w         ),
 	.z3ram_base1     (z3ram_base1_w        ),
 	.z3ram_ena1      (z3ram_ena1_w         ),
-	.z3sdr_base0     (z3sdr_base0          ),
-	.z3sdr_ena0      (z3sdr_ena0           ),
-	.z3sdr_base1     (z3sdr_base1          ),
-	.z3sdr_ena1      (z3sdr_ena1           ),
-	.z3sdr_base2     (z3sdr_base2          ),
-	.z3sdr_ena2      (z3sdr_ena2           ),
-	.sdram_big       (sdram_big            ),
 
 	.ddr_out_addr    (dma_ddr_addr_w       ),
 	.ddr_out_l       (dma_ddr_l_w          ),
@@ -1534,20 +1502,7 @@ ddram_ctrl ram2
 	.dmaU         (dma_ddr_u_w     ),
 	.dmaWR        (dma_ddr_wr_w    ),
 	.dmaRD        (dma_ddr_rd_w    ),
-	.dmaACK       (dma_ddr_ack_w   ),
-
-	.sdr_hi       (z3sdr_ena1      ),
-	.sdr_req      (sdr_req         ),
-	.sdr_we       (sdr_we          ),
-	.sdr_addr     (sdr_addr        ),
-	.sdr_dqm      (sdr_dqm         ),
-	.sdr_wdat     (sdr_wdat        ),
-	.sdr_w2       (sdr_w2          ),
-	.sdr_dqm2     (sdr_dqm2        ),
-	.sdr_wdat2    (sdr_wdat2       ),
-	.sdr_ack      (sdr_ack         ),
-	.sdr_rvalid   (sdr_rvalid      ),
-	.sdr_rdat     (sdr_rdat        )
+	.dmaACK       (dma_ddr_ack_w   )
 );
 
 ////////////////////////////  A2065 ETHERNET  ///////////////////////////////
@@ -1729,8 +1684,8 @@ assign UART_TXD = (hps_mpu & mt32_use) | uart_tx;
 ///////////////////////////////////////////////////////////////////////
 
 //// minimig top ////
-// [1:0] CPU, [2] 68EC020 / 68030 clock, [4:3] 68030 clock (upstream 26eb46a).
-wire  [2:0] cpucfg;
+// [1:0] CPU, [4:2] 68EC020 / 68030 variant and clock (upstream c55ecd91, ec1353dc).
+wire  [4:0] cpucfg;
 wire  [2:0] cachecfg;
 wire  [6:0] memcfg;
 wire        bootrom;   

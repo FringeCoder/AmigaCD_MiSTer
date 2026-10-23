@@ -64,6 +64,61 @@ including the ones that are reverted.
 | 23 | all (area) | remove five save-state retiming banks that re-time crossings AmigaCD.sdc already false-paths: the restore vector bank ss_state_out_q (2346), the CIA capture regs (394) and restore regs (394), Akiko's capture (1052) and restore (1052) -- 5238 flops, ~10% of the design's registers. Not a path fix: the D/G split showed every seed still 0.34-0.54 ns short without D/G, each in a different family, at 84% ALMs | b80fca71 | median -0.556 -> -0.496, 0/20 close (best seed 27, -0.039); H -0.275 -> -0.177, L -0.225 -> -0.054, F -0.206 -> -0.100, G -0.363 -> -0.405, D, C, M unchanged; no hold failures; registers 52,321 -> 48,441 but ALMs only 35,075 -> 34,913 | kept: the median and three families better, none clearly worse -- though every shift is under the noise line |
 | 24 | D, G | option 1: row 22's read gate and multicycle WITHOUT the fast hit, on row 23's netlist. Costs a clk_sys on every TG68K cache hit (44% of reads in rtl/sim/rdgate); fx68k untouched | 04926004 | median -0.496 -> -0.493, 0/20 close (best 38, -0.200); D -0.344 -> -0.100 (14/20), G -0.405 -> -0.026 (11/20); C +0.379 -> +0.100, H -0.177 -> -0.209, L -0.054 -> -0.096, F, M unchanged | reverted on the owner's call: the target moves a lot, the total does not, and every TG68K cache hit pays a clk_sys |
 | 25 | D, G | option 2: row 24's gate plus a LEAN fast hit -- the tag compare drives only ack/state/tag write (data and tag-write words load in IDLE on every TG68K read select), no address comparator (a registered fast_hit-was-on guard instead; rtl/sim/rdgate check H proves the address never moves under a fast-hit select). Hits keep their latency; ~9.5% of TG68K reads (misses ending on the tight edge) a clk_sys later | 406e0a62 | median -0.496 -> -0.764, 0/20 close (best 36, -0.236); D -0.574, G -0.637 (19/20 each), L -0.231 (20/20), H -0.265 | reverted: worse than row 23 and row 24 on every count |
+| 26 | all (tool) | `PLACEMENT_EFFORT_MULTIPLIER 4.0` and `ROUTER_TIMING_OPTIMIZATION_LEVEL MAXIMUM` in AmigaCD.qsf on row 23's sources (raised by an external review) | 8312cd4a | **a no-op**: `OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"` already sets both -- the fit report of row 27, which does not assign them, lists them at 4.0 and MAXIMUM, and rows 26 and 27 match on every seed to the picosecond. Its panel, median -0.737 (0/20; D -0.707, G -0.614, H -0.321), is row 23's sources fitted on 2026-10-22 instead of 2026-10-20: the build date (see "The build date is a seed" below) | reverted (75c43a38); finding: the gap to row 23 is the calendar, not the settings |
+| 27 | D, G | a floating, auto-sized, non-reserved LogicLock region over cpu_wrapper and both cpu_cache_new instances (raised by an external review) | ea22b845 | **never applied**: "Current license file does not support LogicLock regions. The Quartus Prime software removes all the LogicLock regions" (Critical Warning 140003) -- 17.0 Lite has no LogicLock. Fit identical to row 26 on all 20 seeds | reverted; floorplanning is closed to this toolchain |
+| 28 | all (upstream) | the 2026-10-22 resync with Minimig-AGA (content merge 0bf2ab1 -> 5b93485b): SDRAM-backed Fast RAM, the SDRAM proxy and prefetch in ddram_ctrl and 26eb46a's SDRAM controller out; cycle-exact 68EC020, 68030 40/50MHz and Fast, trap_tw and rp_log in the kernel, and one-cycle throttle multicycles (cycles|hold, inflight -- matched, no "Ignored filter") in. Compared at the SAME build date (261022) with rows 26/27, which are the pre-sync tree | 341d501e | median -0.737 -> -0.651, 0/20 close either way (best 31, -0.192); H -0.321 -> -0.074 (19 -> 14/20), L -0.151 -> +0.171 (15 -> 5), F -0.156 -> -0.032 (16 -> 11), B -0.072 -> +0.185 (12 -> 6); D -0.707 -> -0.639, G -0.614 -> -0.585 (19/20 each); M +0.072 -> -0.091 (5 -> 16, ascal unchanged: placement); worst hold +0.146; ALMs 35,002 -> ~35,005 (the removal and upstream's CPU additions cancel) | kept (it is upstream). The wall is now D and G nearly alone, which is why row 24's gate is re-panelled as row 29 |
+| 29 | D, G | row 24's read gate (cpu_rdgate, ready and data gated by ack & ack_q, writes undelayed) and its -start multicycle, re-applied on the resynced tree, same build date (261022) as row 28 | 94d3560e | median -0.651 -> -0.724, 0/20 close (best 42, -0.113); D -0.639 -> -0.482, G -0.585 -> -0.470 (18 and 19/20 still failing); F -0.032 -> -0.155 (17/20), H -0.074 -> -0.208 (18/20), C +0.363 -> +0.095, M -0.091 -> -0.366; worst hold +0.179. D and G's worst launch moved from cpu_dat_r to the cache's cpu_ack register, through zram_sel's mux and the gate into the TG68K in one clk_114 (seed 21: -0.60 / -0.69) | superseded by row 30 (the same gate on registered terms only), built on top of it |
+| 30 | D, G | the read gate on registered terms only: ready and the data gate are ack_q & ram_cs & ram_cs_q (cs drops it on the edge the request ends, cs_q stops the previous request's ack completing the next), writes too, so the cache's ack is in no single-cycle path into the TG68K -- except through the en (fx68k) mux, see row 31. Proven in rtl/sim/rdgate (new checks D, F); falsified without cs (A) and without cs_q (F, A). Costs a clk_sys on ~53% of reads, and on writes | 8eba7fb2 | 19 of 20 seeds: median -0.651 -> -0.645, 0 close (best 23, -0.241); **D -0.639 -> +0.392 (19 -> 1/19 failing)**, G -0.585 -> -0.106 (19 -> 11/19); but B +0.185 -> -0.265 (6 -> 15/19), C +0.363 -> -0.051 (1 -> 11/19), E +0.502 -> +0.136; F, H, L, M about level. B and C's worst paths do not start at ram_cs (RDindex_A/rp_cnt -> sd_addr; the caches' tag RAM -> cpu_ack): placement. G's remaining worst runs cpu_ack_l -> the en mux of ready_l -> long_ack -> data_read -> opcode (seed 41, -1.274) | superseded by row 31 (the en mux split), built on top of it |
+| 31 | D, G | the TG68K's ready and ready_l are the registered v unconditionally; the fx68k gets the raw ready on its own output (ready_fx), wired to its DTACK only. Row 30's en mux had kept the live ack in front of the TG68K through its en = 0 input (seed 41, cpu_ack_l -> ready_l -> long_ack -> data_read -> opcode, -1.274). Same behaviour as row 30 for the running TG68K; rtl/sim/rdgate E checks ready_fx | 09a2f928 | 18 of 20 seeds: **median -0.651 -> -0.224, 4 of 18 close** (22 +0.103/+0.250, 42 +0.022, 30 +0.019, 26 +0.011; setup/hold at the slow 100 C gate); D +0.510 and G +0.482 (0/18 failing each); B +0.286, C +0.387, E +0.704 back to row 28 or better; what is left is H -0.093 (11/18), F +0.018 (7/18), L, M. The family figures are the minimum over every corner, and M (ascal) is negative at another corner on seeds 22, 26 and 30 though positive at 100 C (+0.115, +0.207, +0.160) | **kept**: the first seeds to close since the 68030 save states. The closes hold for build date 261022 only (see "The build date is a seed") |
+
+### The build date is a seed
+
+sys/build_id.tcl writes today's date into build_id.v before every compile and
+AmigaCD.sv puts it in the OSD config string, so the netlist differs from one
+day to the next and the fitter places everything differently. Rows 26 and 27
+are row 23's sources fitted on 2026-10-22 (build date 261022); row 23 was
+fitted on 2026-10-20 (261020):
+
+| | row 23 (261020) | rows 26/27 (261022) |
+|---|---:|---:|
+| median | -0.496 | -0.737 |
+| best | 27, -0.039 | 34, -0.320 |
+| seed 27 | -0.039 | -1.429 |
+| D / G median | -0.344 / -0.405 | -0.707 / -0.614 |
+
+Proven, not inferred: four seeds of today's sources refitted with the date
+pinned to 261020 (run 39769895205, 18ad6597) reproduce row 23's run
+39417638838 to the picosecond -- seed 22 -0.185 / +0.240, 27 -0.039 / +0.205,
+30 -1.128 / +0.173, 42 -1.331 / +0.125 (setup / hold). The fit is
+deterministic; the date is the whole difference.
+
+So a panel run on a different day from the one it is compared with carries a
+date term of up to ~0.25 ns on the median, as large as most rows here. Rows
+compared across days (any row whose panel and its baseline's ran on different
+dates) are weaker evidence than the table makes them look. From now on a
+comparison pins the date: fit.yml's `build_date` input (scripts/ci-fit.sh),
+recorded in each seed's fit.json. It also means a release bitstream's timing
+depends on the day it is built.
+
+### SEED 22, and the release candidate of 2026-10-22
+
+AmigaCD.qsf's seed moves from 47 to 22, the best of row 31's four closes:
+setup +0.103, hold +0.250 at the slow 100 C gate, on 09a2f928 built with
+BUILD_DATE 261022 (run 39828635926). The fit is deterministic, so that
+seed's artifact IS the release candidate a pinned rebuild would produce:
+sha256 86873d43edbeffa7ea2e18c459dfbf49fa2ab582927cb5fda06a51163f116bf0.
+
+Two things follow from "The build date is a seed" above:
+
+- A push build fits SEED 22 with the date it runs on, which is a different
+  netlist; it is not expected to close, and saying it did not is not news.
+  Rebuild a closing bitstream with fit.yml's build_date input set to 261022.
+- A release on another day either ships this bitstream (its OSD says
+  261022) or runs a fresh seed panel pinned to that day's date.
+
+Not yet measured: what the read gate costs real software (about half of
+TG68K RAM reads and writes take a clk_sys more, by rtl/sim/rdgate's count),
+and the candidate on hardware at all.
 
 Ideas recorded and not done, with the reason:
 - [Done as row 21, 2026-10-19, with no added latency: the set/clear select
