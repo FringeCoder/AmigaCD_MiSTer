@@ -53,7 +53,11 @@ entity tg68k_ss_tb is
 		-- MMU030 input with it, are gone). PHASE 8 runs only here: save
 		-- states carry the MMU registers since format 1.5. CI runs the bench
 		-- both ways.
-		CPU030_G  : integer := 0
+		CPU030_G  : integer := 0;
+		-- 1, with CPU030_G=1, runs it as the 68EC030 (upstream 9194cef): the
+		-- 68030 whose MMU can never be turned on. PHASE 9 runs only here, in
+		-- place of PHASE 8, whose translations the 68EC030 cannot make.
+		EC030_G   : integer := 0
 	);
 end entity;
 
@@ -64,7 +68,8 @@ architecture sim of tg68k_ss_tb is
 		if b then return '1'; else return '0'; end if;
 	end function;
 	constant C030 : std_logic := to_sl(CPU030_G /= 0);
-	constant CMMU : std_logic := C030;
+	constant CEC  : std_logic := to_sl(CPU030_G /= 0 and EC030_G /= 0);
+	constant CMMU : std_logic := C030 and not CEC;
 
 	constant MEMW : integer := 16384;			-- words, i.e. 32 KB
 	-- Words put back between scan iterations: the program plus the sentinels.
@@ -236,6 +241,7 @@ begin
 			berr           => '0',
 			CPU            => "11",				-- as cpu_wrapper instantiates it
 			CPU030         => C030,
+			EC030          => CEC,
 			addr_out       => addr_out,
 			data_write     => data_write,
 			nWr            => nWr,
@@ -1217,7 +1223,79 @@ begin
 			check(meml(16#614#) = X"CAFEF00D",
 			      "the restored machine translates through A's table, not B's ATC");
 		else
-			note("  (skipped: needs CPU030_G=1)");
+			note("  (skipped: needs CPU030_G=1, EC030_G=0)");
+		end if;
+		-----------------------------------------------------------------------
+		note("PHASE 9 -- the 68EC030 keeps its MMU off, PMOVE and restore alike");
+		-- PHASE 8's tables and program on the 68EC030. Its PMOVE to TC holds
+		-- TC.E off, so $5000 reads through no table at all: 0BADBEEF, not
+		-- table A's CAFEF00D. Then a state saved on a 68030, with TC.E set,
+		-- is restored into it: the stage still carries the rest of TC and
+		-- CRP, but TC.E has to stay off, or the restore would turn on an MMU
+		-- the 68EC030 does not have.
+		if CEC = '1' then
+			boot_prep;
+			for i in 0 to 255 loop
+				if i mod 8 = 5 then
+					poke_w(16#6000# + i*4, X"0000"); poke_w(16#6002# + i*4, X"4001");
+				else
+					poke_w(16#6000# + i*4, conv_std_logic_vector((i*16#1000#) / 16#10000#, 16));
+					poke_w(16#6002# + i*4, conv_std_logic_vector((i*16#1000#) mod 16#10000# + 1, 16));
+				end if;
+			end loop;
+			poke_w(16#4000#, X"CAFE"); poke_w(16#4002#, X"F00D");
+			poke_w(16#5000#, X"0BAD"); poke_w(16#5002#, X"BEEF");
+			poke_w(16#700#, X"7FFF"); poke_w(16#702#, X"0002");	-- CRP A
+			poke_w(16#704#, X"0000"); poke_w(16#706#, X"6000");
+			poke_w(16#708#, X"80CC"); poke_w(16#70A#, X"8000");	-- TC, E set
+			poke_w(16#780#, X"41F8"); poke_w(16#782#, X"0700");	-- lea $0700.w,a0
+			poke_w(16#784#, X"F010"); poke_w(16#786#, X"4C00");	-- pmove (a0),crp
+			poke_w(16#788#, X"41F8"); poke_w(16#78A#, X"0708");	-- lea $0708.w,a0
+			poke_w(16#78C#, X"F010"); poke_w(16#78E#, X"4000");	-- pmove (a0),tc
+			poke_w(16#790#, X"2038"); poke_w(16#792#, X"5000");	-- move.l $5000.w,d0
+			poke_w(16#794#, X"21C0"); poke_w(16#796#, X"0610");	-- move.l d0,$0610.w
+			poke_w(16#798#, X"60FE");						-- bra.s *
+			poke_w(16#7E0#, X"2238"); poke_w(16#7E2#, X"5000");	-- move.l $5000.w,d1
+			poke_w(16#7E4#, X"21C1"); poke_w(16#7E6#, X"0614");	-- move.l d1,$0614.w
+			poke_w(16#7E8#, X"60FE");						-- bra.s *
+			poke_w(16#610#, X"0000"); poke_w(16#612#, X"0000");
+			poke_w(16#614#, X"0000"); poke_w(16#616#, X"0000");
+			boot_go;
+			step(800);
+			check(meml(16#610#) = X"0BADBEEF", "a PMOVE to TC does not translate on the 68EC030");
+			check(ss_mmu_tc = X"00CC8000", "a PMOVE to TC holds TC.E off on the 68EC030");
+			clkena_in <= '0';
+			step(4);
+			ss_wr_data <= X"000007E0"; ss_pc_wr <= '1';
+			wait until rising_edge(clk);
+			ss_pc_wr <= '0';
+			ss_wr_data <= X"00002700"; ss_sr_wr <= '1';
+			wait until rising_edge(clk);
+			ss_sr_wr <= '0';
+			for i in 0 to 7 loop
+				ss_wr_index <= conv_std_logic_vector(i, 4);
+				case i is
+					when 0 => ss_wr_data <= X"80CC8000";
+					when 3 => ss_wr_data <= X"7FFF0002";
+					when 4 => ss_wr_data <= X"00006000";
+					when others => ss_wr_data <= X"00000000";
+				end case;
+				ss_mmu_wr <= '1';
+				wait until rising_edge(clk);
+				ss_mmu_wr <= '0';
+			end loop;
+			ss_resume <= '1';
+			wait until rising_edge(clk);
+			ss_resume <= '0';
+			step(2);
+			check(ss_mmu_tc = X"00CC8000" and ss_mmu_crp = X"7FFF000200006000",
+			      "a restore holds TC.E off on the 68EC030 and lands the rest");
+			clkena_in <= '1';
+			step(800);
+			check(meml(16#614#) = X"0BADBEEF",
+			      "the restored 68EC030 still does not translate");
+		else
+			note("  (skipped: needs CPU030_G=1, EC030_G=1)");
 		end if;
 
 		if errors = 0 then

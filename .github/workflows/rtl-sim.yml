@@ -931,6 +931,18 @@ jobs:
           set -euo pipefail
           WORKDIR=build/ghdl030 bash rtl/sim/tg68k/run.sh -gCPU030_G=1
 
+      # The 68EC030 (upstream 9194cef, Minimig-AGA #283): the 68030 whose MMU
+      # can never be turned on. PHASE 9 runs in place of PHASE 8: a PMOVE to
+      # TC with E set must not translate, and a save state taken on a 68030,
+      # TC.E set, must not turn the MMU on when restored into a 68EC030 --
+      # the restore's TC load is this fork's, so upstream's PMOVE mask does
+      # not cover it. Falsified on 2026-10-24: the restore's TC.E mask
+      # dropped, and the PMOVE's, each fail the check that names them.
+      - name: TG68K savestate restore, 68EC030
+        run: |
+          set -euo pipefail
+          WORKDIR=build/ghdlec bash rtl/sim/tg68k/run.sh -gCPU030_G=1 -gEC030_G=1
+
       # The save state register bus through the real minimig: the snoop tap,
       # the replay mux, the replay's register-decode tick and the memory map
       # bits. This is the only bench that elaborates minimig.v itself, so it is

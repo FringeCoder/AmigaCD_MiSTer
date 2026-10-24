@@ -48,6 +48,7 @@ module TG68KdotC_Kernel
 
 	input       [1:0] cpu,
 	input             cpu030,
+	input             ec030,
 	input             mmu030,
 	output            opc_start,
 	output     [15:0] opc_out,
