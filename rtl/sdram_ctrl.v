@@ -297,6 +297,25 @@ end
 
 //// sdram control ////
 
+// The read cache's address into the RAS slot, a clock late. cpuAddr is a mux
+// in AmigaCD.sv (ss_port_own ? ss_sd_addr : ram_addr), and loading it straight
+// into sd_addr -- the output register at the SDRAM pins -- put the save state
+// port and the CPU's address mux, the slot mux and the route to the pins in
+// one clk_114: families B_114_to_sd_addr (-1.318 median, 20/20 failing) and
+// A_sys_to_sd_addr (7/20) on the 2026-10-24 panel. The write slot never had
+// it: writeAddr is already a register.
+//
+// The copy is a clock behind and never stale when it is used. cache_req is
+// sdr_read_req, a register set from CPU_SM_READ, which the cache enters the
+// clock after it sees cpu_cs in IDLE, so no RAS slot can take the request
+// until the address has held for a while: rtl/sim/sdram/tb_sdram_fill measures
+// three clocks from cpuCS to the earliest such slot, and its row and column
+// checks pass with this copy up to three clocks late and fail from four. In
+// FILL1 the request is held until the ack, and the CPU holds its address with
+// it.
+reg [24:1] cacheAddr;
+always @(posedge sysclk) cacheAddr <= cpuAddr;
+
 reg  [2:0] slot_type = IDLE;
 reg [15:0] sdata_reg;
 reg        chipWE;
@@ -409,7 +428,7 @@ always @ (posedge sysclk) begin
 				// request from read cache
 				else if(cache_req) begin
 					slot_type    <= CPU_READCACHE;
-					{sd_ba,sd_addr,casaddr[8:0]} <= cpuAddr;
+					{sd_ba,sd_addr,casaddr[8:0]} <= cacheAddr;
 					sd_ras       <= 0;
 					cas_sd_cas   <= 0;
 				end
