@@ -116,7 +116,7 @@ Everything here is someone else's work. Where we changed it, the row says so.
 
 | From | What | How it arrived |
 |---|---|---|
-| [MiSTer-devel/Minimig-AGA_MiSTer](https://github.com/MiSTer-devel/Minimig-AGA_MiSTer) | The core itself — the Amiga, and the CD32/CDTV chipset support including Akiko, the CDTV bridge and the host sector transport | Merged; synced through `da7632e`, then on 2026-10-16 through `cbf17d2`: the 2026-10-16 sync took `3c5d2ea`, `56ba962`, `d241338`, `61d3f02`, `16227ac`, `6b82678` as they are; hand-ported `691c2b7`, `e187420` and `cbf17d2` (with its host half in FringeCoder/AmigaCD); took only the CIA start-up delay from `2bddf21` (not its CNT count source -- see the CI guard); did not take `430209e` (HBSTRT/HBSTOP fine bits; reverses the 2026-09-01 hardware finding); and found `83ea662` already present in this fork's own form. Then, in its own PR, `26eb46a` (68030 with MMU, 68EC020, Fast RAM to 384 MB, drive sounds) hand-ported with its host half `e836aea` in FringeCoder/AmigaCD: save states refused on the 68030 (no room for the MMU in the state vector), the drive sound volume at status[60:59] (upstream's [52:51] are the save state bits), the unthrottled 68020 kept as CPU Turbo On, and this fork's floppy decode, DDR3 command stage and save state port kept around upstream's new controllers. Upstream's real-floppy line (`c1134ac`, `e6d9262`, `a527fbb`, `16934d3`) stays out by design. Earlier: vanfanel's OCS/ECS LORES off-grid fetch fix for *Absolute Inebriation* (`7f93ed1`, `cfcc0dc`, `3c8a0ed`, merged upstream as `c5ffbf9`), the A2065 Ethernet README section (`8325735`, Nigel Shearman), and `5fea457` as a design merge On 2026-10-22 upstream rewrote its history (`26eb46a..0bf2ab1` replaced by the squashed PRs #274-#281) and this fork was content-merged to `5b93485b`: the 68030 always has its MMU and runs at 40MHz, 50MHz or Fast (save states keep working on all three); the 68EC020 is cycle exact; the SDRAM-backed Zorro III Fast RAM and its controller are gone again; the Turrican 2 AGA scroll fix (`f3ab2c18`, the exact FMODE phase this fork had tried and withdrawn on 2026-10-11 for want of hardware evidence -- now supplied by #158); the RTG driver fix for the MMU; and the A2065 no-op CSR0 write. See `docs/upstream-pins.md` in the userspace repo. |
+| [MiSTer-devel/Minimig-AGA_MiSTer](https://github.com/MiSTer-devel/Minimig-AGA_MiSTer) | The core itself — the Amiga, and the CD32/CDTV chipset support including Akiko, the CDTV bridge and the host sector transport | Merged; synced through `da7632e`, then on 2026-10-16 through `cbf17d2`: the 2026-10-16 sync took `3c5d2ea`, `56ba962`, `d241338`, `61d3f02`, `16227ac`, `6b82678` as they are; hand-ported `691c2b7`, `e187420` and `cbf17d2` (with its host half in FringeCoder/AmigaCD); took only the CIA start-up delay from `2bddf21` (not its CNT count source -- see the CI guard); did not take `430209e` (HBSTRT/HBSTOP fine bits; reverses the 2026-09-01 hardware finding); and found `83ea662` already present in this fork's own form. Then, in its own PR, `26eb46a` (68030 with MMU, 68EC020, Fast RAM to 384 MB, drive sounds) hand-ported with its host half `e836aea` in FringeCoder/AmigaCD: save states refused on the 68030 (no room for the MMU in the state vector), the drive sound volume at status[60:59] (upstream's [52:51] are the save state bits), the unthrottled 68020 kept as CPU Turbo On, and this fork's floppy decode, DDR3 command stage and save state port kept around upstream's new controllers. Upstream's real-floppy line (`c1134ac`, `e6d9262`, `a527fbb`, `16934d3`) stays out by design. Earlier: vanfanel's OCS/ECS LORES off-grid fetch fix for *Absolute Inebriation* (`7f93ed1`, `cfcc0dc`, `3c8a0ed`, merged upstream as `c5ffbf9`), the A2065 Ethernet README section (`8325735`, Nigel Shearman), and `5fea457` as a design merge On 2026-10-22 upstream rewrote its history (`26eb46a..0bf2ab1` replaced by the squashed PRs #274-#281) and this fork was content-merged to `5b93485b`: the 68030 always has its MMU and runs at 40MHz, 50MHz or Fast (save states keep working on all three); the 68EC020 is cycle exact; the SDRAM-backed Zorro III Fast RAM and its controller are gone again; the Turrican 2 AGA scroll fix (`f3ab2c18`, the exact FMODE phase this fork had tried and withdrawn on 2026-10-11 for want of hardware evidence -- now supplied by #158); the RTG driver fix for the MMU; and the A2065 no-op CSR0 write. On 2026-10-24 synced through `b988bd09`: the 68EC030 (`9194cef`, #283; this fork also holds TC.E off on a save state restore into it), the CPU cache fix for the NetBSD MMU fault (`9efd296`), the `sdram_ctrl` write request fix for the 68EC020 freeze (`de795a7`), and the revert of the RTG driver fix (`4767064`, #284); upstream's Flink sprite fix (`4ab0d5f`) is not taken, because this fork's own `f9399d6` fixes the same stripes another way and was A/B tested on hardware, and taking both would move the sprites twice. See `docs/upstream-pins.md` in the userspace repo. |
 | [kblood/Minimig-AGA-cd32-cdtv-native-akiko](https://github.com/kblood/Minimig-AGA-cd32-cdtv-native-akiko) | This fork's parent line. Specific fixes taken: the chip-DMA slot guard (`114ab43`), the SPRxDATx write vs shift-register load ordering fix (`e6f8fbe`) | Cherry-picked with authorship preserved |
 | [kblood/Main_MiSTer-cd32-cdtv](https://github.com/kblood/Main_MiSTer-cd32-cdtv) | The CD32/CDTV userspace driver and console OSD this fork's host half grew from | Userspace repo |
 | [Anime0t4ku/Main_MiSTer_Physical_Disc](https://github.com/Anime0t4ku/Main_MiSTer_Physical_Disc) | Physical CD-ROM drive support — `support/physical_disc/` is a verbatim copy, re-extracted on each sync | Userspace repo |
@@ -151,7 +151,7 @@ Inherited from Minimig-AGA, with this fork's additions marked **+**.
 * ChipRAM : 0.5MB - 2.0MB
 * SlowRAM : 0.0MB - 1.5MB
 * FastRAM : 0.0MB - 384MB
-* CPU core : 68000, 68010, 68EC020, 68030 (with or without MMU, no FPU)
+* CPU core : 68000, 68010, 68EC020, 68EC030, 68030 (with MMU, no FPU)
 * Kickstart : 1.2, 1.3, 2.0, 3.0, 3.1, 3.1.4, 3.2 (256kB, 512kB & 1MB kickstart ROMs currently supported)
 * HRTmon with custom registers mirror
 * Floppy drives : 1-4 floppies (supports ADF floppy image format), with normal & turbo speeds
@@ -290,26 +290,30 @@ New video modes will appear in ScreenMode preference. For more screen modes use 
 
 **Note: RTG outputs to HDMI primarily as it uses scaler.**
 If you want to see RTG video on VGA output, then set vga_scaler=1 in MiSTer.ini.
-RTG is available only for 68030 CPU.
+RTG is available only for 68030 and 68EC030 CPU.
 
 ### 68030 CPU
 
-The CPU item of the System page offers 68000, 68010, 68020, 68030 and 68030 no MMU; on the AmigaCD Settings page, the
-CPU row offers the machine's 68020 or a 68030 for the 68020 machines (CD32, CD32+, A1200).
+The CPU item of the System page offers 68000, 68010, 68020, 68EC030 and 68030, and its CPU Clock row sets either 68030
+to 40MHz, 50MHz or Fast; on the AmigaCD Settings page, the CPU row offers the machine's 68020, or a 68EC030 or 68030 at
+40MHz, 50MHz or Fast, for the 68020 machines (CD32, CD32+, A1200).
 
 * **68020** with **CPU Turbo On**, this fork's default, runs unthrottled with 32-bit addresses, as it always has here.
   With CPU Turbo Off it is the **68EC020** at the speed of a stock A1200, with 24-bit addresses.
-* **68030** has an MMU and runs at 56.7MHz with no speed limit. There is no FPU.
-* **68030 no MMU** is the same 68030 with the MMU instructions taking the F-line exception, as on a 68020 with no MMU,
-  for software that does not expect an MMU.
-* **Save states work on the 68030**, with or without the MMU (the MMU's registers are in the state since format 1.5;
-  older save files are upgraded on load). As on the 68020, Zorro III fast RAM refuses them, and so does a program that
+* **68030** has its MMU, which stays off until a program uses it, as on the real CPU (NetBSD 9.2 runs on it). There is
+  no FPU. Fast runs at full speed; 40MHz runs as fast as a real 68030 card at 40MHz, for the games that need the timing
+  of a real machine (Stunt Car Racer, for one, shows graphic glitches with a faster CPU).
+* **68EC030** is the 68030 without its MMU, as on the real chip, for software that uses the 030 like a 020: SysInfo,
+  XSysInfo and AIBB see no MMU, and MuForce refuses to start. The MMU instructions run without exceptions, but the MMU
+  can never be turned on. It runs at 40MHz, 50MHz and Fast like the 68030.
+* **Save states work on both 68030s** (the MMU's registers are in the state since format 1.5; older save files are
+  upgraded on load). A state saved on a 68030 with its MMU on restores into a 68EC030 with the MMU still off. As on the 68020, Zorro III fast RAM refuses them, and so does a program that
   has used the master stack.
 
 As on the real machines, chip RAM, ROM and the custom registers are always read through the bus, and the data cache is
 switched on and off by software (SetPatch, CPU, WHDLoad).
 
-FastRAM can be none, 2M, 4M or 8M, and with the 68030 or the unthrottled 68020 also 256M or 384M.
+FastRAM can be none, 2M, 4M or 8M, and with the 68030, the 68EC030 or the unthrottled 68020 also 256M or 384M.
 
 ### Floppy drive sounds
 
@@ -350,7 +354,7 @@ Note1: enable either CD32 or CDTV, not both.
 Note2: remove CD0(CD1-CD9) supporting files from devs:DOSDrivers as CD is fully handled by ExtROM.
 You have to use appropriate ROM/ExtROM from CD32/CDTV to let AmigaOS recognize CD drive. Tested in AmigaOS v3.2.
 CDTV mode is preferred because appropriate updated ROM and ExtROM v3.2 for CDTV are included in AmigaOS 3.2 installation CD.
-Besides original CDTV HW config, you can use up to Amiga 1200 config (68020 + AGA + 2MB ChipRAM + 384MB FastRAM and A1200 KS ROM).
+Besides original CDTV HW config, you can use up to Amiga 1200 config (68030 + AGA + 2MB ChipRAM + 384MB FastRAM and A1200 KS ROM).
 CD32 official KS 3.1 set of ROMs also work with AmigaOS 3.2 (remember to use IDEFix to access HDD >4GB).
 
 ### MIDI
