@@ -89,7 +89,19 @@ module tb_sdram_fwd;
       cpuL     <= bL;
       cpustate <= 2'b11;       // write
       cpuCS    <= 1'b1;
-      repeat (4) @(posedge sysclk);
+      // Held until the cache takes the write: since Minimig-AGA de795a7,
+      // sdram_ctrl raises write_req only on cache_wr_ack, as the CPU's cycle
+      // does on hardware. Before that a fixed 4 clocks was enough because
+      // write_req went up whether or not the cache had the write.
+      fork : take
+        begin wait (dut.write_ena); disable take; end
+        begin repeat (2000) @(posedge sysclk); disable take; end
+      join
+      @(posedge sysclk);
+      if (!dut.write_req) begin
+        $display("FAIL post: the write to %h was never posted (write_req low)", a);
+        errs = errs + 1;
+      end
       // drop the access but keep it pending (write_req stays high; chipDMA=0
       // starves CPU_WRITECACHE so it never commits)
       cpuCS    <= 1'b0;
@@ -153,6 +165,9 @@ module tb_sdram_fwd;
       repeat (20) @(posedge sysclk);
       reset_n = 1;
       wait (dut.init_done == 1'b1);
+      // The cache clears its tags after every reset and takes no write until
+      // it has (cpu_sm_state stays in INIT).
+      wait (dut.cpu_cache.cache_init_done == 1'b1);
       repeat (32) @(posedge sysclk);
     end
   endtask

@@ -136,6 +136,11 @@ jobs:
       # merging. Waits on dut.sdram_state == 0, so it also covers the registered
       # state decode that the sd_addr retiming introduced -- a wrong decode means
       # the CHIP slot never loads chipAddr and the baseline reads come back garbage.
+      # Since Minimig-AGA de795a7 a write is posted only once the cache takes it,
+      # so the bench waits for the cache's tag clear and holds each write until
+      # write_ena, and fails "post: ... never posted" if write_req never rises --
+      # without that the no-match case would pass on a write that never existed.
+      # Falsified 2026-10-24: write_req never raised fails it on every write.
       - name: SDRAM store-to-load forwarding
         run: |
           set -euo pipefail
