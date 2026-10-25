@@ -52,7 +52,14 @@ module a2065 (
     output wire [63:0] mem_writedata,
     output wire [7:0]  mem_byteenable,
     output wire        mem_write,
-    input  wire        mem_waitrequest
+    input  wire        mem_waitrequest,
+
+    // ── lightweight HPS bridge, memory clock domain (MEASUREMENT ONLY,
+    //    see visprobe_ddr3.v) ─────────────────────────────────────────────
+    input  wire          lw_wr,
+    input  wire  [1:0]   lw_waddr,
+    input  wire  [31:0]  lw_wdata,
+    output wire [127:0]  lw_status
 );
 
     // ── chip registers ↔ mailbox ─────────────────────────────────────────
@@ -121,8 +128,9 @@ module a2065 (
 
     wire int2_ddr;
 
-    // The mailbox and the latency probe share the A2065's DDR3 port; the
-    // mailbox wins (MEASUREMENT ONLY, see latprobe_ddr3.v).
+    // The mailbox and the two probes share the A2065's DDR3 port; the
+    // mailbox wins, then the latency probe (MEASUREMENT ONLY, see
+    // latprobe_ddr3.v and visprobe_ddr3.v).
     wire [28:0] mb_address,   pr_address;
     wire [7:0]  mb_burstcount, pr_burstcount;
     wire        mb_read,      pr_read;
@@ -133,18 +141,78 @@ module a2065 (
     wire        mb_write,     pr_write;
     wire        mb_waitrequest, pr_waitrequest;
 
+    wire [28:0] lp_address,   vp_address;
+    wire [7:0]  lp_burstcount, vp_burstcount;
+    wire        lp_read,      vp_read;
+    wire [63:0] lp_readdata,  vp_readdata;
+    wire        lp_readdatavalid, vp_readdatavalid;
+    wire [63:0] lp_writedata, vp_writedata;
+    wire [7:0]  lp_byteenable, vp_byteenable;
+    wire        lp_write,     vp_write;
+    wire        lp_waitrequest, vp_waitrequest;
+
     latprobe_ddr3 latprobe (
         .clk              (clk_ddr),
         .rst_n            (rst_n_sys),
-        .avl_address      (pr_address),
-        .avl_burstcount   (pr_burstcount),
-        .avl_read         (pr_read),
-        .avl_readdata     (pr_readdata),
-        .avl_readdatavalid(pr_readdatavalid),
-        .avl_writedata    (pr_writedata),
-        .avl_byteenable   (pr_byteenable),
-        .avl_write        (pr_write),
-        .avl_waitrequest  (pr_waitrequest)
+        .avl_address      (lp_address),
+        .avl_burstcount   (lp_burstcount),
+        .avl_read         (lp_read),
+        .avl_readdata     (lp_readdata),
+        .avl_readdatavalid(lp_readdatavalid),
+        .avl_writedata    (lp_writedata),
+        .avl_byteenable   (lp_byteenable),
+        .avl_write        (lp_write),
+        .avl_waitrequest  (lp_waitrequest)
+    );
+
+    visprobe_ddr3 visprobe (
+        .clk              (clk_ddr),
+        .rst_n            (rst_n_sys),
+        .lw_wr            (lw_wr),
+        .lw_waddr         (lw_waddr),
+        .lw_wdata         (lw_wdata),
+        .lw_status        (lw_status),
+        .avl_address      (vp_address),
+        .avl_burstcount   (vp_burstcount),
+        .avl_read         (vp_read),
+        .avl_readdata     (vp_readdata),
+        .avl_readdatavalid(vp_readdatavalid),
+        .avl_writedata    (vp_writedata),
+        .avl_byteenable   (vp_byteenable),
+        .avl_write        (vp_write),
+        .avl_waitrequest  (vp_waitrequest)
+    );
+
+    a2065_ddram_arbiter probe_pair_arb (
+        .clk              (clk_ddr),
+        .rst              (!rst_n_sys),
+        .m0_address       (lp_address),
+        .m0_burstcount    (lp_burstcount),
+        .m0_read          (lp_read),
+        .m0_readdata      (lp_readdata),
+        .m0_readdatavalid (lp_readdatavalid),
+        .m0_writedata     (lp_writedata),
+        .m0_byteenable    (lp_byteenable),
+        .m0_write         (lp_write),
+        .m0_waitrequest   (lp_waitrequest),
+        .m1_address       (vp_address),
+        .m1_burstcount    (vp_burstcount),
+        .m1_read          (vp_read),
+        .m1_readdata      (vp_readdata),
+        .m1_readdatavalid (vp_readdatavalid),
+        .m1_writedata     (vp_writedata),
+        .m1_byteenable    (vp_byteenable),
+        .m1_write         (vp_write),
+        .m1_waitrequest   (vp_waitrequest),
+        .s_address        (pr_address),
+        .s_burstcount     (pr_burstcount),
+        .s_read           (pr_read),
+        .s_readdata       (pr_readdata),
+        .s_readdatavalid  (pr_readdatavalid),
+        .s_writedata      (pr_writedata),
+        .s_byteenable     (pr_byteenable),
+        .s_write          (pr_write),
+        .s_waitrequest    (pr_waitrequest)
     );
 
     a2065_ddram_arbiter probe_arb (

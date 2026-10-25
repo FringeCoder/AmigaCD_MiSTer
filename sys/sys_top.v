@@ -601,9 +601,11 @@ end
 wire reset;
 wire clk_100m;
 
-// MEASUREMENT ONLY (ARM-CPU plan, step 1d): the lightweight HPS-to-FPGA
-// bridge, ARM physical 0xFF200000, with a register echo as its only slave.
-// Main_MiSTer already releases the bridge; the framework never used it.
+// MEASUREMENT ONLY (ARM-CPU plan, steps 1d and 1e): the lightweight
+// HPS-to-FPGA bridge, ARM physical 0xFF200000, with a register echo as its
+// only slave. Main_MiSTer already releases the bridge; the framework never
+// used it. It runs on the core's DDRAM_CLK, and registers 4-7 pass through
+// to emu (LW_*) with no clock crossing.
 wire [11:0] lw_awid, lw_wid, lw_arid, lw_bid, lw_rid;
 wire [20:0] lw_awaddr, lw_araddr;
 wire  [3:0] lw_awlen, lw_arlen, lw_wstrb;
@@ -611,10 +613,14 @@ wire [31:0] lw_wdata, lw_rdata;
 wire  [1:0] lw_bresp, lw_rresp;
 wire        lw_awvalid, lw_awready, lw_wlast, lw_wvalid, lw_wready, lw_bvalid, lw_bready;
 wire        lw_arvalid, lw_arready, lw_rlast, lw_rvalid, lw_rready;
+wire        lw_ext_wr;
+wire  [1:0] lw_ext_waddr;
+wire [31:0] lw_ext_wdata;
+wire [127:0] lw_ext_status;
 
 cyclonev_hps_interface_hps2fpga_light_weight lw_bridge
 (
-	.clk(clk_100m),
+	.clk(ram_clk),
 	.awid(lw_awid), .awaddr(lw_awaddr), .awlen(lw_awlen), .awsize(), .awburst(),
 	.awlock(), .awcache(), .awprot(), .awvalid(lw_awvalid), .awready(lw_awready),
 	.wid(lw_wid), .wdata(lw_wdata), .wstrb(lw_wstrb), .wlast(lw_wlast),
@@ -626,15 +632,20 @@ cyclonev_hps_interface_hps2fpga_light_weight lw_bridge
 	.rvalid(lw_rvalid), .rready(lw_rready)
 );
 
+// sysmem's reset is clk_100m's; bring it over before lw_echo uses it
+reg [1:0] lw_reset_s = 2'b11;
+always @(posedge ram_clk) lw_reset_s <= {lw_reset_s[0], reset};
+
 lw_echo lw_echo
 (
-	.clk(clk_100m),
-	.reset(reset),
+	.clk(ram_clk),
+	.reset(lw_reset_s[1]),
 	.awid(lw_awid), .awaddr(lw_awaddr), .awlen(lw_awlen), .awvalid(lw_awvalid), .awready(lw_awready),
 	.wdata(lw_wdata), .wstrb(lw_wstrb), .wlast(lw_wlast), .wvalid(lw_wvalid), .wready(lw_wready),
 	.bid(lw_bid), .bresp(lw_bresp), .bvalid(lw_bvalid), .bready(lw_bready),
 	.arid(lw_arid), .araddr(lw_araddr), .arlen(lw_arlen), .arvalid(lw_arvalid), .arready(lw_arready),
-	.rid(lw_rid), .rdata(lw_rdata), .rresp(lw_rresp), .rlast(lw_rlast), .rvalid(lw_rvalid), .rready(lw_rready)
+	.rid(lw_rid), .rdata(lw_rdata), .rresp(lw_rresp), .rlast(lw_rlast), .rvalid(lw_rvalid), .rready(lw_rready),
+	.ext_wr(lw_ext_wr), .ext_waddr(lw_ext_waddr), .ext_wdata(lw_ext_wdata), .ext_status(lw_ext_status)
 );
 
 sysmem_lite sysmem
@@ -1881,6 +1892,11 @@ emu emu
 	.DDRAM_DIN(ram_writedata),
 	.DDRAM_BE(ram_byteenable),
 	.DDRAM_WE(ram_write),
+
+	.LW_WR(lw_ext_wr),
+	.LW_WADDR(lw_ext_waddr),
+	.LW_WDATA(lw_ext_wdata),
+	.LW_STATUS(lw_ext_status),
 
 	.SDRAM_DQ(SDRAM_DQ),
 	.SDRAM_A(SDRAM_A),

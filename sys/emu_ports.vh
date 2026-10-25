@@ -114,6 +114,13 @@ output [63:0] DDRAM_DIN,
 output  [7:0] DDRAM_BE,
 output        DDRAM_WE,
 
+//Lightweight HPS-to-FPGA bridge registers 4-7, DDRAM_CLK domain
+//(MEASUREMENT ONLY, see sys/lw_echo.sv)
+input         LW_WR,
+input   [1:0] LW_WADDR,
+input  [31:0] LW_WDATA,
+output [127:0] LW_STATUS,
+
 //SDRAM interface with lower latency
 output        SDRAM_CLK,
 output        SDRAM_CKE,

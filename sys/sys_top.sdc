@@ -36,6 +36,7 @@ set_false_path -from {VSET[*]}
 set_false_path -to   {wcalc[*] hcalc[*]}
 set_false_path -to   {hdmi_width[*] hdmi_height[*]}
 set_false_path -to   {deb_* btn_en btn_up}
+set_false_path -to   {lw_reset_s[0]}
 
 set_multicycle_path -to {*_osd|osd_vcnt*} -setup 2
 set_multicycle_path -to {*_osd|osd_vcnt*} -hold 1

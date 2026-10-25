@@ -1891,6 +1891,10 @@ minimig minimig
 	.a2065_mem_byteenable(a2065_mem_byteenable),
 	.a2065_mem_write(a2065_mem_write),
 	.a2065_mem_waitrequest(a2065_mem_waitrequest),
+	.lw_wr(LW_WR),
+	.lw_waddr(LW_WADDR),
+	.lw_wdata(LW_WDATA),
+	.lw_status(LW_STATUS),
 
 	.USER_IN              (USER_IN              ),
 	.USER_OUT             (IndirectUserOutFlop  ),

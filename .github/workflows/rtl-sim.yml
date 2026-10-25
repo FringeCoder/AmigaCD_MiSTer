@@ -388,7 +388,9 @@ jobs:
       # rready stalls, write data before its address, bursts. Falsified
       # 2026-10-25: bid or rid not echoing the request's ID, a byte strobe
       # ignored, rlast on every beat, later burst beats zero, a read-only
-      # register write landing in ECHO and reads left uncounted each fail.
+      # register write landing in ECHO and reads left uncounted each fail; so
+      # (step 1e) do ext_wr pulsing for registers 0-3, sticking high, carrying
+      # no data, and registers 4-7 reading the wrong ext_status word.
       - name: Lightweight bridge echo (tb_lw_echo.sv)
         run: |
           set -euo pipefail
@@ -396,6 +398,22 @@ jobs:
           iverilog -g2012 -o tb ../../../sys/lw_echo.sv tb_lw_echo.sv
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
+
+      # MEASUREMENT ONLY (step 1e of the ARM-CPU plan): visprobe_ddr3 times
+      # how long a DDR3 write takes to become visible across the HPS
+      # controller's ports, each direction on its own, with the lightweight
+      # bridge as the start and stop signal. The bench's DDR3 model makes the
+      # ARM's write visible late. Falsified 2026-10-25: accepting any value,
+      # never counting misses, timing B from B_GO instead of the accepted
+      # write, honouring B_SEEN before the write, no timeout, the accept cycle
+      # off by one, no B write at all and the wrong B data each fail.
+      - name: DDR3 visibility probe (tb_visprobe.v)
+        run: |
+          set -euo pipefail
+          cd rtl/A2065/sim
+          iverilog -g2012 -o tb_visprobe ../visprobe_ddr3.v tb_visprobe.v
+          vvp -n tb_visprobe | tee out_visprobe.log
+          grep -q "RUN: PASS" out_visprobe.log
 
       # The SDRAM CPU port claim (freeze | peek_scan) is now ss_ctrl's own
       # register, port_own, loaded with the next values of both, so it leaves a

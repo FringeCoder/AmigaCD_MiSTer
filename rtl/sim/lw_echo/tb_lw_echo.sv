@@ -11,6 +11,8 @@
  *   - a burst read returns arlen+1 beats with rlast on the last only, and a
  *     burst write gets exactly one response;
  *   - the read-only registers ignore writes, and COUNT counts both kinds;
+ *   - registers 4-7 read ext_status and a write to one gives exactly one
+ *     ext_wr pulse with its index and data; registers 0-3 never pulse it;
  *   - nothing hangs: every transaction completes within a time limit.
  */
 `timescale 1ns/1ps
@@ -25,6 +27,8 @@ reg  [31:0] wdata = 0; reg [3:0]  wstrb = 0;  reg wlast = 0;       reg wvalid = 
 wire [11:0] bid;       wire [1:0] bresp;      wire bvalid;         reg bready = 0;
 reg  [11:0] arid = 0;  reg [20:0] araddr = 0; reg [3:0] arlen = 0; reg arvalid = 0; wire arready;
 wire [11:0] rid;       wire [31:0] rdata;     wire [1:0] rresp;    wire rlast; wire rvalid; reg rready = 0;
+wire        ext_wr;    wire [1:0] ext_waddr;  wire [31:0] ext_wdata;
+reg [127:0] ext_status = 128'h77777777_66666666_55555555_44444444;
 
 lw_echo dut (
 	.clk(clk), .reset(reset),
@@ -32,8 +36,19 @@ lw_echo dut (
 	.wdata(wdata), .wstrb(wstrb), .wlast(wlast), .wvalid(wvalid), .wready(wready),
 	.bid(bid), .bresp(bresp), .bvalid(bvalid), .bready(bready),
 	.arid(arid), .araddr(araddr), .arlen(arlen), .arvalid(arvalid), .arready(arready),
-	.rid(rid), .rdata(rdata), .rresp(rresp), .rlast(rlast), .rvalid(rvalid), .rready(rready)
+	.rid(rid), .rdata(rdata), .rresp(rresp), .rlast(rlast), .rvalid(rvalid), .rready(rready),
+	.ext_wr(ext_wr), .ext_waddr(ext_waddr), .ext_wdata(ext_wdata), .ext_status(ext_status)
 );
+
+// every ext_wr pulse, as the core would see it
+integer n_ext = 0;
+reg [1:0]  last_ext_waddr;
+reg [31:0] last_ext_wdata;
+always @(posedge clk) if (ext_wr) begin
+	n_ext = n_ext + 1;
+	last_ext_waddr = ext_waddr;
+	last_ext_wdata = ext_wdata;
+end
 
 integer seed = 32'h1D0E;
 integer errors = 0, checks = 0;
@@ -48,7 +63,7 @@ task automatic gap;
 endtask
 
 // One write burst of len+1 beats to register reg_n, data base d, strobes s.
-task automatic axi_write(input [1:0] reg_n, input [3:0] len, input [31:0] d, input [3:0] s, input [11:0] id);
+task automatic axi_write(input [2:0] reg_n, input [3:0] len, input [31:0] d, input [3:0] s, input [11:0] id);
 	integer beat, t, nb;
 	reg w_first, done;
 	begin
@@ -57,7 +72,7 @@ task automatic axi_write(input [1:0] reg_n, input [3:0] len, input [31:0] d, inp
 		fork
 			begin
 				if (w_first) repeat (3) @(posedge clk); else gap;
-				awid <= id; awaddr <= {17'h1ABC, reg_n, 2'b00}; awlen <= len; awvalid <= 1;
+				awid <= id; awaddr <= {16'h1ABC, reg_n, 2'b00}; awlen <= len; awvalid <= 1;
 				@(posedge clk); while (!awready) @(posedge clk);
 				awvalid <= 0;
 			end
@@ -98,12 +113,12 @@ task automatic axi_write(input [1:0] reg_n, input [3:0] len, input [31:0] d, inp
 endtask
 
 // One read burst; returns the first beat, checks every beat is the same register.
-task automatic axi_read(input [1:0] reg_n, input [3:0] len, input [11:0] id, output [31:0] first);
+task automatic axi_read(input [2:0] reg_n, input [3:0] len, input [11:0] id, output [31:0] first);
 	integer beat, t;
 	reg done;
 	begin
 		gap;
-		arid <= id; araddr <= {17'h0F00, reg_n, 2'b00}; arlen <= len; arvalid <= 1;
+		arid <= id; araddr <= {16'h0F00, reg_n, 2'b00}; arlen <= len; arvalid <= 1;
 		@(posedge clk); while (!arready) @(posedge clk);
 		arvalid <= 0;
 		beat = 0; t = 0; done = 0;
@@ -178,6 +193,30 @@ initial begin
 	axi_read(2, 0, 12'hA, c1);
 	checks = checks + 1;
 	if (c1 - c0 < 50) fail("CYCLES not counting");
+
+	// registers 0-3 never reach the core
+	checks = checks + 1;
+	if (n_ext != 0) fail("ext_wr pulsed for a register 0-3 write");
+
+	// registers 4-7: reads return ext_status, each write is one pulse
+	for (i = 0; i < 400; i = i + 1) begin : ext
+		reg [2:0] r; reg [31:0] d; reg [3:0] len; integer n_before;
+		r   = 4 + (i & 3);
+		d   = $random(seed);
+		len = ((i % 5) == 0) ? ($random(seed) & 3) : 0;
+		ext_status = {$random(seed), $random(seed), $random(seed), $random(seed)};
+		axi_read(r, len, i[11:0], v);
+		checks = checks + 1;
+		if (v != ext_status[32*(r-4) +: 32]) fail("register 4-7 read is not ext_status");
+		n_before = n_ext;
+		axi_write(r, len, d, 4'hF, i[11:0]);
+		checks = checks + 1;
+		if (n_ext != n_before + 1) fail("not exactly one ext_wr per write");
+		else if (last_ext_waddr != r[1:0] || last_ext_wdata != d + len) fail("ext_wr index or data wrong");
+	end
+	axi_read(0, 0, 12'hD, v);
+	checks = checks + 1;
+	if (v != expect_echo) fail("a register 4-7 write landed in ECHO");
 
 	axi_read(3, 0, 12'hB, v);
 	checks = checks + 1;
