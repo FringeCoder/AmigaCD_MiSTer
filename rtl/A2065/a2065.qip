@@ -3,3 +3,4 @@ set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) a2065_d
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) a2065_ddram.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) a2065_ddram_arbiter.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) a2065_regfile.v ]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) latprobe_ddr3.v ]

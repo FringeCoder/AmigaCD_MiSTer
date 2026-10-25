@@ -364,6 +364,23 @@ jobs:
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # MEASUREMENT ONLY (step 1 of the ARM-CPU plan): latprobe_ddr3 echoes an
+      # ARM request word back through DDR3 so the ARM can time the round trip.
+      # It shares the A2065's DDR3 port, so it must never write unless armed,
+      # must poll slowly when idle, and must answer each request exactly once
+      # with an honest read latency. Against a DDR3 model with random
+      # waitrequest and latency. Falsified 2026-10-25: answering without the
+      # magic, answering every poll, always polling fast, timing from the
+      # request instead of its acceptance, and never counting polls each fail
+      # the check that names them.
+      - name: DDR3 latency probe (tb_latprobe.v)
+        run: |
+          set -euo pipefail
+          cd rtl/A2065/sim
+          iverilog -g2012 -o tb_latprobe ../latprobe_ddr3.v tb_latprobe.v
+          vvp -n tb_latprobe | tee out_latprobe.log
+          grep -q "RUN: PASS" out_latprobe.log
+
       # The SDRAM CPU port claim (freeze | peek_scan) is now ss_ctrl's own
       # register, port_own, loaded with the next values of both, so it leaves a
       # flop instead of a gate on freeze's ~145-load net -- that path into

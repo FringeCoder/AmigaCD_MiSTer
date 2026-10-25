@@ -121,6 +121,64 @@ module a2065 (
 
     wire int2_ddr;
 
+    // The mailbox and the latency probe share the A2065's DDR3 port; the
+    // mailbox wins (MEASUREMENT ONLY, see latprobe_ddr3.v).
+    wire [28:0] mb_address,   pr_address;
+    wire [7:0]  mb_burstcount, pr_burstcount;
+    wire        mb_read,      pr_read;
+    wire [63:0] mb_readdata,  pr_readdata;
+    wire        mb_readdatavalid, pr_readdatavalid;
+    wire [63:0] mb_writedata, pr_writedata;
+    wire [7:0]  mb_byteenable, pr_byteenable;
+    wire        mb_write,     pr_write;
+    wire        mb_waitrequest, pr_waitrequest;
+
+    latprobe_ddr3 latprobe (
+        .clk              (clk_ddr),
+        .rst_n            (rst_n_sys),
+        .avl_address      (pr_address),
+        .avl_burstcount   (pr_burstcount),
+        .avl_read         (pr_read),
+        .avl_readdata     (pr_readdata),
+        .avl_readdatavalid(pr_readdatavalid),
+        .avl_writedata    (pr_writedata),
+        .avl_byteenable   (pr_byteenable),
+        .avl_write        (pr_write),
+        .avl_waitrequest  (pr_waitrequest)
+    );
+
+    a2065_ddram_arbiter probe_arb (
+        .clk              (clk_ddr),
+        .rst              (!rst_n_sys),
+        .m0_address       (mb_address),
+        .m0_burstcount    (mb_burstcount),
+        .m0_read          (mb_read),
+        .m0_readdata      (mb_readdata),
+        .m0_readdatavalid (mb_readdatavalid),
+        .m0_writedata     (mb_writedata),
+        .m0_byteenable    (mb_byteenable),
+        .m0_write         (mb_write),
+        .m0_waitrequest   (mb_waitrequest),
+        .m1_address       (pr_address),
+        .m1_burstcount    (pr_burstcount),
+        .m1_read          (pr_read),
+        .m1_readdata      (pr_readdata),
+        .m1_readdatavalid (pr_readdatavalid),
+        .m1_writedata     (pr_writedata),
+        .m1_byteenable    (pr_byteenable),
+        .m1_write         (pr_write),
+        .m1_waitrequest   (pr_waitrequest),
+        .s_address        (mem_address),
+        .s_burstcount     (mem_burstcount),
+        .s_read           (mem_read),
+        .s_readdata       (mem_readdata),
+        .s_readdatavalid  (mem_readdatavalid),
+        .s_writedata      (mem_writedata),
+        .s_byteenable     (mem_byteenable),
+        .s_write          (mem_write),
+        .s_waitrequest    (mem_waitrequest)
+    );
+
     a2065_ddr3_mailbox mailbox (
         .clk              (clk_ddr),
         .rst_n            (rst_n_sys),
@@ -145,15 +203,15 @@ module a2065 (
         .bram_resp_valid  (bram_resp_valid),
         .bram_resp_data   (bram_resp_data),
 
-        .avl_address      (mem_address),
-        .avl_burstcount   (mem_burstcount),
-        .avl_read         (mem_read),
-        .avl_readdata     (mem_readdata),
-        .avl_readdatavalid(mem_readdatavalid),
-        .avl_writedata    (mem_writedata),
-        .avl_byteenable   (mem_byteenable),
-        .avl_write        (mem_write),
-        .avl_waitrequest  (mem_waitrequest)
+        .avl_address      (mb_address),
+        .avl_burstcount   (mb_burstcount),
+        .avl_read         (mb_read),
+        .avl_readdata     (mb_readdata),
+        .avl_readdatavalid(mb_readdatavalid),
+        .avl_writedata    (mb_writedata),
+        .avl_byteenable   (mb_byteenable),
+        .avl_write        (mb_write),
+        .avl_waitrequest  (mb_waitrequest)
     );
 
     // The interrupt is raised in the memory clock domain and consumed in the
