@@ -153,6 +153,27 @@ jobs:
           vvp tb_fwd | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # The read cache's RAS slot takes its address from cacheAddr, cpuAddr a
+      # clock late, which keeps AmigaCD.sv's CPU/save state address mux out of
+      # the clk_114 into the SDRAM address pins (fit families B_114_to_sd_addr
+      # and A_sys_to_sd_addr). Correct only while cpuAddr holds for a clock
+      # before any slot can take cache_req: real sdram_ctrl and cpu_cache_new,
+      # 300 CPU reads to fresh lines on every phase of the SDRAM cycle and 60
+      # accesses dropped before their ack, checking the bank/row of every
+      # read-cache ACTIVATE and the column of every READ against the address
+      # the CPU holds. Falsified 2026-10-24: the copy 4, 5 or 6 clocks late
+      # fails both checks; 1 to 3 pass (the earliest slot is 3 clocks after
+      # cpuCS, measured).
+      - name: SDRAM read-cache slot address
+        run: |
+          set -euo pipefail
+          cd rtl/sim/sdram
+          python3 make_sim_sdram.py
+          iverilog -g2012 -o tb_fill \
+            dpram_sim.v ../../cpu_cache_new.v sdram_ctrl_sim.v tb_sdram_fill.sv
+          vvp tb_fill | tee out_fill.log
+          grep -q "RUN: PASS" out_fill.log
+
       # ddram_ctrl's read-return acceptance. Avalon lets a slave hold
       # waitrequest while pulsing readdatavalid; state 1 used to wait for both
       # to be favourable, so a return landing on a busy cycle was dropped and
