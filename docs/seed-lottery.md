@@ -73,6 +73,7 @@ including the ones that are reverted.
 | 32 | all (upstream) | the 2026-10-24 Minimig-AGA sync to b988bd09 (#62): the 68EC030, the CPU cache's cpu_cs fix, sdram_ctrl's write_req on cache_wr_ack, the #281 revert; merged as b8079fce. Panel at build date 261024 | b8079fce | **0/20 close, median -1.318** (best 36, -0.290); **B_114_to_sd_addr / B.ss_ctrl -1.318 (20/20, worst -2.126)**, A.cpu_wrapper 7/20, C -0.304 (14), H -0.220 (16), B.sdram_ctrl -0.305 (12), M -0.331 (18); worst hold -0.336 (seed 30). Worst path: ss_dma's sd_addr / port_own through AmigaCD.sv's cpuAddr mux and the RAS slot mux into sd_addr at the pins, 2.9 ns of its route the last hop | regression, attributed by row 33; fixed by row 34 |
 | 33 | -- (baseline) | row 31's tree as released (f4c8b713, identical to 92e1ea63, cd32-native-mvp before #62), re-fitted at build date 261024 to compare with row 32 on the same date | f4c8b713 | 1/20 close (seed 23, +0.007/+0.243), median -0.256; B.ss_ctrl +0.029 (9/20), B_114 -0.092 (12/20), A.cpu_wrapper +0.638 (1/20), M -0.226 (19/20), F/H +0.041 (8/20 each), L +0.129 (6/20); worst hold +0.108. Against row 31's 261022 panel (median -0.224, 4/18 close) the build date alone moved the median 0.03 ns | baseline: row 32's B collapse is the merge, not the date or placement noise (1.35 ns on the median, every seed) |
 | 34 | B, A | the read cache's RAS slot takes its address from cacheAddr, cpuAddr registered, so AmigaCD.sv's ss_port_own address mux ends in a register and sd_addr's input is register to register through the slot mux only; writes already did (writeAddr). No latency: the earliest slot is 3 clocks after cpuCS (measured); rtl/sim/sdram/tb_sdram_fill proves the address (falsified: 4+ clocks late fails) | a94ed0c4 | median -1.318 -> **-0.481**, 0/20 close (best 31, -0.071/+0.252); **B.ss_ctrl gone (no path), B_114 -1.318 -> +0.252 (20 -> 4/20)**, **A_sys_to_sd_addr +0.182 -> +1.175 (7 -> 0/20)**, C -0.304 -> +0.182 (14 -> 0); H -0.126 (11), M -0.103 (14), F +0.037 (8), E +0.625 (5), L +0.291 (3). all_setup's median is below every named family's: the worst path on seeds 22, 27, 38 is the read gate (ram_cs, cpu_rdgate cs_q / ready_q) into the TG68K (opcode, data_write_tmp; -0.510, -0.955, -0.752), which no family names; seed 36's is sdram_ctrl's rcnt into sd_ras (-0.492) | kept: B and A are fixed and better than row 33 on both; what is left is the read gate, row 35 |
+| 35 | -- (seeds) | row 34's tree (a94ed0c4; head 79669d21 adds only docs and families) on seeds 1-20, build date 261024, with the new Q.rdgate_to_cpu and R.sdram_refresh families | 79669d21 | **2/20 close (best 20, +0.035/+0.241)**, median -0.401; **Q.rdgate_to_cpu -0.354 (17/20, worst -0.906)** is now the wall, all_setup -0.445 (19/20); M -0.092 (14), H -0.032 (11), F +0.052 (10), C +0.202 (6), E +0.461 (5); R.sdram_refresh +0.311 (2/20); A 0/20, B_114 +0.399 (3/20) | kept: SEED 20 pinned for the next candidate (below). Next lead is Q, whose structural fix costs a clk_sys on some reads (row 24's trade) and waits on the owner |
 
 ### The build date is a seed
 
@@ -102,6 +103,18 @@ dates) are weaker evidence than the table makes them look. From now on a
 comparison pins the date: fit.yml's `build_date` input (scripts/ci-fit.sh),
 recorded in each seed's fit.json. It also means a release bitstream's timing
 depends on the day it is built.
+
+### SEED 20, after the 2026-10-24 sync
+
+AmigaCD.qsf's seed moves from 22 to 20, the best of row 35's two closes:
+setup +0.035, hold +0.241 at the slow 100 C gate, on a94ed0c4's RTL built
+with BUILD_DATE 261024 (run 40145486459, artifact fit-seed-20, id
+12582040563, zip sha256
+45fdb4859ea1138cd6903727a8bad02d21429466099616853fb47c97f6fc701d). As with
+SEED 22 below, the close holds for that build date only: a push build fits
+SEED 20 with its own date and is not expected to close; rebuild with
+fit.yml's build_date set to 261024. The margin is thin (+0.035) and the
+wall under it, Q.rdgate_to_cpu, fails on 17 of 20 seeds.
 
 ### SEED 22, and the release candidate of 2026-10-22
 
