@@ -87,7 +87,7 @@ lw_echo lw (
 reg        cpu_is_68000 = 1;
 reg  [2:0] ipl_n = 3'b111;
 
-wire        px_own, px_fast, px_fastw, px_tgl, px_rw, px_uds_n, px_lds_n, px_ack_tgl;
+wire        px_own, px_fast, px_fastw, px_reset, px_tgl, px_rw, px_uds_n, px_lds_n, px_ack_tgl;
 wire [23:1] px_addr;
 wire [15:0] px_wdata, px_rdata;
 
@@ -96,7 +96,7 @@ armcpu_bridge br (
 	.bus_req(bus_req), .bus_we(bus_we), .bus_addr(bus_addr), .bus_size(bus_size),
 	.bus_wstrb(bus_wstrb), .bus_wdata(bus_wdata), .bus_ack(bus_ack), .bus_rdata(bus_rdata),
 	.cpu_is_68000(cpu_is_68000), .ipl_n(ipl_n),
-	.px_own(px_own), .px_fast(px_fast), .px_fastw(px_fastw), .px_tgl(px_tgl), .px_rw(px_rw), .px_addr(px_addr),
+	.px_own(px_own), .px_fast(px_fast), .px_fastw(px_fastw), .px_reset(px_reset), .px_tgl(px_tgl), .px_rw(px_rw), .px_addr(px_addr),
 	.px_uds_n(px_uds_n), .px_lds_n(px_lds_n), .px_wdata(px_wdata),
 	.px_ack_tgl(px_ack_tgl), .px_rdata(px_rdata)
 );
@@ -480,6 +480,13 @@ initial begin
 	ctl_read(1, v);
 	checks = checks + 1;
 	if (v[2:0] !== 3'b001) fail("CTRL does not read back OWN without FAST");
+	// RESET: the CPU's reset output follows CTRL bit 3, only with OWN
+	ctl_write(1, 9); ctl_read(1, v);
+	checks = checks + 2;
+	if (v[3] !== 1'b1 || px_reset !== 1'b1) fail("RESET with OWN did not take");
+	ctl_write(1, 8); ctl_read(1, v);
+	if (v[3] !== 1'b0 || px_reset !== 1'b0) fail("RESET without OWN took");
+	ctl_write(1, 1);
 
 	// a posted write: answered before its cycle can have ended
 	ctl_write(2, 0);

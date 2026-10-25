@@ -99,7 +99,7 @@ module tb_cpu_wrapper_park;
 		.cpustate(cpustate), .cacr(), .nmi_addr(),
 		.z2ram_ena_out(), .z3ram_base0_out(), .z3ram_ena0_out(),
 		.z3ram_base1_out(), .z3ram_ena1_out(), .dcache_sw_en(),
-		.px_own(1'b0), .px_fast(1'b0), .px_fastw(1'b0), .px_tgl(1'b0), .px_rw(1'b1), .px_addr(23'd0), .px_uds_n(1'b1), .px_lds_n(1'b1),
+		.px_own(1'b0), .px_fast(1'b0), .px_fastw(1'b0), .px_reset(1'b0), .px_tgl(1'b0), .px_rw(1'b1), .px_addr(23'd0), .px_uds_n(1'b1), .px_lds_n(1'b1),
 		.px_wdata(16'd0), .px_ack_tgl(), .px_rdata()
 	);
 

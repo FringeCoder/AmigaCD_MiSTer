@@ -204,6 +204,7 @@ module cpu_wrapper
 	input             px_own,
 	input             px_fast,
 	input             px_fastw,
+	input             px_reset,       // the ARM's RESET instruction (armcpu_bridge)
 	input             px_tgl,
 	input             px_rw,
 	input      [23:1] px_addr,
@@ -475,8 +476,9 @@ wire        reset_out_o;
 // proxy (MEASUREMENT ONLY, see proxy68k.v).
 // px_own and px_fast come from the bridge's clock (clk_100m), asynchronous
 // to this one
-reg px_own_m, px_own_s, px_fast_m, px_fast_s, px_fastw_m, px_fastw_s;
+reg px_own_m, px_own_s, px_fast_m, px_fast_s, px_fastw_m, px_fastw_s, px_reset_m, px_reset_s;
 always @(posedge clk) begin
+	{px_reset_s, px_reset_m} <= {px_reset_m, px_reset};
 	{px_own_s, px_own_m}     <= {px_own_m, px_own};
 	{px_fast_s, px_fast_m}   <= {px_fast_m, px_fast};
 	{px_fastw_s, px_fastw_m} <= {px_fastw_m, px_fastw};
@@ -554,7 +556,8 @@ wire        as_x        = px_own_s ? px_as     : as_o;
 wire        wr_x        = px_own_s ? px_rw_o   : wr_o;
 wire        uds_x       = px_own_s ? px_uds    : uds_o;
 wire        lds_x       = px_own_s ? px_lds    : lds_o;
-wire        reset_out_x = px_own_s | reset_out_o;
+// the fx68k's oRESETn, or the ARM's RESET instruction while it owns the bus
+wire        reset_out_x = px_own_s ? ~px_reset_s : reset_out_o;
 
 fx68k cpu_inst_o
 (

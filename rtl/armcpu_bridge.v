@@ -32,6 +32,10 @@
  *               SDRAM CPU port's write buffer the same way (sdram_ctrl
  *               forwards a buffered write into any chipset read of the same
  *               block). Writes to the custom chips and CIAs keep 68000 timing.
+ *               bit 3 RESET: while set (and OWN), the CPU's reset output is
+ *               driven low, as the 68000's RESET instruction does: it resets
+ *               the chipset, the CIAs and the cards, never the CPU side. The
+ *               ARM holds it for the instruction's 124 clocks (~17 us).
  *     2 BANK    [3:0]
  *     3 STATUS  [2:0] the interrupt level Paula is asking for (0 none),
  *               [4] OWN in effect, [8] CPU set to 68000
@@ -74,6 +78,7 @@ module armcpu_bridge (
 	output reg         px_own,
 	output reg         px_fast,
 	output reg         px_fastw,
+	output reg         px_reset,
 	output reg         px_tgl,
 	output reg         px_rw,          // 1 = read
 	output reg  [23:1] px_addr,
@@ -144,7 +149,7 @@ module armcpu_bridge (
 	function [31:0] ctl(input [2:0] n);
 		case (n)
 			3'd0: ctl = MAGIC;
-			3'd1: ctl = {29'd0, px_fastw, px_fast, px_own};
+			3'd1: ctl = {28'd0, px_reset, px_fastw, px_fast, px_own};
 			3'd2: ctl = {28'd0, bank};
 			3'd3: ctl = {23'd0, is68k_now, 3'd0, px_own, 1'b0, ~ipl_s2};
 			3'd4: ctl = cyc;
@@ -164,6 +169,7 @@ module armcpu_bridge (
 			px_fast  <= 1'b0;
 			fastw_req <= 1'b0;
 			px_fastw <= 1'b0;
+			px_reset <= 1'b0;
 			bank     <= 4'd0;
 			busy     <= 1'b0;
 			in_cycle <= 1'b0;
@@ -203,7 +209,10 @@ module armcpu_bridge (
 					bus_ack <= 1'b1;
 					bus_rdata <= ctl(r_addr[4:2]);
 					if (r_we) case (r_addr[4:2])
-						3'd1: if (r_wstrb[0]) {fastw_req, fast_req, own_req} <= r_wdata[2:0];
+						3'd1: if (r_wstrb[0]) begin
+							{fastw_req, fast_req, own_req} <= r_wdata[2:0];
+							px_reset <= r_wdata[3] & r_wdata[0];
+						end
 						3'd2: if (r_wstrb[0]) bank    <= r_wdata[3:0];
 						default: ;
 					endcase
