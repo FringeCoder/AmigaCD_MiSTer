@@ -413,7 +413,9 @@ jobs:
       # write beat or while it is busy each fail. FAST (reads through the
       # SDRAM port, no 68000 phases): writes taken fast, fast reads outside
       # the port's addresses, fast read data dropped, ending before the ready,
-      # and FAST never reaching the proxy each fail.
+      # and FAST never reaching the proxy each fail. FASTW (writes through the
+      # port): fast writes outside its addresses, no data, R/W left high, and
+      # FASTW never reaching the proxy each fail.
       - name: ARM-CPU bus proxy (tb_armcpu.sv)
         run: |
           set -euo pipefail

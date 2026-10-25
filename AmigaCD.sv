@@ -1246,6 +1246,7 @@ cpu_wrapper cpu_wrapper
 
 	.px_own          (px_own          ),
 	.px_fast         (px_fast         ),
+	.px_fastw        (px_fastw        ),
 	.px_tgl          (px_tgl          ),
 	.px_rw           (px_rw           ),
 	.px_addr         (px_addr         ),
@@ -1262,7 +1263,7 @@ cpu_wrapper cpu_wrapper
 // the near-critical paths there, and on clk_sys every AXI handshake cost a
 // 35 ns cycle. It is asynchronous to clk_sys; armcpu_bridge and proxy68k
 // synchronize what crosses. See rtl/armcpu_bridge.v.
-wire        px_own, px_fast, px_tgl, px_rw, px_uds_n, px_lds_n, px_ack_tgl;
+wire        px_own, px_fast, px_fastw, px_tgl, px_rw, px_uds_n, px_lds_n, px_ack_tgl;
 wire [23:1] px_addr;
 wire [15:0] px_wdata, px_rdata;
 
@@ -1282,6 +1283,7 @@ armcpu_bridge armcpu_bridge
 	.ipl_n        (chip_ipl        ),
 	.px_own       (px_own          ),
 	.px_fast      (px_fast         ),
+	.px_fastw     (px_fastw        ),
 	.px_tgl       (px_tgl          ),
 	.px_rw        (px_rw           ),
 	.px_addr      (px_addr         ),

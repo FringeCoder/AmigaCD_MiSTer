@@ -32,7 +32,10 @@
  *     and 1) skip the 68000 phases -- AS and the strobes fall together on
  *     any edge, rise on the edge the port's ready is seen -- and take less
  *     time by LAST; every write, and every read elsewhere, keeps all of the
- *     68000 rules above.
+ *     68000 rules above;
+ *   - with FASTW as well, writes to those addresses do the same -- AS, R/W,
+ *     the strobes and the data together, held to the ready -- and land in
+ *     memory; writes elsewhere keep the 68000 rules.
  */
 `timescale 1ns/1ps
 
@@ -84,7 +87,7 @@ lw_echo lw (
 reg        cpu_is_68000 = 1;
 reg  [2:0] ipl_n = 3'b111;
 
-wire        px_own, px_fast, px_tgl, px_rw, px_uds_n, px_lds_n, px_ack_tgl;
+wire        px_own, px_fast, px_fastw, px_tgl, px_rw, px_uds_n, px_lds_n, px_ack_tgl;
 wire [23:1] px_addr;
 wire [15:0] px_wdata, px_rdata;
 
@@ -93,16 +96,17 @@ armcpu_bridge br (
 	.bus_req(bus_req), .bus_we(bus_we), .bus_addr(bus_addr), .bus_size(bus_size),
 	.bus_wstrb(bus_wstrb), .bus_wdata(bus_wdata), .bus_ack(bus_ack), .bus_rdata(bus_rdata),
 	.cpu_is_68000(cpu_is_68000), .ipl_n(ipl_n),
-	.px_own(px_own), .px_fast(px_fast), .px_tgl(px_tgl), .px_rw(px_rw), .px_addr(px_addr),
+	.px_own(px_own), .px_fast(px_fast), .px_fastw(px_fastw), .px_tgl(px_tgl), .px_rw(px_rw), .px_addr(px_addr),
 	.px_uds_n(px_uds_n), .px_lds_n(px_lds_n), .px_wdata(px_wdata),
 	.px_ack_tgl(px_ack_tgl), .px_rdata(px_rdata)
 );
 
 // cpu_wrapper brings px_own and px_fast into clk_sys through two flops
-reg px_own_m = 0, px_own_s = 0, px_fast_m = 0, px_fast_s = 0;
+reg px_own_m = 0, px_own_s = 0, px_fast_m = 0, px_fast_s = 0, px_fastw_m = 0, px_fastw_s = 0;
 always @(posedge clk_sys) begin
-	{px_own_s, px_own_m}   <= {px_own_m, px_own};
-	{px_fast_s, px_fast_m} <= {px_fast_m, px_fast};
+	{px_own_s, px_own_m}     <= {px_own_m, px_own};
+	{px_fast_s, px_fast_m}   <= {px_fast_m, px_fast};
+	{px_fastw_s, px_fastw_m} <= {px_fastw_m, px_fastw};
 end
 // the SDRAM port's addresses, as cpu_wrapper's u_px_router decodes them:
 // here, chip RAM only (below 2 MB)
@@ -116,7 +120,8 @@ reg  [15:0] din;
 
 proxy68k #(.WAIT_BITS(8)) px (
 	.clk(clk_sys), .reset_n(cpu_reset_n), .ph1(ph1), .ph2(ph2),
-	.own(px_own_s), .fast_en(px_fast_s), .fast_cand(fast_cand), .req_tgl(px_tgl), .req_rw(px_rw), .req_addr(px_addr),
+	.own(px_own_s), .fast_en(px_fast_s), .fast_cand(fast_cand),
+	.fastw_en(px_fastw_s), .fastw_cand(fast_cand), .req_tgl(px_tgl), .req_rw(px_rw), .req_addr(px_addr),
 	.req_uds_n(px_uds_n), .req_lds_n(px_lds_n), .req_wdata(px_wdata),
 	.ack_tgl(px_ack_tgl), .rdata(px_rdata),
 	.as_n(as_n), .rw(rw), .uds_n(uds_n), .lds_n(lds_n), .addr(addr), .dout(dout),
@@ -171,34 +176,42 @@ reg        wr_strobe_due;      // a write's AS fell; its strobes follow on the n
 reg        ds_seen;
 reg        fdt_seen;           // fast cycle: the ready seen on an edge
 reg        fast_ended = 0;     // a fast cycle ended on this edge
-integer    n_fast = 0, n_fast_writes = 0;
+integer    n_fast = 0, n_fast_writes = 0, n_fastw = 0;
+wire       fast_start = (px_fast_s & rw | px_fastw_s & ~rw) & (addr[23:21] == 3'd0);
 
 always @(posedge clk_sys) begin
 	// what changed since the last edge happened on that edge
 	// (a reset ends a cycle on whatever edge it lands on)
 	// (a fast read is not a 68000 cycle: its edges are checked below)
 	if ((as_n !== p_as || uds_n !== p_uds || lds_n !== p_lds || rw !== p_rw) && !(p_ph1 || p_ph2) && p_rstn
-	    && !cyc_fast && !(p_as && !as_n && px_fast_s && rw && addr[23:21] == 3'd0))
+	    && !cyc_fast && !(p_as && !as_n && fast_start))
 		fail("a pin moved on an edge with no phase enable");
 
-	// a fast read: AS with its strobes on any edge, ends on the edge after its ready
-	if (p_as && !as_n && px_fast_s && rw && addr[23:21] == 3'd0) begin
+	// a fast cycle: AS with its strobes (and a write's R/W and data) on any
+	// edge, ending on the edge after its ready
+	if (p_as && !as_n && fast_start) begin
 		checks = checks + 1;
 		cyc_fast = 1; fdt_seen = 0;
 		dt_fast = $unsigned($random(seed)) % 6;
-		if (uds_n && lds_n) fail("fast read: AS fell without its strobes");
+		if (uds_n && lds_n) fail("fast cycle: AS fell without its strobes");
+		if (!rw && p_rw !== 1'b1) fail("fast write: R/W low before AS");
 		last_rw = rw; last_addr = addr; last_uds = uds_n; last_lds = lds_n;
-		n_fast = n_fast + 1;
+		if (rw) n_fast = n_fast + 1; else n_fastw = n_fastw + 1;
 	end
 	else if (cyc_fast && !as_n) begin
-		if (addr !== p_addr || rw !== 1'b1) fail("fast read: address or R/W moved");
+		if (addr !== p_addr || rw !== last_rw) fail("fast cycle: address or R/W moved");
+		if (!last_rw && dout !== p_dout) fail("fast write: data moved");
 		if (!dtack_n) fdt_seen = 1;
 	end
 	else if (cyc_fast && as_n) begin
 		fast_ended = 1;
 		checks = checks + 2;
-		if (!(uds_n && lds_n)) fail("fast read: strobes did not rise with AS");
-		if (!fdt_seen && last_addr[23:20] != 4'hF && p_rstn) fail("fast read: AS rose before the ready");
+		if (!(uds_n && lds_n) || rw !== 1'b1) fail("fast cycle: strobes or R/W did not rise with AS");
+		if (!fdt_seen && last_addr[23:20] != 4'hF && p_rstn) fail("fast cycle: AS rose before the ready");
+		if (!last_rw) begin
+			if (!last_uds) mem[mi({last_addr, 1'b0})] = p_dout[15:8];
+			if (!last_lds) mem[mi({last_addr, 1'b1})] = p_dout[7:0];
+		end
 		n_cycles = n_cycles + 1;
 		if (!last_uds) n_uds = n_uds + 1;
 		if (!last_lds) n_lds = n_lds + 1;
@@ -380,8 +393,9 @@ initial begin
 	repeat (8) @(posedge clk_sys);
 
 	// random single accesses of every size, both directions: FAST off, then on
-	for (i = 0; i < 600; i = i + 1) begin
+	for (i = 0; i < 900; i = i + 1) begin
 		if (i == 300) ctl_write(1, 3);
+		if (i == 600) ctl_write(1, 7);
 		bank = $unsigned($random(seed)) % 15;   // not F: F never answers
 		off  = $random(seed) & 20'h0FFFC;       // inside the bench's memory map
 		dt_wait = $random(seed) & 3;
@@ -441,6 +455,20 @@ initial begin
 	checks = checks + 2;
 	if (n_fast < 50) begin fail("FAST: too few fast reads"); $display("  %0d", n_fast); end
 	if (n_fast_writes == 0) fail("FAST: no writes ran with FAST on (bench)");
+	checks = checks + 1;
+	if (n_fastw < 10) begin fail("FASTW: too few fast writes"); $display("  %0d", n_fastw); end
+	// a fast write takes less time by LAST than a 68000-timed one
+	ctl_write(1, 7);
+	ctl_write(2, 0);
+	beat_data[0] = 32'h12345678;
+	axi_write(WIN + 21'h00060, 0, 1, 4'b0011);
+	ctl_read(5, w);
+	ctl_write(1, 1);
+	axi_write(WIN + 21'h00060, 0, 1, 4'b0011);
+	ctl_read(5, v);
+	checks = checks + 1;
+	if (!(w < v)) begin fail("FASTW write not quicker by LAST"); $display("  fast %0d slow %0d", w, v); end
+	ctl_write(1, 3);
 	ctl_write(2, 0);
 	axi_read(WIN + 21'h00040, 0, 1);
 	ctl_read(5, w);
@@ -451,7 +479,7 @@ initial begin
 	if (!(w < v)) begin fail("FAST read not quicker by LAST"); $display("  fast %0d slow %0d", w, v); end
 	ctl_read(1, v);
 	checks = checks + 1;
-	if (v[1:0] !== 2'b01) fail("CTRL does not read back OWN without FAST");
+	if (v[2:0] !== 3'b001) fail("CTRL does not read back OWN without FAST");
 
 	// a posted write: answered before its cycle can have ended
 	ctl_write(2, 0);

@@ -30,6 +30,13 @@
  * and the data is taken on that edge. Writes, and reads of anything else --
  * the custom chips, the CIAs, autoconfig -- always keep the 68000 timing.
  *
+ * Fast writes. With fastw_en, a write whose address fastw_cand says the
+ * SDRAM CPU port takes (chip RAM, fast RAM) does the same: AS, R/W, the
+ * strobes and the data all on the next edge, ending on the edge the port's
+ * ready (its write buffer taking the word) is seen. sdram_ctrl forwards a
+ * buffered write into any chipset read of the same block, so DMA never reads
+ * around it. Writes anywhere else keep the 68000 timing.
+ *
  * The ARM waits on every access, so nothing here may wait forever: a cycle
  * that sees no DTACK for 65536 enPhi1 (~9 ms) ends anyway and reads
  * 0xFFFF, and a reset in the middle of a cycle still acknowledges it. A
@@ -47,6 +54,8 @@ module proxy68k #(
 	input  wire        own,
 	input  wire        fast_en,      // fast reads allowed (armcpu_bridge FAST)
 	input  wire        fast_cand,    // req_addr is answered by the SDRAM CPU port
+	input  wire        fastw_en,     // fast writes allowed (armcpu_bridge FASTW)
+	input  wire        fastw_cand,   // a write to req_addr goes to the SDRAM CPU port
 	input  wire        req_tgl,
 	input  wire        req_rw,       // 1 = read
 	input  wire [23:1] req_addr,
@@ -72,8 +81,8 @@ module proxy68k #(
 	localparam S2     = 3'd2;
 	localparam S4     = 3'd3;
 	localparam S6     = 3'd4;
-	localparam F_WAIT = 3'd5;     // fast read: waiting for the port's ready
-	localparam F_END  = 3'd6;     // fast read: data taken, strobes off
+	localparam F_WAIT = 3'd5;     // fast cycle: waiting for the port's ready
+	localparam F_END  = 3'd6;     // fast cycle: done, strobes off
 
 	reg [1:0] req_s = 2'b00;
 	always @(posedge clk) req_s <= {req_s[0], req_tgl};
@@ -103,11 +112,14 @@ module proxy68k #(
 
 			case (st)
 			S_IDLE:
-				if (own & (req_s[1] != taken) & fast_en & req_rw & fast_cand) begin
-					// fast read: on this edge, no phase to wait for
+				if (own & (req_s[1] != taken) &
+				    ((fast_en & req_rw & fast_cand) | (fastw_en & ~req_rw & fastw_cand))) begin
+					// fast read or write: on this edge, no phase to wait for
 					taken   <= req_s[1];
-					c_rw    <= 1'b1;
+					c_rw    <= req_rw;
+					rw      <= req_rw;
 					addr    <= req_addr;
+					dout    <= req_wdata;
 					as_n    <= 1'b0;
 					uds_n   <= req_uds_n;
 					lds_n   <= req_lds_n;
@@ -129,10 +141,11 @@ module proxy68k #(
 				// or two: only believe it once f_hold has run out
 				if (|f_hold) f_hold <= f_hold - 2'd1;
 				else if (~dtack_n) begin
-					rdata <= din;
+					if (c_rw) rdata <= din;
 					as_n  <= 1'b1;
 					uds_n <= 1'b1;
 					lds_n <= 1'b1;
+					rw    <= 1'b1;
 					st    <= F_END;
 				end
 				if (ph1 & ~(~|f_hold & ~dtack_n)) begin
@@ -141,6 +154,7 @@ module proxy68k #(
 						as_n    <= 1'b1;
 						uds_n   <= 1'b1;
 						lds_n   <= 1'b1;
+						rw      <= 1'b1;
 						rdata   <= 16'hFFFF;
 						ack_tgl <= ~ack_tgl;
 						st      <= S_IDLE;

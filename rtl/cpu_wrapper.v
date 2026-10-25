@@ -203,6 +203,7 @@ module cpu_wrapper
 	// the mux, and the bridge only raises px_own with that CPU selected.
 	input             px_own,
 	input             px_fast,
+	input             px_fastw,
 	input             px_tgl,
 	input             px_rw,
 	input      [23:1] px_addr,
@@ -474,10 +475,11 @@ wire        reset_out_o;
 // proxy (MEASUREMENT ONLY, see proxy68k.v).
 // px_own and px_fast come from the bridge's clock (clk_100m), asynchronous
 // to this one
-reg px_own_m, px_own_s, px_fast_m, px_fast_s;
+reg px_own_m, px_own_s, px_fast_m, px_fast_s, px_fastw_m, px_fastw_s;
 always @(posedge clk) begin
-	{px_own_s, px_own_m}   <= {px_own_m, px_own};
-	{px_fast_s, px_fast_m} <= {px_fast_m, px_fast};
+	{px_own_s, px_own_m}     <= {px_own_m, px_own};
+	{px_fast_s, px_fast_m}   <= {px_fast_m, px_fast};
+	{px_fastw_s, px_fastw_m} <= {px_fastw_m, px_fastw};
 end
 
 // Which reads the SDRAM CPU port answers once turbo chip/kick is on (below):
@@ -509,7 +511,9 @@ memory_router u_px_router
 	.ramaddr       (              ),
 	.zram_sel      (              )
 );
-wire px_fast_cand = px_sel_chip | px_sel_kick | px_sel_zram | px_sel_dd | px_sel_rtg;
+wire px_fast_cand  = px_sel_chip | px_sel_kick | px_sel_zram | px_sel_dd | px_sel_rtg;
+// a write never goes to the Kickstart copy
+wire px_fastw_cand = px_sel_chip | px_sel_zram | px_sel_dd | px_sel_rtg;
 
 wire [15:0] px_dout;
 wire [23:1] px_addr_o;
@@ -524,6 +528,8 @@ proxy68k proxy
 	.own(px_own_s),
 	.fast_en(px_fast_s),
 	.fast_cand(px_fast_cand),
+	.fastw_en(px_fastw_s),
+	.fastw_cand(px_fastw_cand),
 	.req_tgl(px_tgl),
 	.req_rw(px_rw),
 	.req_addr(px_addr),
@@ -585,7 +591,9 @@ fx68k cpu_inst_o
 
 wire cpu_req = (cpustate != 1);
 
-wire cchip = turbochip_d & !cpustate;
+// The proxy's FASTW writes take chip RAM through the SDRAM CPU port too
+// (proxy68k.v); turbo chip on its own only ever sends reads there.
+wire cchip = (turbochip_d & !cpustate) | (px_own_s & px_fastw_s & (cpustate == 2'b11));
 wire ckick = turbokick_d & !cpustate;
 
 reg turbochip_d;
