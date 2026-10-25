@@ -601,6 +601,42 @@ end
 wire reset;
 wire clk_100m;
 
+// MEASUREMENT ONLY (ARM-CPU plan, step 1d): the lightweight HPS-to-FPGA
+// bridge, ARM physical 0xFF200000, with a register echo as its only slave.
+// Main_MiSTer already releases the bridge; the framework never used it.
+wire [11:0] lw_awid, lw_wid, lw_arid, lw_bid, lw_rid;
+wire [20:0] lw_awaddr, lw_araddr;
+wire  [3:0] lw_awlen, lw_arlen, lw_wstrb;
+wire [31:0] lw_wdata, lw_rdata;
+wire  [1:0] lw_bresp, lw_rresp;
+wire        lw_awvalid, lw_awready, lw_wlast, lw_wvalid, lw_wready, lw_bvalid, lw_bready;
+wire        lw_arvalid, lw_arready, lw_rlast, lw_rvalid, lw_rready;
+
+cyclonev_hps_interface_hps2fpga_light_weight lw_bridge
+(
+	.clk(clk_100m),
+	.awid(lw_awid), .awaddr(lw_awaddr), .awlen(lw_awlen), .awsize(), .awburst(),
+	.awlock(), .awcache(), .awprot(), .awvalid(lw_awvalid), .awready(lw_awready),
+	.wid(lw_wid), .wdata(lw_wdata), .wstrb(lw_wstrb), .wlast(lw_wlast),
+	.wvalid(lw_wvalid), .wready(lw_wready),
+	.bid(lw_bid), .bresp(lw_bresp), .bvalid(lw_bvalid), .bready(lw_bready),
+	.arid(lw_arid), .araddr(lw_araddr), .arlen(lw_arlen), .arsize(), .arburst(),
+	.arlock(), .arcache(), .arprot(), .arvalid(lw_arvalid), .arready(lw_arready),
+	.rid(lw_rid), .rdata(lw_rdata), .rresp(lw_rresp), .rlast(lw_rlast),
+	.rvalid(lw_rvalid), .rready(lw_rready)
+);
+
+lw_echo lw_echo
+(
+	.clk(clk_100m),
+	.reset(reset),
+	.awid(lw_awid), .awaddr(lw_awaddr), .awlen(lw_awlen), .awvalid(lw_awvalid), .awready(lw_awready),
+	.wdata(lw_wdata), .wstrb(lw_wstrb), .wlast(lw_wlast), .wvalid(lw_wvalid), .wready(lw_wready),
+	.bid(lw_bid), .bresp(lw_bresp), .bvalid(lw_bvalid), .bready(lw_bready),
+	.arid(lw_arid), .araddr(lw_araddr), .arlen(lw_arlen), .arvalid(lw_arvalid), .arready(lw_arready),
+	.rid(lw_rid), .rdata(lw_rdata), .rresp(lw_rresp), .rlast(lw_rlast), .rvalid(lw_rvalid), .rready(lw_rready)
+);
+
 sysmem_lite sysmem
 (
 	//Reset/Clock
