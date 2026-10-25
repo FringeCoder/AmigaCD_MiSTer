@@ -24,6 +24,10 @@
  *     0 MAGIC   0x41435055 ("ACPU")
  *     1 CTRL    bit 0 OWN: hold the fx68k in reset and give the bus to the
  *               ARM. Reads back the effective value, 0 unless the CPU is 68000.
+ *               bit 1 FAST: reads of chip RAM, Kickstart and fast RAM go
+ *               through the SDRAM CPU port and its snooped cache, as the
+ *               68020 turbo chip/kick does, instead of a 68000-timed chip-bus
+ *               cycle. Writes and register reads keep the 68000 timing.
  *     2 BANK    [3:0]
  *     3 STATUS  [2:0] the interrupt level Paula is asking for (0 none),
  *               [4] OWN in effect, [8] CPU set to 68000
@@ -64,6 +68,7 @@ module armcpu_bridge (
 
 	// to proxy68k (clk_sys)
 	output reg         px_own,
+	output reg         px_fast,
 	output reg         px_tgl,
 	output reg         px_rw,          // 1 = read
 	output reg  [23:1] px_addr,
@@ -88,7 +93,7 @@ module armcpu_bridge (
 	wire ack_now   = ack_s[1];
 	wire is68k_now = is68k_s[1];
 
-	reg        own_req;
+	reg        own_req, fast_req;
 	reg  [3:0] bank;
 	reg [31:0] cyc, last, words;
 
@@ -134,7 +139,7 @@ module armcpu_bridge (
 	function [31:0] ctl(input [2:0] n);
 		case (n)
 			3'd0: ctl = MAGIC;
-			3'd1: ctl = {31'd0, px_own};
+			3'd1: ctl = {30'd0, px_fast, px_own};
 			3'd2: ctl = {28'd0, bank};
 			3'd3: ctl = {23'd0, is68k_now, 3'd0, px_own, 1'b0, ~ipl_s2};
 			3'd4: ctl = cyc;
@@ -150,6 +155,8 @@ module armcpu_bridge (
 
 		if (reset) begin
 			own_req  <= 1'b0;
+			fast_req <= 1'b0;
+			px_fast  <= 1'b0;
 			bank     <= 4'd0;
 			busy     <= 1'b0;
 			in_cycle <= 1'b0;
@@ -166,7 +173,10 @@ module armcpu_bridge (
 		else begin
 			// OWN changes only between requests, so a cycle the proxy has
 			// started is always finished on the pins it started on
-			if (~busy) px_own <= own_req & is68k_now;
+			if (~busy) begin
+				px_own  <= own_req & is68k_now;
+				px_fast <= fast_req;
+			end
 
 			// a request arriving while busy can only follow a posted write
 			if (bus_req & busy) begin
@@ -185,7 +195,7 @@ module armcpu_bridge (
 					bus_ack <= 1'b1;
 					bus_rdata <= ctl(r_addr[4:2]);
 					if (r_we) case (r_addr[4:2])
-						3'd1: if (r_wstrb[0]) own_req <= r_wdata[0];
+						3'd1: if (r_wstrb[0]) {fast_req, own_req} <= r_wdata[1:0];
 						3'd2: if (r_wstrb[0]) bank    <= r_wdata[3:0];
 						default: ;
 					endcase

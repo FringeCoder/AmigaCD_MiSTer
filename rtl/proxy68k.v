@@ -23,6 +23,13 @@
  * when the cycle has ended, with rdata already valid. Cycles are only taken
  * while own is high (cpu_wrapper brings it over through two flops).
  *
+ * Fast reads. With fast_en, a read whose address fast_cand says the SDRAM
+ * CPU port answers (chip RAM, Kickstart, fast RAM: cpu_wrapper's turbo
+ * chip/kick decode) skips the 68000 phases: AS and the strobes fall on the
+ * next edge, the cycle ends on the edge DTACK (the port's ready) is seen,
+ * and the data is taken on that edge. Writes, and reads of anything else --
+ * the custom chips, the CIAs, autoconfig -- always keep the 68000 timing.
+ *
  * The ARM waits on every access, so nothing here may wait forever: a cycle
  * that sees no DTACK for 65536 enPhi1 (~9 ms) ends anyway and reads
  * 0xFFFF, and a reset in the middle of a cycle still acknowledges it. A
@@ -38,6 +45,8 @@ module proxy68k #(
 	input  wire        ph2,          // enPhi2
 
 	input  wire        own,
+	input  wire        fast_en,      // fast reads allowed (armcpu_bridge FAST)
+	input  wire        fast_cand,    // req_addr is answered by the SDRAM CPU port
 	input  wire        req_tgl,
 	input  wire        req_rw,       // 1 = read
 	input  wire [23:1] req_addr,
@@ -63,6 +72,8 @@ module proxy68k #(
 	localparam S2     = 3'd2;
 	localparam S4     = 3'd3;
 	localparam S6     = 3'd4;
+	localparam F_WAIT = 3'd5;     // fast read: waiting for the port's ready
+	localparam F_END  = 3'd6;     // fast read: data taken, strobes off
 
 	reg [1:0] req_s = 2'b00;
 	always @(posedge clk) req_s <= {req_s[0], req_tgl};
@@ -70,6 +81,7 @@ module proxy68k #(
 	reg [2:0] st = 3'd0;
 	reg       taken = 1'b0;    // req_tgl as last taken
 	reg [WAIT_BITS-1:0] wait_n;
+	reg [1:0]  f_hold;
 	reg       rdtack;
 	reg       c_rw, c_uds_n, c_lds_n;
 
@@ -91,7 +103,19 @@ module proxy68k #(
 
 			case (st)
 			S_IDLE:
-				if (ph1 & own & (req_s[1] != taken)) begin
+				if (own & (req_s[1] != taken) & fast_en & req_rw & fast_cand) begin
+					// fast read: on this edge, no phase to wait for
+					taken   <= req_s[1];
+					c_rw    <= 1'b1;
+					addr    <= req_addr;
+					as_n    <= 1'b0;
+					uds_n   <= req_uds_n;
+					lds_n   <= req_lds_n;
+					wait_n  <= 0;
+					f_hold  <= 2'd2;
+					st      <= F_WAIT;
+				end
+				else if (ph1 & own & (req_s[1] != taken)) begin
 					taken   <= req_s[1];
 					c_rw    <= req_rw;
 					c_uds_n <= req_uds_n;
@@ -100,6 +124,33 @@ module proxy68k #(
 					dout    <= req_wdata;
 					st      <= S0;
 				end
+			F_WAIT: begin
+				// the ready of an earlier select may still be up for an edge
+				// or two: only believe it once f_hold has run out
+				if (|f_hold) f_hold <= f_hold - 2'd1;
+				else if (~dtack_n) begin
+					rdata <= din;
+					as_n  <= 1'b1;
+					uds_n <= 1'b1;
+					lds_n <= 1'b1;
+					st    <= F_END;
+				end
+				if (ph1 & ~(~|f_hold & ~dtack_n)) begin
+					wait_n <= wait_n + 1'd1;
+					if (&wait_n) begin
+						as_n    <= 1'b1;
+						uds_n   <= 1'b1;
+						lds_n   <= 1'b1;
+						rdata   <= 16'hFFFF;
+						ack_tgl <= ~ack_tgl;
+						st      <= S_IDLE;
+					end
+				end
+			end
+			F_END: begin
+				ack_tgl <= ~ack_tgl;
+				st      <= S_IDLE;
+			end
 			S0:
 				if (ph1) begin
 					as_n <= 1'b0;

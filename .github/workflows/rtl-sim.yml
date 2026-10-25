@@ -410,7 +410,10 @@ jobs:
       # the 68k's byte order, a byte read with both strobes, writes not
       # posted, OWN or the 68000 check ignored, BANK ignored, WORDS not
       # counted, INCR bursts not stepped, and a read sent to the bus beside a
-      # write beat or while it is busy each fail.
+      # write beat or while it is busy each fail. FAST (reads through the
+      # SDRAM port, no 68000 phases): writes taken fast, fast reads outside
+      # the port's addresses, fast read data dropped, ending before the ready,
+      # and FAST never reaching the proxy each fail.
       - name: ARM-CPU bus proxy (tb_armcpu.sv)
         run: |
           set -euo pipefail

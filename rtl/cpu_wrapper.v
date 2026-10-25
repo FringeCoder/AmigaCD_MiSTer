@@ -202,6 +202,7 @@ module cpu_wrapper
 	// proxy68k drives its pins; only the 68000 path (cpucfg[1:0] == 0) has
 	// the mux, and the bridge only raises px_own with that CPU selected.
 	input             px_own,
+	input             px_fast,
 	input             px_tgl,
 	input             px_rw,
 	input      [23:1] px_addr,
@@ -471,9 +472,44 @@ wire        reset_out_o;
 
 // The 68000's pins, from the fx68k or, while the ARM owns the bus, from the
 // proxy (MEASUREMENT ONLY, see proxy68k.v).
-// px_own comes from the bridge's clock (clk_100m), asynchronous to this one
-reg px_own_m, px_own_s;
-always @(posedge clk) {px_own_s, px_own_m} <= {px_own_m, px_own};
+// px_own and px_fast come from the bridge's clock (clk_100m), asynchronous
+// to this one
+reg px_own_m, px_own_s, px_fast_m, px_fast_s;
+always @(posedge clk) begin
+	{px_own_s, px_own_m}   <= {px_own_m, px_own};
+	{px_fast_s, px_fast_m} <= {px_fast_m, px_fast};
+end
+
+// Which reads the SDRAM CPU port answers once turbo chip/kick is on (below):
+// the same decode as u_memory_router, on the request's held address, so the
+// proxy knows before it starts a cycle whether it can skip the 68000 phases.
+wire px_sel_chip, px_sel_kick, px_sel_zram, px_sel_dd, px_sel_rtg;
+memory_router u_px_router
+(
+	.cpu_addr      ({8'd0, px_addr, 1'b0}),
+	.cchip         (1'b1          ),
+	.ckick         (1'b1          ),
+	.wr            (1'b1          ),
+	.bootrom       (bootrom       ),
+	.cdtv_mode     (cdtv_mode     ),
+	.z2ram_ena     (z2ram_ena     ),
+	.z3ram_base0   (z3ram_base0   ),
+	.z3ram_ena0    (z3ram_ena0    ),
+	.z3ram_base1   (z3ram_base1   ),
+	.z3ram_ena1    (z3ram_ena1    ),
+	.sel_chipram   (px_sel_chip   ),
+	.sel_kickram   (px_sel_kick   ),
+	.sel_kicklower (              ),
+	.sel_z2ram     (              ),
+	.sel_z3ram0    (              ),
+	.sel_z3ram1    (              ),
+	.sel_zram      (px_sel_zram   ),
+	.sel_dd        (px_sel_dd     ),
+	.sel_rtg       (px_sel_rtg    ),
+	.ramaddr       (              ),
+	.zram_sel      (              )
+);
+wire px_fast_cand = px_sel_chip | px_sel_kick | px_sel_zram | px_sel_dd | px_sel_rtg;
 
 wire [15:0] px_dout;
 wire [23:1] px_addr_o;
@@ -486,6 +522,8 @@ proxy68k proxy
 	.ph1(ph1),
 	.ph2(ph2),
 	.own(px_own_s),
+	.fast_en(px_fast_s),
+	.fast_cand(px_fast_cand),
 	.req_tgl(px_tgl),
 	.req_rw(px_rw),
 	.req_addr(px_addr),
@@ -558,8 +596,9 @@ always @(posedge clk) begin
 		turbokick_d <= 0;
 	end
 	else if (~cpu_req) begin	// No mem access, so safe to switch chipram access mode
-		turbochip_d <= cachecfg[0] & cpucfg[1];
-		turbokick_d <= cachecfg[1] & cpucfg[1];
+		// the proxy's FAST reads (proxy68k.v) take the same route
+		turbochip_d <= (cachecfg[0] & cpucfg[1]) | (px_own_s & px_fast_s);
+		turbokick_d <= (cachecfg[1] & cpucfg[1]) | (px_own_s & px_fast_s);
 	end
 end
 
