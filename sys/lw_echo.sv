@@ -18,8 +18,8 @@
  * passed to emu as a one-cycle ext_wr pulse with its index and data (the last
  * beat of a burst wins, strobes ignored), and a read returns that register's
  * word of ext_status. AmigaCD's visprobe_ddr3.v uses them to measure DDR3
- * write visibility. The bridge runs on the core's DDRAM_CLK so this needs no
- * clock crossing; latprobe measures the clock against its own.
+ * write visibility. The bridge runs on whatever clock the core gives it
+ * (LW_CLK); latprobe measures that clock against its own.
  *
  * Step 2 adds the bus: every access at offset 0x080000 or above (address bit
  * 19 or 20 set) goes to emu as one bus_req pulse per beat, carrying the byte

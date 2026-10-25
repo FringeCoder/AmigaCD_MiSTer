@@ -604,8 +604,9 @@ wire clk_100m;
 // MEASUREMENT ONLY (ARM-CPU plan, steps 1d and 1e): the lightweight
 // HPS-to-FPGA bridge, ARM physical 0xFF200000, with a register echo as its
 // only slave. Main_MiSTer already releases the bridge; the framework never
-// used it. It runs on the core's DDRAM_CLK, and registers 4-7 pass through
-// to emu (LW_*) with no clock crossing.
+// used it. It runs on a clock the core supplies (LW_CLK: AmigaCD gives it
+// clk_sys, the CPU's clock, which keeps it out of the crowded clk_114
+// paths), and registers 4-7 and the bus pass through to emu (LW_*).
 wire [11:0] lw_awid, lw_wid, lw_arid, lw_bid, lw_rid;
 wire [20:0] lw_awaddr, lw_araddr;
 wire  [3:0] lw_awlen, lw_arlen, lw_wstrb;
@@ -617,6 +618,7 @@ wire        lw_ext_wr;
 wire  [1:0] lw_ext_waddr;
 wire [31:0] lw_ext_wdata;
 wire [127:0] lw_ext_status;
+wire        lw_clk;
 wire        lw_bus_req, lw_bus_we, lw_bus_ack;
 wire [20:0] lw_bus_addr;
 wire  [1:0] lw_bus_size;
@@ -627,7 +629,7 @@ wire  [1:0] lw_awburst, lw_arburst;
 
 cyclonev_hps_interface_hps2fpga_light_weight lw_bridge
 (
-	.clk(ram_clk),
+	.clk(lw_clk),
 	.awid(lw_awid), .awaddr(lw_awaddr), .awlen(lw_awlen), .awsize(lw_awsize), .awburst(lw_awburst),
 	.awlock(), .awcache(), .awprot(), .awvalid(lw_awvalid), .awready(lw_awready),
 	.wid(lw_wid), .wdata(lw_wdata), .wstrb(lw_wstrb), .wlast(lw_wlast),
@@ -641,11 +643,11 @@ cyclonev_hps_interface_hps2fpga_light_weight lw_bridge
 
 // sysmem's reset is clk_100m's; bring it over before lw_echo uses it
 reg [1:0] lw_reset_s = 2'b11;
-always @(posedge ram_clk) lw_reset_s <= {lw_reset_s[0], reset};
+always @(posedge lw_clk) lw_reset_s <= {lw_reset_s[0], reset};
 
 lw_echo lw_echo
 (
-	.clk(ram_clk),
+	.clk(lw_clk),
 	.reset(lw_reset_s[1]),
 	.awid(lw_awid), .awaddr(lw_awaddr), .awlen(lw_awlen), .awsize(lw_awsize), .awburst(lw_awburst),
 	.awvalid(lw_awvalid), .awready(lw_awready),
@@ -1904,6 +1906,7 @@ emu emu
 	.DDRAM_BE(ram_byteenable),
 	.DDRAM_WE(ram_write),
 
+	.LW_CLK(lw_clk),
 	.LW_WR(lw_ext_wr),
 	.LW_WADDR(lw_ext_waddr),
 	.LW_WDATA(lw_ext_wdata),

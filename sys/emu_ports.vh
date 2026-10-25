@@ -114,8 +114,9 @@ output [63:0] DDRAM_DIN,
 output  [7:0] DDRAM_BE,
 output        DDRAM_WE,
 
-//Lightweight HPS-to-FPGA bridge registers 4-7, DDRAM_CLK domain
-//(MEASUREMENT ONLY, see sys/lw_echo.sv)
+//Lightweight HPS-to-FPGA bridge (MEASUREMENT ONLY, see sys/lw_echo.sv),
+//clocked by LW_CLK, which the core supplies; registers 4-7 and the bus
+output        LW_CLK,
 input         LW_WR,
 input   [1:0] LW_WADDR,
 input  [31:0] LW_WDATA,

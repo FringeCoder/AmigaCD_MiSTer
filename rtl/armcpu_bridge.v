@@ -35,10 +35,10 @@
  * With OWN clear, a 68k-window access is answered at once (reads return
  * 0xFFFFFFFF) so the ARM can never hang on it.
  *
- * clk is the bridge's clock (DDRAM_CLK, clk_114); the proxy runs on clk_sys,
- * a quarter of it from the same PLL. Each word cycle crosses by toggle: the
- * fields are set and held, px_tgl flips, and the proxy flips px_ack_tgl when
- * the cycle has ended, with px_rdata valid.
+ * clk is the bridge's clock, clk_sys, the same as the proxy's. Each word
+ * cycle is handed over by toggle all the same, so the two can sit on
+ * different clocks: the fields are set and held, px_tgl flips, and the proxy
+ * flips px_ack_tgl when the cycle has ended, with px_rdata valid.
  */
 
 module armcpu_bridge (

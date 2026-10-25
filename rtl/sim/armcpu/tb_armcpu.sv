@@ -1,8 +1,8 @@
 /*
  * tb_armcpu.sv -- the ARM's 68k bus, end to end (MEASUREMENT ONLY, step 2 of
- * the ARM-CPU plan): sys/lw_echo.sv's AXI3 slave, rtl/armcpu_bridge.v on
- * clk_114 and rtl/proxy68k.v on clk_sys (a quarter of it, same edges),
- * with a 68000 bus slave behind the pins.
+ * the ARM-CPU plan): sys/lw_echo.sv's AXI3 slave, rtl/armcpu_bridge.v and
+ * rtl/proxy68k.v, all on clk_sys as the core builds them, with a 68000 bus
+ * slave behind the pins.
  *
  * The bench plays the HPS side with single accesses of every size and with
  * INCR bursts, and checks from both ends:
@@ -32,10 +32,10 @@
 
 module tb_armcpu;
 
-// ---- clocks: clk_114 and clk_sys = clk_114 / 4, rising together ------------
-reg clk114 = 0, clk_sys = 0;
-always #4.4 clk114 = ~clk114;
+// ---- clk_sys, 28.4 MHz; the bridge side runs on it too --------------------
+reg clk_sys = 0;
 always #17.6 clk_sys = ~clk_sys;
+wire clk114 = clk_sys;   // the bus side's clock (it was clk_114 before step 2's fit)
 
 // ph1 / ph2: one clk_sys cycle each, 7 MHz, half a 68k clock apart
 reg [1:0] phc = 0;
@@ -427,7 +427,7 @@ initial begin
 	ctl_read(6, exp_v);
 	checks = checks + 2;
 	if (exp_v - w != 2) fail("WORDS did not count two word cycles");
-	if (v < 32'd60 || v > 32'd400) begin fail("LAST out of range for two word cycles"); $display("  LAST %0d", v); end
+	if (v < 32'd16 || v > 32'd150) begin fail("LAST out of range for two word cycles"); $display("  LAST %0d", v); end
 
 	// no DTACK: the cycle ends after the timeout and reads all ones
 	ctl_write(2, 4'hF);
