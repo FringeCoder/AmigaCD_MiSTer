@@ -399,6 +399,26 @@ jobs:
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # MEASUREMENT ONLY (step 2 of the ARM-CPU plan): a 68k on the ARM makes
+      # its bus cycles through the lightweight bridge. lw_echo forwards the
+      # bus offsets, armcpu_bridge splits each access into 68000 word cycles
+      # in the 68k's byte order, and proxy68k plays them on the fx68k's pins
+      # with fx68k's busControl timing, against a 68000 bus slave that checks
+      # every edge. Falsified 2026-10-25: a read's strobes late, no DTACK
+      # wait, read data dropped, AS rising on enPhi1, a write leaving R/W
+      # high, a reset mid-cycle left unanswered, write or read lanes not in
+      # the 68k's byte order, a byte read with both strobes, writes not
+      # posted, OWN or the 68000 check ignored, BANK ignored, WORDS not
+      # counted, INCR bursts not stepped, and a read sent to the bus beside a
+      # write beat or while it is busy each fail.
+      - name: ARM-CPU bus proxy (tb_armcpu.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/armcpu
+          iverilog -g2012 -o tb tb_armcpu.sv ../../../sys/lw_echo.sv ../../armcpu_bridge.v ../../proxy68k.v
+          vvp -n tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # MEASUREMENT ONLY (step 1e of the ARM-CPU plan): visprobe_ddr3 times
       # how long a DDR3 write takes to become visible across the HPS
       # controller's ports, each direction on its own, with the lightweight
@@ -891,7 +911,7 @@ jobs:
         run: |
           set -euo pipefail
           cd rtl/sim/cpuwrap
-          iverilog -g2012 -I ../.. -o tb             ../../cpu_wrapper.v ../../memory_router.v ../../cpu_cycles.v             cpu_core_stubs.v tb_cpu_wrapper_park.sv
+          iverilog -g2012 -I ../.. -o tb             ../../cpu_wrapper.v ../../proxy68k.v ../../memory_router.v ../../cpu_cycles.v             cpu_core_stubs.v tb_cpu_wrapper_park.sv
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 

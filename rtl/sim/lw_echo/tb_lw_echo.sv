@@ -30,15 +30,24 @@ wire [11:0] rid;       wire [31:0] rdata;     wire [1:0] rresp;    wire rlast; w
 wire        ext_wr;    wire [1:0] ext_waddr;  wire [31:0] ext_wdata;
 reg [127:0] ext_status = 128'h77777777_66666666_55555555_44444444;
 
+wire bus_req;
+
+// FIXED bursts, as before step 2: every beat at the addressed register.
+// INCR bursts and the bus port are tb_armcpu.sv's (rtl/sim/armcpu).
 lw_echo dut (
 	.clk(clk), .reset(reset),
-	.awid(awid), .awaddr(awaddr), .awlen(awlen), .awvalid(awvalid), .awready(awready),
+	.awid(awid), .awaddr(awaddr), .awlen(awlen), .awsize(3'd2), .awburst(2'b00),
+	.awvalid(awvalid), .awready(awready),
 	.wdata(wdata), .wstrb(wstrb), .wlast(wlast), .wvalid(wvalid), .wready(wready),
 	.bid(bid), .bresp(bresp), .bvalid(bvalid), .bready(bready),
-	.arid(arid), .araddr(araddr), .arlen(arlen), .arvalid(arvalid), .arready(arready),
+	.arid(arid), .araddr(araddr), .arlen(arlen), .arsize(3'd2), .arburst(2'b00),
+	.arvalid(arvalid), .arready(arready),
 	.rid(rid), .rdata(rdata), .rresp(rresp), .rlast(rlast), .rvalid(rvalid), .rready(rready),
-	.ext_wr(ext_wr), .ext_waddr(ext_waddr), .ext_wdata(ext_wdata), .ext_status(ext_status)
+	.ext_wr(ext_wr), .ext_waddr(ext_waddr), .ext_wdata(ext_wdata), .ext_status(ext_status),
+	.bus_req(bus_req), .bus_we(), .bus_addr(), .bus_size(), .bus_wstrb(), .bus_wdata(),
+	.bus_ack(1'b0), .bus_rdata(32'd0)
 );
+always @(posedge clk) if (bus_req) fail("bus_req for a register address");
 
 // every ext_wr pulse, as the core would see it
 integer n_ext = 0;

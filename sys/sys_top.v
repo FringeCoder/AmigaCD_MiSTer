@@ -617,16 +617,23 @@ wire        lw_ext_wr;
 wire  [1:0] lw_ext_waddr;
 wire [31:0] lw_ext_wdata;
 wire [127:0] lw_ext_status;
+wire        lw_bus_req, lw_bus_we, lw_bus_ack;
+wire [20:0] lw_bus_addr;
+wire  [1:0] lw_bus_size;
+wire  [3:0] lw_bus_wstrb;
+wire [31:0] lw_bus_wdata, lw_bus_rdata;
+wire  [2:0] lw_awsize, lw_arsize;
+wire  [1:0] lw_awburst, lw_arburst;
 
 cyclonev_hps_interface_hps2fpga_light_weight lw_bridge
 (
 	.clk(ram_clk),
-	.awid(lw_awid), .awaddr(lw_awaddr), .awlen(lw_awlen), .awsize(), .awburst(),
+	.awid(lw_awid), .awaddr(lw_awaddr), .awlen(lw_awlen), .awsize(lw_awsize), .awburst(lw_awburst),
 	.awlock(), .awcache(), .awprot(), .awvalid(lw_awvalid), .awready(lw_awready),
 	.wid(lw_wid), .wdata(lw_wdata), .wstrb(lw_wstrb), .wlast(lw_wlast),
 	.wvalid(lw_wvalid), .wready(lw_wready),
 	.bid(lw_bid), .bresp(lw_bresp), .bvalid(lw_bvalid), .bready(lw_bready),
-	.arid(lw_arid), .araddr(lw_araddr), .arlen(lw_arlen), .arsize(), .arburst(),
+	.arid(lw_arid), .araddr(lw_araddr), .arlen(lw_arlen), .arsize(lw_arsize), .arburst(lw_arburst),
 	.arlock(), .arcache(), .arprot(), .arvalid(lw_arvalid), .arready(lw_arready),
 	.rid(lw_rid), .rdata(lw_rdata), .rresp(lw_rresp), .rlast(lw_rlast),
 	.rvalid(lw_rvalid), .rready(lw_rready)
@@ -640,12 +647,16 @@ lw_echo lw_echo
 (
 	.clk(ram_clk),
 	.reset(lw_reset_s[1]),
-	.awid(lw_awid), .awaddr(lw_awaddr), .awlen(lw_awlen), .awvalid(lw_awvalid), .awready(lw_awready),
+	.awid(lw_awid), .awaddr(lw_awaddr), .awlen(lw_awlen), .awsize(lw_awsize), .awburst(lw_awburst),
+	.awvalid(lw_awvalid), .awready(lw_awready),
 	.wdata(lw_wdata), .wstrb(lw_wstrb), .wlast(lw_wlast), .wvalid(lw_wvalid), .wready(lw_wready),
 	.bid(lw_bid), .bresp(lw_bresp), .bvalid(lw_bvalid), .bready(lw_bready),
-	.arid(lw_arid), .araddr(lw_araddr), .arlen(lw_arlen), .arvalid(lw_arvalid), .arready(lw_arready),
+	.arid(lw_arid), .araddr(lw_araddr), .arlen(lw_arlen), .arsize(lw_arsize), .arburst(lw_arburst),
+	.arvalid(lw_arvalid), .arready(lw_arready),
 	.rid(lw_rid), .rdata(lw_rdata), .rresp(lw_rresp), .rlast(lw_rlast), .rvalid(lw_rvalid), .rready(lw_rready),
-	.ext_wr(lw_ext_wr), .ext_waddr(lw_ext_waddr), .ext_wdata(lw_ext_wdata), .ext_status(lw_ext_status)
+	.ext_wr(lw_ext_wr), .ext_waddr(lw_ext_waddr), .ext_wdata(lw_ext_wdata), .ext_status(lw_ext_status),
+	.bus_req(lw_bus_req), .bus_we(lw_bus_we), .bus_addr(lw_bus_addr), .bus_size(lw_bus_size),
+	.bus_wstrb(lw_bus_wstrb), .bus_wdata(lw_bus_wdata), .bus_ack(lw_bus_ack), .bus_rdata(lw_bus_rdata)
 );
 
 sysmem_lite sysmem
@@ -1897,6 +1908,14 @@ emu emu
 	.LW_WADDR(lw_ext_waddr),
 	.LW_WDATA(lw_ext_wdata),
 	.LW_STATUS(lw_ext_status),
+	.LW_BUS_REQ(lw_bus_req),
+	.LW_BUS_WE(lw_bus_we),
+	.LW_BUS_ADDR(lw_bus_addr),
+	.LW_BUS_SIZE(lw_bus_size),
+	.LW_BUS_WSTRB(lw_bus_wstrb),
+	.LW_BUS_WDATA(lw_bus_wdata),
+	.LW_BUS_ACK(lw_bus_ack),
+	.LW_BUS_RDATA(lw_bus_rdata),
 
 	.SDRAM_DQ(SDRAM_DQ),
 	.SDRAM_A(SDRAM_A),

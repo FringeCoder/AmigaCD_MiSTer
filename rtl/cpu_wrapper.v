@@ -195,7 +195,21 @@ module cpu_wrapper
 
 	// Always 1 since upstream 26eb46a: the data cache is on where the CPU has
 	// one. Kept as a port so the cache keeps its gate.
-	output            dcache_sw_en
+	output            dcache_sw_en,
+
+	// MEASUREMENT ONLY (ARM-CPU plan, step 2): a 68k on the ARM, through
+	// armcpu_bridge. While px_own is high the fx68k is held in reset and
+	// proxy68k drives its pins; only the 68000 path (cpucfg[1:0] == 0) has
+	// the mux, and the bridge only raises px_own with that CPU selected.
+	input             px_own,
+	input             px_tgl,
+	input             px_rw,
+	input      [23:1] px_addr,
+	input             px_uds_n,
+	input             px_lds_n,
+	input      [15:0] px_wdata,
+	output            px_ack_tgl,
+	output     [15:0] px_rdata
 );
 
 assign dcache_sw_en = 1'b1;
@@ -313,21 +327,21 @@ always @* begin
 		fastchip_lw  = longword;
 	end
 	else begin
-		cpu_dout     = cpu_dout_o;
-		cpu_addr     = {cpu_addr_o,1'b0};
-		cpustate     = as_o ? 2'b01 : ~{wr_o,wr_o};
+		cpu_dout     = cpu_dout_x;
+		cpu_addr     = {cpu_addr_x,1'b0};
+		cpustate     = as_x ? 2'b01 : ~{wr_x,wr_x};
 		cacr         = 1;
 		vbr          = 0;
-		wr           = wr_o;
-		uds_in       = uds_o;
-		lds_in       = lds_o;
-		reset_out    = reset_out_o;
-		chip_as      = ramsel | as_o;
-		chip_rw      = wr_o;
-		chip_uds     = uds_o;
-		chip_lds     = lds_o;
-		chip_addr    = cpu_addr_o[23:1];
-		chip_din     = cpu_dout_o;
+		wr           = wr_x;
+		uds_in       = uds_x;
+		lds_in       = lds_x;
+		reset_out    = reset_out_x;
+		chip_as      = ramsel | as_x;
+		chip_rw      = wr_x;
+		chip_uds     = uds_x;
+		chip_lds     = lds_x;
+		chip_addr    = cpu_addr_x[23:1];
+		chip_din     = cpu_dout_x;
 		chip_long    = 0;
 		chip_din2    = 0;
 		chip_data    = chip_dout;
@@ -455,13 +469,55 @@ wire        uds_o;
 wire        lds_o;
 wire        reset_out_o;
 
+// The 68000's pins, from the fx68k or, while the ARM owns the bus, from the
+// proxy (MEASUREMENT ONLY, see proxy68k.v).
+reg px_own_s;
+always @(posedge clk) px_own_s <= px_own;
+
+wire [15:0] px_dout;
+wire [23:1] px_addr_o;
+wire        px_as, px_rw_o, px_uds, px_lds;
+
+proxy68k proxy
+(
+	.clk(clk),
+	.reset_n(reset),
+	.ph1(ph1),
+	.ph2(ph2),
+	.own(px_own_s),
+	.req_tgl(px_tgl),
+	.req_rw(px_rw),
+	.req_addr(px_addr),
+	.req_uds_n(px_uds_n),
+	.req_lds_n(px_lds_n),
+	.req_wdata(px_wdata),
+	.ack_tgl(px_ack_tgl),
+	.rdata(px_rdata),
+	.as_n(px_as),
+	.rw(px_rw_o),
+	.uds_n(px_uds),
+	.lds_n(px_lds),
+	.addr(px_addr_o),
+	.dout(px_dout),
+	.dtack_n(ramsel ? ~ramready_fx : chip_dtack),
+	.din(cpu_din)
+);
+
+wire [15:0] cpu_dout_x  = px_own_s ? px_dout   : cpu_dout_o;
+wire [23:1] cpu_addr_x  = px_own_s ? px_addr_o : cpu_addr_o;
+wire        as_x        = px_own_s ? px_as     : as_o;
+wire        wr_x        = px_own_s ? px_rw_o   : wr_o;
+wire        uds_x       = px_own_s ? px_uds    : uds_o;
+wire        lds_x       = px_own_s ? px_lds    : lds_o;
+wire        reset_out_x = px_own_s | reset_out_o;
+
 fx68k cpu_inst_o
 (
 	.clk(clk),
 	.enPhi1(ph1),
 	.enPhi2(ph2),
 
-	.extReset(~reset),
+	.extReset(~reset | px_own_s),
 	.pwrUp(~reset),
 	.oRESETn(reset_out_o),
 	.HALTn(1),

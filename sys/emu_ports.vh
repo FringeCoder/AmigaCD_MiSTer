@@ -120,6 +120,15 @@ input         LW_WR,
 input   [1:0] LW_WADDR,
 input  [31:0] LW_WDATA,
 output [127:0] LW_STATUS,
+//and the core's bus behind bridge offsets 0x080000-0x1FFFFF (step 2)
+input         LW_BUS_REQ,
+input         LW_BUS_WE,
+input  [20:0] LW_BUS_ADDR,
+input   [1:0] LW_BUS_SIZE,
+input   [3:0] LW_BUS_WSTRB,
+input  [31:0] LW_BUS_WDATA,
+output        LW_BUS_ACK,
+output [31:0] LW_BUS_RDATA,
 
 //SDRAM interface with lower latency
 output        SDRAM_CLK,

@@ -1242,7 +1242,49 @@ cpu_wrapper cpu_wrapper
 	.z3ram_base1_out (z3ram_base1_w   ),
 	.z3ram_ena1_out  (z3ram_ena1_w    ),
 	// Constant 1 since upstream 26eb46a; see cpu_wrapper.
-	.dcache_sw_en    (dcache_sw_en_w  )
+	.dcache_sw_en    (dcache_sw_en_w  ),
+
+	.px_own          (px_own          ),
+	.px_tgl          (px_tgl          ),
+	.px_rw           (px_rw           ),
+	.px_addr         (px_addr         ),
+	.px_uds_n        (px_uds_n        ),
+	.px_lds_n        (px_lds_n        ),
+	.px_wdata        (px_wdata        ),
+	.px_ack_tgl      (px_ack_tgl      ),
+	.px_rdata        (px_rdata        )
+);
+
+// MEASUREMENT ONLY (ARM-CPU plan, step 2): the ARM's 68k bus cycles, from the
+// lightweight HPS bridge (sys/lw_echo.sv, DDRAM_CLK = clk_114) to the proxy
+// in cpu_wrapper (clk_sys). See rtl/armcpu_bridge.v.
+wire        px_own, px_tgl, px_rw, px_uds_n, px_lds_n, px_ack_tgl;
+wire [23:1] px_addr;
+wire [15:0] px_wdata, px_rdata;
+
+armcpu_bridge armcpu_bridge
+(
+	.clk          (clk_114         ),
+	.reset        (RESET           ),
+	.bus_req      (LW_BUS_REQ      ),
+	.bus_we       (LW_BUS_WE       ),
+	.bus_addr     (LW_BUS_ADDR     ),
+	.bus_size     (LW_BUS_SIZE     ),
+	.bus_wstrb    (LW_BUS_WSTRB    ),
+	.bus_wdata    (LW_BUS_WDATA    ),
+	.bus_ack      (LW_BUS_ACK      ),
+	.bus_rdata    (LW_BUS_RDATA    ),
+	.cpu_is_68000 (~|cpucfg[1:0]   ),
+	.ipl_n        (chip_ipl        ),
+	.px_own       (px_own          ),
+	.px_tgl       (px_tgl          ),
+	.px_rw        (px_rw           ),
+	.px_addr      (px_addr         ),
+	.px_uds_n     (px_uds_n        ),
+	.px_lds_n     (px_lds_n        ),
+	.px_wdata     (px_wdata        ),
+	.px_ack_tgl   (px_ack_tgl      ),
+	.px_rdata     (px_rdata        )
 );
 
 
