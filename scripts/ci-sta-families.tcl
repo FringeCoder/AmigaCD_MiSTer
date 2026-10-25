@@ -61,6 +61,8 @@ set families {
 	{N.a2065_arb_to_ddram {emu|ram2|arbiter|*}             {emu|ram2|*}}
 	{P.ascal_palette      {ascal|pal_*}                    {ascal|*}}
 	{M.ascal              ""                               {ascal|*}}
+	{Q.rdgate_to_cpu      {emu|ram_cs emu|cpu_rdgate|*}     {emu|cpu_wrapper|cpu_inst_p|*}}
+	{R.sdram_refresh      {emu|ram1|rcnt*}                 {emu|ram1|sd_*}}
 	{all_setup            ""                               ""}
 }
 
@@ -94,7 +96,7 @@ foreach_in_collection oc [get_available_operating_conditions] {
 # ten worst paths each, at the slow 100 C corner
 # the gate uses, with every node on the data path.
 set detail_families {A_sys_to_sd_addr A.AGNUS A.USERIO A.CIAB L.ss_ctrl_internal H.ddram_ctrl F.ddram_cache
-	D.sdram_dat_to_cpu G.ddram_dat_to_cpu C.sdram_cache M.ascal}
+	D.sdram_dat_to_cpu G.ddram_dat_to_cpu C.sdram_cache M.ascal Q.rdgate_to_cpu R.sdram_refresh}
 if {$detail ne ""} {
 	file delete -force $detail
 	foreach_in_collection oc [get_available_operating_conditions] {
