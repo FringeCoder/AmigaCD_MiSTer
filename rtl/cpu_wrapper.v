@@ -471,8 +471,9 @@ wire        reset_out_o;
 
 // The 68000's pins, from the fx68k or, while the ARM owns the bus, from the
 // proxy (MEASUREMENT ONLY, see proxy68k.v).
-reg px_own_s;
-always @(posedge clk) px_own_s <= px_own;
+// px_own comes from the bridge's clock (clk_100m), asynchronous to this one
+reg px_own_m, px_own_s;
+always @(posedge clk) {px_own_s, px_own_m} <= {px_own_m, px_own};
 
 wire [15:0] px_dout;
 wire [23:1] px_addr_o;

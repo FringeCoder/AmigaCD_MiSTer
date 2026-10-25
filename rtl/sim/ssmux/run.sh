@@ -47,7 +47,7 @@ iverilog -g2012 -o "$OUT/tb_ss_regbus_mux" -I"$HERE" -s tb_ss_regbus_mux \
 	"$RTL"/MiSTerFloppy*.v \
 	"$RTL/cdtv_bridge.v" \
 	"$RTL/cdtv_nvram.v" \
-	"$RTL"/A2065/a2065*.v "$RTL"/A2065/latprobe_ddr3.v "$RTL"/A2065/visprobe_ddr3.v
+	"$RTL"/A2065/a2065*.v
 
 cd "$OUT"
 vvp "$OUT/tb_ss_regbus_mux" | tee "$OUT/out.log"

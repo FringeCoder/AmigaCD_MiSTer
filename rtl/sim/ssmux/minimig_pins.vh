@@ -148,10 +148,6 @@ wire [63:0]  a2065_mem_writedata;
 wire [7:0]   a2065_mem_byteenable;
 wire         a2065_mem_write;
 wire         a2065_mem_waitrequest;
-wire         lw_wr;
-wire [1:0]   lw_waddr;
-wire [31:0]  lw_wdata;
-wire [127:0] lw_status;
 wire [6:0]   USER_IN;
 wire [6:0]   USER_OUT;
 wire [1:0]   user_port_mode;
@@ -254,9 +250,6 @@ reg          drv_a2065_clk_ddr;
 reg  [63:0]  drv_a2065_mem_readdata;
 reg          drv_a2065_mem_readdatavalid;
 reg          drv_a2065_mem_waitrequest;
-reg          drv_lw_wr;
-reg  [1:0]   drv_lw_waddr;
-reg  [31:0]  drv_lw_wdata;
 reg  [6:0]   drv_USER_IN;
 reg          drv_ss_clut_active;
 reg  [7:0]   drv_ss_clut_addr;
@@ -330,9 +323,6 @@ assign a2065_clk_ddr = drv_a2065_clk_ddr;
 assign a2065_mem_readdata = drv_a2065_mem_readdata;
 assign a2065_mem_readdatavalid = drv_a2065_mem_readdatavalid;
 assign a2065_mem_waitrequest = drv_a2065_mem_waitrequest;
-assign lw_wr = drv_lw_wr;
-assign lw_waddr = drv_lw_waddr;
-assign lw_wdata = drv_lw_wdata;
 assign USER_IN = drv_USER_IN;
 assign ss_clut_active = drv_ss_clut_active;
 assign ss_clut_addr = drv_ss_clut_addr;
@@ -409,9 +399,6 @@ begin
 	drv_a2065_mem_readdata = 0;
 	drv_a2065_mem_readdatavalid = 0;
 	drv_a2065_mem_waitrequest = 0;
-	drv_lw_wr = 0;
-	drv_lw_waddr = 0;
-	drv_lw_wdata = 0;
 	drv_USER_IN = 0;
 	drv_ss_clut_active = 0;
 	drv_ss_clut_addr = 0;
@@ -570,10 +557,6 @@ minimig dut (
 	.a2065_mem_byteenable(a2065_mem_byteenable),
 	.a2065_mem_write(a2065_mem_write),
 	.a2065_mem_waitrequest(a2065_mem_waitrequest),
-	.lw_wr(lw_wr),
-	.lw_waddr(lw_waddr),
-	.lw_wdata(lw_wdata),
-	.lw_status(lw_status),
 	.USER_IN(USER_IN),
 	.USER_OUT(USER_OUT),
 	.user_port_mode(user_port_mode),

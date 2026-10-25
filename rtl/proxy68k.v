@@ -17,10 +17,11 @@
  * ends the cycle. The address and the write data are set when the cycle
  * starts and held to its end.
  *
- * Handshake with the bridge (clk_114, four times this clock, same PLL): a
- * new cycle is wanted when req_tgl differs from the last one taken; its
- * fields are already stable. ack_tgl flips when the cycle has ended, with
- * rdata valid. Cycles are only taken while own is high.
+ * Handshake with the bridge (on the HPS's clock, asynchronous to this one):
+ * a new cycle is wanted when req_tgl, through two flops, differs from the
+ * last one taken; the fields have been held since it flipped. ack_tgl flips
+ * when the cycle has ended, with rdata already valid. Cycles are only taken
+ * while own is high (cpu_wrapper brings it over through two flops).
  *
  * The ARM waits on every access, so nothing here may wait forever: a cycle
  * that sees no DTACK for 65536 enPhi1 (~9 ms) ends anyway and reads
@@ -63,6 +64,9 @@ module proxy68k #(
 	localparam S4     = 3'd3;
 	localparam S6     = 3'd4;
 
+	reg [1:0] req_s = 2'b00;
+	always @(posedge clk) req_s <= {req_s[0], req_tgl};
+
 	reg [2:0] st = 3'd0;
 	reg       taken = 1'b0;    // req_tgl as last taken
 	reg [WAIT_BITS-1:0] wait_n;
@@ -87,8 +91,8 @@ module proxy68k #(
 
 			case (st)
 			S_IDLE:
-				if (ph1 & own & (req_tgl != taken)) begin
-					taken   <= req_tgl;
+				if (ph1 & own & (req_s[1] != taken)) begin
+					taken   <= req_s[1];
 					c_rw    <= req_rw;
 					c_uds_n <= req_uds_n;
 					c_lds_n <= req_lds_n;

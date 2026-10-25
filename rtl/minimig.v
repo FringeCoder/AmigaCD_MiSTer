@@ -336,12 +336,6 @@ module minimig
 	output [7:0]  a2065_mem_byteenable,
 	output        a2065_mem_write,
 	input         a2065_mem_waitrequest,
-	// lightweight HPS bridge to the A2065's probes, a2065_clk_ddr domain
-	// (MEASUREMENT ONLY, see rtl/A2065/visprobe_ddr3.v)
-	input         lw_wr,
-	input   [1:0] lw_waddr,
-	input  [31:0] lw_wdata,
-	output [127:0] lw_status,
 
 	// MiSTer Floppy / PSX SNAC (SNAC user port). USER_OUT is muxed against
 	// MT32-pi at the top level on user_port_mode; the tenants cannot be
@@ -1264,12 +1258,7 @@ a2065 a2065_inst (
 	.mem_writedata    (a2065_mem_writedata),
 	.mem_byteenable   (a2065_mem_byteenable),
 	.mem_write        (a2065_mem_write),
-	.mem_waitrequest  (a2065_mem_waitrequest),
-
-	.lw_wr            (lw_wr),
-	.lw_waddr         (lw_waddr),
-	.lw_wdata         (lw_wdata),
-	.lw_status        (lw_status)
+	.mem_waitrequest  (a2065_mem_waitrequest)
 );
 
 // CDTV native bridge.

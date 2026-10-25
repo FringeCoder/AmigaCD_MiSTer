@@ -35,10 +35,13 @@
  * With OWN clear, a 68k-window access is answered at once (reads return
  * 0xFFFFFFFF) so the ARM can never hang on it.
  *
- * clk is the bridge's clock, clk_sys, the same as the proxy's. Each word
- * cycle is handed over by toggle all the same, so the two can sit on
- * different clocks: the fields are set and held, px_tgl flips, and the proxy
- * flips px_ack_tgl when the cycle has ended, with px_rdata valid.
+ * clk is the bridge's clock, the HPS's clk_100m; the proxy runs on clk_sys,
+ * and the two are asynchronous. Each word cycle is handed over by toggle:
+ * the fields are set and held, px_tgl flips, and the proxy, having passed
+ * px_tgl through two flops, flips px_ack_tgl when the cycle has ended, with
+ * px_rdata already valid and held. px_ack_tgl, the CPU setting and the
+ * interrupt level come in through two flops here; px_own goes out as a level
+ * that changes only between requests.
  */
 
 module armcpu_bridge (
@@ -72,6 +75,18 @@ module armcpu_bridge (
 );
 
 	localparam [31:0] MAGIC = 32'h41435055;   // "ACPU"
+
+	// from clk_sys
+	reg [1:0] ack_s, is68k_s;
+	reg [2:0] ipl_s1, ipl_s2;
+	always @(posedge clk) begin
+		ack_s   <= {ack_s[0], px_ack_tgl};
+		is68k_s <= {is68k_s[0], cpu_is_68000};
+		ipl_s1  <= ipl_n;
+		ipl_s2  <= ipl_s1;
+	end
+	wire ack_now   = ack_s[1];
+	wire is68k_now = is68k_s[1];
 
 	reg        own_req;
 	reg  [3:0] bank;
@@ -121,7 +136,7 @@ module armcpu_bridge (
 			3'd0: ctl = MAGIC;
 			3'd1: ctl = {31'd0, px_own};
 			3'd2: ctl = {28'd0, bank};
-			3'd3: ctl = {23'd0, cpu_is_68000, 3'd0, px_own, 1'b0, ~ipl_n};
+			3'd3: ctl = {23'd0, is68k_now, 3'd0, px_own, 1'b0, ~ipl_s2};
 			3'd4: ctl = cyc;
 			3'd5: ctl = last;
 			3'd6: ctl = words;
@@ -142,7 +157,7 @@ module armcpu_bridge (
 			words    <= 32'd0;
 			last     <= 32'd0;
 			px_tgl   <= 1'b0;
-			ack_seen <= px_ack_tgl;
+			ack_seen <= ack_now;
 			px_rw    <= 1'b1;
 			px_uds_n <= 1'b1;
 			px_lds_n <= 1'b1;
@@ -151,7 +166,7 @@ module armcpu_bridge (
 		else begin
 			// OWN changes only between requests, so a cycle the proxy has
 			// started is always finished on the pins it started on
-			if (~busy) px_own <= own_req & cpu_is_68000;
+			if (~busy) px_own <= own_req & is68k_now;
 
 			// a request arriving while busy can only follow a posted write
 			if (bus_req & busy) begin
@@ -223,8 +238,8 @@ module armcpu_bridge (
 			end
 
 			// the proxy finished one
-			if (in_cycle & (px_ack_tgl != ack_seen)) begin
-				ack_seen <= px_ack_tgl;
+			if (in_cycle & (ack_now != ack_seen)) begin
+				ack_seen <= ack_now;
 				in_cycle <= 1'b0;
 				words    <= words + 32'd1;
 				if (c_h) begin

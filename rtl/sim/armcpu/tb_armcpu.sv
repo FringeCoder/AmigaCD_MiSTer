@@ -1,8 +1,9 @@
 /*
  * tb_armcpu.sv -- the ARM's 68k bus, end to end (MEASUREMENT ONLY, step 2 of
- * the ARM-CPU plan): sys/lw_echo.sv's AXI3 slave, rtl/armcpu_bridge.v and
- * rtl/proxy68k.v, all on clk_sys as the core builds them, with a 68000 bus
- * slave behind the pins.
+ * the ARM-CPU plan): sys/lw_echo.sv's AXI3 slave and rtl/armcpu_bridge.v on
+ * the HPS's 100 MHz clock, rtl/proxy68k.v on clk_sys, the two asynchronous
+ * as in the core (the bench's clocks drift past each other), with a 68000
+ * bus slave behind the pins.
  *
  * The bench plays the HPS side with single accesses of every size and with
  * INCR bursts, and checks from both ends:
@@ -32,10 +33,11 @@
 
 module tb_armcpu;
 
-// ---- clk_sys, 28.4 MHz; the bridge side runs on it too --------------------
+// ---- clk_sys, 28.4 MHz, and the bridge side's clk_100m, unrelated --------
 reg clk_sys = 0;
 always #17.6 clk_sys = ~clk_sys;
-wire clk114 = clk_sys;   // the bus side's clock (it was clk_114 before step 2's fit)
+reg clk114 = 0;          // the bus side's clock: 100 MHz, not a multiple
+initial begin #3.3; forever #5.003 clk114 = ~clk114; end
 
 // ph1 / ph2: one clk_sys cycle each, 7 MHz, half a 68k clock apart
 reg [1:0] phc = 0;
@@ -91,9 +93,9 @@ armcpu_bridge br (
 	.px_ack_tgl(px_ack_tgl), .px_rdata(px_rdata)
 );
 
-// cpu_wrapper registers px_own into clk_sys before the proxy sees it
-reg px_own_s = 0;
-always @(posedge clk_sys) px_own_s <= px_own;
+// cpu_wrapper brings px_own into clk_sys through two flops
+reg px_own_m = 0, px_own_s = 0;
+always @(posedge clk_sys) {px_own_s, px_own_m} <= {px_own_m, px_own};
 
 wire        as_n, rw, uds_n, lds_n;
 wire [23:1] addr;
@@ -427,7 +429,7 @@ initial begin
 	ctl_read(6, exp_v);
 	checks = checks + 2;
 	if (exp_v - w != 2) fail("WORDS did not count two word cycles");
-	if (v < 32'd16 || v > 32'd150) begin fail("LAST out of range for two word cycles"); $display("  LAST %0d", v); end
+	if (v < 32'd60 || v > 32'd500) begin fail("LAST out of range for two word cycles"); $display("  LAST %0d", v); end
 
 	// no DTACK: the cycle ends after the timeout and reads all ones
 	ctl_write(2, 4'hF);

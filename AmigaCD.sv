@@ -1257,24 +1257,17 @@ cpu_wrapper cpu_wrapper
 
 // MEASUREMENT ONLY (ARM-CPU plan, step 2): the ARM's 68k bus cycles, from the
 // lightweight HPS bridge (sys/lw_echo.sv) to the proxy in cpu_wrapper. The
-// bridge runs on clk_sys, the CPU's own clock: on clk_114 its logic joined
-// the near-critical paths there and no seed of 20 closed timing.
-// See rtl/armcpu_bridge.v.
-assign LW_CLK = clk_sys;
-
-// The step 1e probe (rtl/A2065/visprobe_ddr3.v) runs on clk_114. lw_echo's
-// write pulse lasts one clk_sys, four clk_114: its first clk_114 is the one
-// write. Index and data are held from the pulse until the next write.
-reg  lw_wr_d;
-always @(posedge clk_114) lw_wr_d <= LW_WR;
-wire lw_wr_114 = LW_WR & ~lw_wr_d;
+// bridge side runs on LW_CLK, the HPS's clk_100m: on clk_114 its logic joined
+// the near-critical paths there, and on clk_sys every AXI handshake cost a
+// 35 ns cycle. It is asynchronous to clk_sys; armcpu_bridge and proxy68k
+// synchronize what crosses. See rtl/armcpu_bridge.v.
 wire        px_own, px_tgl, px_rw, px_uds_n, px_lds_n, px_ack_tgl;
 wire [23:1] px_addr;
 wire [15:0] px_wdata, px_rdata;
 
 armcpu_bridge armcpu_bridge
 (
-	.clk          (clk_sys         ),
+	.clk          (LW_CLK          ),
 	.reset        (RESET           ),
 	.bus_req      (LW_BUS_REQ      ),
 	.bus_we       (LW_BUS_WE       ),
@@ -1943,10 +1936,6 @@ minimig minimig
 	.a2065_mem_byteenable(a2065_mem_byteenable),
 	.a2065_mem_write(a2065_mem_write),
 	.a2065_mem_waitrequest(a2065_mem_waitrequest),
-	.lw_wr(lw_wr_114),
-	.lw_waddr(LW_WADDR),
-	.lw_wdata(LW_WDATA),
-	.lw_status(LW_STATUS),
 
 	.USER_IN              (USER_IN              ),
 	.USER_OUT             (IndirectUserOutFlop  ),

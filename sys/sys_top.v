@@ -604,9 +604,9 @@ wire clk_100m;
 // MEASUREMENT ONLY (ARM-CPU plan, steps 1d and 1e): the lightweight
 // HPS-to-FPGA bridge, ARM physical 0xFF200000, with a register echo as its
 // only slave. Main_MiSTer already releases the bridge; the framework never
-// used it. It runs on a clock the core supplies (LW_CLK: AmigaCD gives it
-// clk_sys, the CPU's clock, which keeps it out of the crowded clk_114
-// paths), and registers 4-7 and the bus pass through to emu (LW_*).
+// used it. It runs on clk_100m, the HPS's own clock: asynchronous to the
+// core, so it adds nothing to the core's crowded clk_114 paths, and the core
+// takes the bus requests (LW_BUS_*) across with synchronizers.
 wire [11:0] lw_awid, lw_wid, lw_arid, lw_bid, lw_rid;
 wire [20:0] lw_awaddr, lw_araddr;
 wire  [3:0] lw_awlen, lw_arlen, lw_wstrb;
@@ -614,11 +614,7 @@ wire [31:0] lw_wdata, lw_rdata;
 wire  [1:0] lw_bresp, lw_rresp;
 wire        lw_awvalid, lw_awready, lw_wlast, lw_wvalid, lw_wready, lw_bvalid, lw_bready;
 wire        lw_arvalid, lw_arready, lw_rlast, lw_rvalid, lw_rready;
-wire        lw_ext_wr;
-wire  [1:0] lw_ext_waddr;
-wire [31:0] lw_ext_wdata;
-wire [127:0] lw_ext_status;
-wire        lw_clk;
+wire        lw_clk = clk_100m;
 wire        lw_bus_req, lw_bus_we, lw_bus_ack;
 wire [20:0] lw_bus_addr;
 wire  [1:0] lw_bus_size;
@@ -656,7 +652,8 @@ lw_echo lw_echo
 	.arid(lw_arid), .araddr(lw_araddr), .arlen(lw_arlen), .arsize(lw_arsize), .arburst(lw_arburst),
 	.arvalid(lw_arvalid), .arready(lw_arready),
 	.rid(lw_rid), .rdata(lw_rdata), .rresp(lw_rresp), .rlast(lw_rlast), .rvalid(lw_rvalid), .rready(lw_rready),
-	.ext_wr(lw_ext_wr), .ext_waddr(lw_ext_waddr), .ext_wdata(lw_ext_wdata), .ext_status(lw_ext_status),
+	// registers 4-7 were step 1e's probe, no longer built: they read 0
+	.ext_wr(), .ext_waddr(), .ext_wdata(), .ext_status(128'd0),
 	.bus_req(lw_bus_req), .bus_we(lw_bus_we), .bus_addr(lw_bus_addr), .bus_size(lw_bus_size),
 	.bus_wstrb(lw_bus_wstrb), .bus_wdata(lw_bus_wdata), .bus_ack(lw_bus_ack), .bus_rdata(lw_bus_rdata)
 );
@@ -1907,10 +1904,6 @@ emu emu
 	.DDRAM_WE(ram_write),
 
 	.LW_CLK(lw_clk),
-	.LW_WR(lw_ext_wr),
-	.LW_WADDR(lw_ext_waddr),
-	.LW_WDATA(lw_ext_wdata),
-	.LW_STATUS(lw_ext_status),
 	.LW_BUS_REQ(lw_bus_req),
 	.LW_BUS_WE(lw_bus_we),
 	.LW_BUS_ADDR(lw_bus_addr),

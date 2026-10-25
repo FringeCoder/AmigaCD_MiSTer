@@ -114,14 +114,11 @@ output [63:0] DDRAM_DIN,
 output  [7:0] DDRAM_BE,
 output        DDRAM_WE,
 
-//Lightweight HPS-to-FPGA bridge (MEASUREMENT ONLY, see sys/lw_echo.sv),
-//clocked by LW_CLK, which the core supplies; registers 4-7 and the bus
-output        LW_CLK,
-input         LW_WR,
-input   [1:0] LW_WADDR,
-input  [31:0] LW_WDATA,
-output [127:0] LW_STATUS,
-//and the core's bus behind bridge offsets 0x080000-0x1FFFFF (step 2)
+//Lightweight HPS-to-FPGA bridge (MEASUREMENT ONLY, see sys/lw_echo.sv):
+//the core's bus behind it, on LW_CLK (clk_100m, the HPS's clock, which is
+//asynchronous to everything in emu)
+input         LW_CLK,
+//the core's bus behind bridge offsets 0x080000-0x1FFFFF (step 2)
 input         LW_BUS_REQ,
 input         LW_BUS_WE,
 input  [20:0] LW_BUS_ADDR,
