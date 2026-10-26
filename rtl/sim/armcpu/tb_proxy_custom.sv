@@ -94,7 +94,7 @@ wire        dbs     = cpu_address_out[23:16] == 8'hDF;
 
 minimig_m68k_bridge bridge (
 	.clk(clk_sys), .clk7_en(clk7_en), .clk7n_en(clk7n_en), .c1(c1), .c3(c3), .eclk(eclk),
-	.vpa(1'b0), .dbr(1'b0), .dbs(dbs), .xbs(1'b1), .nrdy(1'b0), .bls(bls), .cck(cck),
+	.vpa(1'b0), .dbr(1'b0), .dbs(dbs), .xbs(1'b1), .nrdy(1'b0), .bls(bls), .blit_nasty(1'b0), .cck(cck),
 	.memory_config(4'd0), ._as(as_n), ._lds(lds_n), ._uds(uds_n), .r_w(rw),
 	.cpu_long(1'b0), .long_en(long_en), ._dtack(chip_dtack),
 	.rd(cpu_rd), .hwr(cpu_hwr), .lwr(cpu_lwr), .address(addr), .address_out(cpu_address_out),
