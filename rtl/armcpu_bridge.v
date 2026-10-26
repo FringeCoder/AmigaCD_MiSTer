@@ -38,14 +38,20 @@
  *               ARM holds it for the instruction's 124 clocks (~17 us).
  *     2 BANK    [3:0]
  *     3 STATUS  [2:0] the interrupt level Paula is asking for (0 none),
- *               [4] OWN in effect, [8] CPU set to 68000
+ *               [4] OWN in effect, [8] CPU set to 68000, [9] a word cycle
+ *               timed out (sticky until OWN is set again)
  *     4 CYCLES  free-running count of clk
  *     5 LAST    clk cycles the last 68k-window access took, from the
  *               request to its last word cycle ending
  *     6 WORDS   68k word cycles made since reset
  *
  * With OWN clear, a 68k-window access is answered at once (reads return
- * 0xFFFFFFFF) so the ARM can never hang on it.
+ * 0xFFFFFFFF) so the ARM can never hang on it. Nor with OWN set: a word
+ * cycle the proxy has not ended after 2^20 clocks (~10 ms) is given up, the
+ * read answered with 0xFFFFFFFF, OWN cleared and STATUS[9] set. Without it a
+ * proxy stopped mid-cycle -- the core halting the CPU for a reset, with
+ * armcpu still running -- held the ARM's AXI read forever, and that froze
+ * the whole HPS: no Linux, no network, a power cycle (2026-10-26).
  *
  * clk is the bridge's clock, the HPS's clk_100m; the proxy runs on clk_sys,
  * and the two are asynchronous. Each word cycle is handed over by toggle:
@@ -56,7 +62,9 @@
  * that changes only between requests.
  */
 
-module armcpu_bridge (
+module armcpu_bridge #(
+	parameter WD_BITS = 20             // a word cycle out this many clocks' worth is given up
+) (
 	input  wire        clk,
 	input  wire        reset,
 
@@ -120,6 +128,8 @@ module armcpu_bridge (
 	reg        in_cycle;      // a word cycle is out to the proxy
 	reg        ack_seen;      // px_ack_tgl as last accounted for
 	reg        c_h;           // the half that cycle is for
+	reg [WD_BITS-1:0] wd;     // clocks the word cycle has been out
+	reg        timed_out;
 
 	// a request that came in while a posted write was still running
 	reg        p_valid, p_we;
@@ -151,7 +161,7 @@ module armcpu_bridge (
 			3'd0: ctl = MAGIC;
 			3'd1: ctl = {28'd0, px_reset, px_fastw, px_fast, px_own};
 			3'd2: ctl = {28'd0, bank};
-			3'd3: ctl = {23'd0, is68k_now, 3'd0, px_own, 1'b0, ~ipl_s2};
+			3'd3: ctl = {22'd0, timed_out, is68k_now, 3'd0, px_own, 1'b0, ~ipl_s2};
 			3'd4: ctl = cyc;
 			3'd5: ctl = last;
 			3'd6: ctl = words;
@@ -176,6 +186,8 @@ module armcpu_bridge (
 			p_valid  <= 1'b0;
 			words    <= 32'd0;
 			last     <= 32'd0;
+			wd       <= {WD_BITS{1'b0}};
+			timed_out <= 1'b0;
 			px_tgl   <= 1'b0;
 			ack_seen <= ack_now;
 			px_rw    <= 1'b1;
@@ -212,12 +224,13 @@ module armcpu_bridge (
 						3'd1: if (r_wstrb[0]) begin
 							{fastw_req, fast_req, own_req} <= r_wdata[2:0];
 							px_reset <= r_wdata[3] & r_wdata[0];
+							if (r_wdata[0]) timed_out <= 1'b0;
 						end
 						3'd2: if (r_wstrb[0]) bank    <= r_wdata[3:0];
 						default: ;
 					endcase
 				end
-				else if (~px_own | ~|r_lanes) begin
+				else if (~px_own | timed_out | ~|r_lanes) begin
 					// nobody to answer, or nothing to do
 					bus_ack   <= 1'b1;
 					bus_rdata <= 32'hFFFFFFFF;
@@ -261,8 +274,26 @@ module armcpu_bridge (
 					end
 					px_tgl   <= ~px_tgl;
 					in_cycle <= 1'b1;
+					wd       <= {WD_BITS{1'b0}};
 				end
 			end
+
+			// a word cycle the proxy never ends: give the request up rather
+			// than hold the ARM's bus transaction (see the header)
+			if (in_cycle) wd <= wd + 1'b1;
+			if (in_cycle & (ack_now == ack_seen) & (&wd)) begin
+				in_cycle  <= 1'b0;
+				busy      <= 1'b0;
+				own_req   <= 1'b0;
+				px_reset  <= 1'b0;
+				timed_out <= 1'b1;
+				if (~c_we) begin
+					bus_ack   <= 1'b1;
+					bus_rdata <= 32'hFFFFFFFF;
+				end
+			end
+			// and the end of that cycle, should it come later, is dropped
+			if (~in_cycle & (ack_now != ack_seen)) ack_seen <= ack_now;
 
 			// the proxy finished one
 			if (in_cycle & (ack_now != ack_seen)) begin

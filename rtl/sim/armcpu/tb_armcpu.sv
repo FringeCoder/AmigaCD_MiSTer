@@ -26,6 +26,10 @@
  *     read answers 0xFFFFFFFF at once;
  *   - a cycle with no DTACK ends after its timeout, and a reset in the
  *     middle of a cycle still answers the ARM;
+ *   - a cycle the proxy never ends (the CPU halted: no enPhi at all) is
+ *     given up by the bridge's own watchdog: the read answers all ones,
+ *     OWN drops, STATUS[9] is set and later reads answer at once; setting
+ *     OWN again clears it and the bus works;
  *   - the control registers: MAGIC, BANK, STATUS (interrupt level, OWN,
  *     68000), LAST, WORDS;
  *   - with FAST, reads of the SDRAM port's addresses (chip RAM here: banks 0
@@ -50,8 +54,9 @@ initial begin #3.3; forever #5.003 clk114 = ~clk114; end
 // ph1 / ph2: one clk_sys cycle each, 7 MHz, half a 68k clock apart
 reg [1:0] phc = 0;
 always @(posedge clk_sys) phc <= phc + 2'd1;
-wire ph1 = (phc == 2'd0);
-wire ph2 = (phc == 2'd2);
+reg halt = 0;            // the core's CPU halt: no phase enables at all
+wire ph1 = (phc == 2'd0) & ~halt;
+wire ph2 = (phc == 2'd2) & ~halt;
 
 reg reset114 = 1, cpu_reset_n = 0;
 
@@ -91,7 +96,7 @@ wire        px_own, px_fast, px_fastw, px_reset, px_tgl, px_rw, px_uds_n, px_lds
 wire [23:1] px_addr;
 wire [15:0] px_wdata, px_rdata;
 
-armcpu_bridge br (
+armcpu_bridge #(.WD_BITS(14)) br (
 	.clk(clk114), .reset(reset114),
 	.bus_req(bus_req), .bus_we(bus_we), .bus_addr(bus_addr), .bus_size(bus_size),
 	.bus_wstrb(bus_wstrb), .bus_wdata(bus_wdata), .bus_ack(bus_ack), .bus_rdata(bus_rdata),
@@ -557,6 +562,35 @@ initial begin
 	axi_read(WIN + 21'h00020, 0, 1);
 	checks = checks + 1;
 	if (got[0][15:0] !== {mem[mi(24'h21)], mem[mi(24'h20)]}) fail("first read after the reset wrong");
+
+	// the CPU halted mid-cycle: the proxy never ends it, the bridge gives up
+	dt_wait = 1;
+	fork
+		axi_read(WIN + 21'h00040, 0, 2);
+		begin
+			@(negedge as_n);
+			halt = 1;
+		end
+	join
+	checks = checks + 1;
+	if (got[0] !== 32'hFFFFFFFF) fail("halted read not all ones");
+	ctl_read(3, v); checks = checks + 2;
+	if (v[9] !== 1'b1) fail("STATUS timed-out bit not set");
+	if (v[4] !== 1'b0) fail("OWN still in effect after the watchdog");
+	c0 = n_cycles;
+	axi_read(WIN + 21'h00040, 0, 2);
+	checks = checks + 1;
+	if (got[0] !== 32'hFFFFFFFF) fail("read after the watchdog not all ones");
+	halt = 0;
+	repeat (400) @(posedge clk_sys);
+	ctl_write(1, 1);
+	repeat (8) @(posedge clk_sys);
+	ctl_read(3, v); checks = checks + 1;
+	if (v[9] !== 1'b0) fail("STATUS timed-out bit not cleared by OWN");
+	axi_read(WIN + 21'h00040, 0, 2);
+	checks = checks + 1;
+	if (got[0] !== {mem[mi(24'h43)], mem[mi(24'h42)], mem[mi(24'h41)], mem[mi(24'h40)]}) begin
+		fail("first read after the watchdog wrong"); $display("  got %08x", got[0]); end
 
 	// OWN off again: back to all ones and no cycles
 	ctl_write(1, 0);
