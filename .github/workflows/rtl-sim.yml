@@ -420,7 +420,7 @@ jobs:
         run: |
           set -euo pipefail
           cd rtl/sim/armcpu
-          iverilog -g2012 -o tb tb_armcpu.sv ../../../sys/lw_echo.sv ../../armcpu_bridge.v ../../proxy68k.v
+          iverilog -g2012 -o tb tb_armcpu.sv ../../../sys/lw_echo.sv ../../../sys/bus_merge.sv ../../armcpu_bridge.v ../../proxy68k.v
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
 

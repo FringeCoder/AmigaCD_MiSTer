@@ -121,7 +121,7 @@ input         LW_CLK,
 //the core's bus behind bridge offsets 0x080000-0x1FFFFF (step 2)
 input         LW_BUS_REQ,
 input         LW_BUS_WE,
-input  [20:0] LW_BUS_ADDR,
+input  [24:0] LW_BUS_ADDR,      // [24]: flat (full bridge), else the lightweight offset
 input   [1:0] LW_BUS_SIZE,
 input   [3:0] LW_BUS_WSTRB,
 input  [31:0] LW_BUS_WDATA,

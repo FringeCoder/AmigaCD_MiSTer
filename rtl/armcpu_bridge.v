@@ -45,6 +45,11 @@
  *               request to its last word cycle ending
  *     6 WORDS   68k word cycles made since reset
  *
+ * Step 4 adds a flat view: sys/bus_merge.sv sets address bit 24 for an access
+ * from the full HPS-to-FPGA bridge (ARM physical 0xC0000000), and [23:0] is
+ * then the 68k address itself -- no BANK, no control registers. It is the
+ * same window otherwise: OWN, FAST, FASTW, the byte order and the cycles.
+ *
  * With OWN clear, a 68k-window access is answered at once (reads return
  * 0xFFFFFFFF) so the ARM can never hang on it. Nor with OWN set: a word
  * cycle the proxy has not ended after 2^20 clocks (~10 ms) is given up, the
@@ -71,7 +76,7 @@ module armcpu_bridge #(
 	// from sys/lw_echo.sv
 	input  wire        bus_req,
 	input  wire        bus_we,
-	input  wire [20:0] bus_addr,
+	input  wire [24:0] bus_addr,       // [24]: flat, [23:0] the 68k address
 	input  wire  [1:0] bus_size,
 	input  wire  [3:0] bus_wstrb,
 	input  wire [31:0] bus_wdata,
@@ -133,7 +138,7 @@ module armcpu_bridge #(
 
 	// a request that came in while a posted write was still running
 	reg        p_valid, p_we;
-	reg [20:0] p_addr;
+	reg [24:0] p_addr;
 	reg  [1:0] p_size;
 	reg  [3:0] p_wstrb;
 	reg [31:0] p_wdata;
@@ -148,7 +153,8 @@ module armcpu_bridge #(
 	endfunction
 
 	wire        r_we    = p_valid ? p_we    : bus_we;
-	wire [20:0] r_addr  = p_valid ? p_addr  : bus_addr;
+	wire [24:0] r_addr  = p_valid ? p_addr  : bus_addr;
+	wire        r_flat  = r_addr[24];
 	wire  [1:0] r_size  = p_valid ? p_size  : bus_size;
 	wire  [3:0] r_wstrb = p_valid ? p_wstrb : bus_wstrb;
 	wire [31:0] r_wdata = p_valid ? p_wdata : bus_wdata;
@@ -216,7 +222,7 @@ module armcpu_bridge #(
 
 			if (r_go) begin
 				p_valid <= 1'b0;
-				if (~r_addr[20]) begin
+				if (~r_flat & ~r_addr[20]) begin
 					// control
 					bus_ack <= 1'b1;
 					bus_rdata <= ctl(r_addr[4:2]);
@@ -238,7 +244,7 @@ module armcpu_bridge #(
 				else begin
 					busy     <= 1'b1;
 					c_we     <= r_we;
-					c_a      <= {bank, r_addr[19:2]};
+					c_a      <= r_flat ? r_addr[23:2] : {bank, r_addr[19:2]};
 					c_halves <= {|r_lanes[3:2], |r_lanes[1:0]};
 					c_strb   <= r_lanes;
 					c_wdata  <= r_wdata;

@@ -26,6 +26,11 @@
  *     read answers 0xFFFFFFFF at once;
  *   - a cycle with no DTACK ends after its timeout, and a reset in the
  *     middle of a cycle still answers the ARM;
+ *   - step 4's flat view: a second AXI master through lw_echo with FLAT and
+ *     sys/bus_merge.sv, as sys_top wires the full HPS-to-FPGA bridge. Its
+ *     address is the 68k address, whatever BANK says; at 16 MB and above it
+ *     is answered at once with all ones and no cycle; both masters at once
+ *     each get their own answers; and the two views agree on memory;
  *   - a cycle the proxy never ends (the CPU halted: no enPhi at all) is
  *     given up by the bridge's own watchdog: the read answers all ones,
  *     OWN drops, STATUS[9] is set and later reads answer at once; setting
@@ -69,8 +74,24 @@ reg  [11:0] arid = 0;  reg [20:0] araddr = 0; reg [3:0] arlen = 0; reg [2:0] ars
 reg         arvalid = 0; wire arready;
 wire [11:0] rid; wire [31:0] rdata; wire [1:0] rresp; wire rlast; wire rvalid; reg rready = 0;
 
+// the full bridge's master, flat
+reg  [11:0] hf_awid = 0;  reg [29:0] hf_awaddr = 0; reg [3:0] hf_awlen = 0; reg [2:0] hf_awsize = 2; reg [1:0] hf_awburst = 1;
+reg         hf_awvalid = 0; wire hf_awready;
+reg  [31:0] hf_wdata = 0; reg [3:0] hf_wstrb = 0; reg hf_wlast = 0; reg hf_wvalid = 0; wire hf_wready;
+wire [11:0] hf_bid; wire [1:0] hf_bresp; wire hf_bvalid; reg hf_bready = 0;
+reg  [11:0] hf_arid = 0;  reg [29:0] hf_araddr = 0; reg [3:0] hf_arlen = 0; reg [2:0] hf_arsize = 2; reg [1:0] hf_arburst = 1;
+reg         hf_arvalid = 0; wire hf_arready;
+wire [11:0] hf_rid; wire [31:0] hf_rdata; wire [1:0] hf_rresp; wire hf_rlast; wire hf_rvalid; reg hf_rready = 0;
+
+wire        lw_req, lw_we, lw_ack, hf_req, hf_we, hf_ack;
+wire [20:0] lw_addr;
+wire [29:0] hf_addr;
+wire  [1:0] lw_size, hf_size;
+wire  [3:0] lw_wstrb, hf_wstrb_b;
+wire [31:0] lw_wdata, lw_rdata, hf_wdata_b, hf_rdata_b;
+
 wire        bus_req, bus_we, bus_ack;
-wire [20:0] bus_addr;
+wire [24:0] bus_addr;
 wire  [1:0] bus_size;
 wire  [3:0] bus_wstrb;
 wire [31:0] bus_wdata, bus_rdata;
@@ -85,8 +106,32 @@ lw_echo lw (
 	.arvalid(arvalid), .arready(arready),
 	.rid(rid), .rdata(rdata), .rresp(rresp), .rlast(rlast), .rvalid(rvalid), .rready(rready),
 	.ext_wr(), .ext_waddr(), .ext_wdata(), .ext_status(128'd0),
-	.bus_req(bus_req), .bus_we(bus_we), .bus_addr(bus_addr), .bus_size(bus_size),
-	.bus_wstrb(bus_wstrb), .bus_wdata(bus_wdata), .bus_ack(bus_ack), .bus_rdata(bus_rdata)
+	.bus_req(lw_req), .bus_we(lw_we), .bus_addr(lw_addr), .bus_size(lw_size),
+	.bus_wstrb(lw_wstrb), .bus_wdata(lw_wdata), .bus_ack(lw_ack), .bus_rdata(lw_rdata)
+);
+
+lw_echo #(.AW(30), .FLAT(1)) hf (
+	.clk(clk114), .reset(reset114),
+	.awid(hf_awid), .awaddr(hf_awaddr), .awlen(hf_awlen), .awsize(hf_awsize), .awburst(hf_awburst),
+	.awvalid(hf_awvalid), .awready(hf_awready),
+	.wdata(hf_wdata), .wstrb(hf_wstrb), .wlast(hf_wlast), .wvalid(hf_wvalid), .wready(hf_wready),
+	.bid(hf_bid), .bresp(hf_bresp), .bvalid(hf_bvalid), .bready(hf_bready),
+	.arid(hf_arid), .araddr(hf_araddr), .arlen(hf_arlen), .arsize(hf_arsize), .arburst(hf_arburst),
+	.arvalid(hf_arvalid), .arready(hf_arready),
+	.rid(hf_rid), .rdata(hf_rdata), .rresp(hf_rresp), .rlast(hf_rlast), .rvalid(hf_rvalid), .rready(hf_rready),
+	.ext_wr(), .ext_waddr(), .ext_wdata(), .ext_status(128'd0),
+	.bus_req(hf_req), .bus_we(hf_we), .bus_addr(hf_addr), .bus_size(hf_size),
+	.bus_wstrb(hf_wstrb_b), .bus_wdata(hf_wdata_b), .bus_ack(hf_ack), .bus_rdata(hf_rdata_b)
+);
+
+bus_merge merge (
+	.clk(clk114), .reset(reset114),
+	.a_req(lw_req), .a_we(lw_we), .a_addr(lw_addr), .a_size(lw_size),
+	.a_wstrb(lw_wstrb), .a_wdata(lw_wdata), .a_ack(lw_ack), .a_rdata(lw_rdata),
+	.b_req(hf_req), .b_we(hf_we), .b_addr(hf_addr), .b_size(hf_size),
+	.b_wstrb(hf_wstrb_b), .b_wdata(hf_wdata_b), .b_ack(hf_ack), .b_rdata(hf_rdata_b),
+	.o_req(bus_req), .o_we(bus_we), .o_addr(bus_addr), .o_size(bus_size),
+	.o_wstrb(bus_wstrb), .o_wdata(bus_wdata), .o_ack(bus_ack), .o_rdata(bus_rdata)
 );
 
 reg        cpu_is_68000 = 1;
@@ -336,6 +381,60 @@ task automatic axi_read(input [20:0] a, input [3:0] len, input [2:0] size);
 			if (t > 4000000) begin fail("read never completed"); disable axi_read; end
 		end
 		rready <= 0;
+	end
+endtask
+
+reg [31:0] hbeat_data [0:15];
+reg [31:0] hgot [0:15];
+
+task automatic hf_write(input [29:0] a, input [3:0] len, input [2:0] size, input [3:0] strb);
+	integer beat, t;
+	begin
+		gap;
+		w_start_t = $time;
+		hf_awaddr <= a; hf_awlen <= len; hf_awsize <= size; hf_awburst <= 2'b01; hf_awid <= $random(seed); hf_awvalid <= 1;
+		@(posedge clk114); while (!hf_awready) @(posedge clk114);
+		hf_awvalid <= 0;
+		for (beat = 0; beat <= len; beat = beat + 1) begin
+			hf_wdata <= hbeat_data[beat]; hf_wstrb <= strb; hf_wlast <= (beat == len); hf_wvalid <= 1;
+			@(posedge clk114); t = 0;
+			while (!hf_wready) begin
+				@(posedge clk114); t = t + 1;
+				if (t > 2000000) begin fail("write beat never accepted"); disable hf_write; end
+			end
+			hf_wvalid <= 0;
+		end
+		hf_bready <= 1; t = 0;
+		@(posedge clk114);
+		while (!hf_bvalid) begin
+			@(posedge clk114); t = t + 1;
+			if (t > 2000000) begin fail("no write response"); disable hf_write; end
+		end
+		w_resp_t = $time;
+		hf_bready <= 0;
+	end
+endtask
+
+task automatic hf_read(input [29:0] a, input [3:0] len, input [2:0] size);
+	integer beat, t;
+	begin
+		gap;
+		hf_araddr <= a; hf_arlen <= len; hf_arsize <= size; hf_arburst <= 2'b01; hf_arid <= $random(seed); hf_arvalid <= 1;
+		@(posedge clk114); while (!hf_arready) @(posedge clk114);
+		hf_arvalid <= 0;
+		beat = 0; t = 0;
+		while (beat <= len) begin
+			hf_rready <= 1;
+			@(posedge clk114);
+			if (hf_rvalid && hf_rready) begin
+				hgot[beat] = hf_rdata;
+				if (hf_rlast != (beat == len)) fail("hf_rlast on the wrong beat");
+				beat = beat + 1;
+			end
+			t = t + 1;
+			if (t > 4000000) begin fail("read never completed"); disable hf_read; end
+		end
+		hf_rready <= 0;
 	end
 endtask
 
@@ -591,6 +690,85 @@ initial begin
 	checks = checks + 1;
 	if (got[0] !== {mem[mi(24'h43)], mem[mi(24'h42)], mem[mi(24'h41)], mem[mi(24'h40)]}) begin
 		fail("first read after the watchdog wrong"); $display("  got %08x", got[0]); end
+
+	// ---- step 4: the flat view ------------------------------------------------
+	// random accesses of every size at their 68k address, BANK set elsewhere
+	ctl_write(2, 4'h3);
+	dt_wait = 1;
+	for (i = 0; i < 300; i = i + 1) begin
+		bank = $unsigned($random(seed)) % 15;
+		off  = $random(seed) & 20'h0FFFC;
+		size_sel = $unsigned($random(seed)) % 3;
+		k = $random(seed) & 3;
+		c0 = n_cycles;
+		if ($random(seed) & 1) begin
+			case (size_sel)
+				0: begin off = off + k; hf_read({bank, off}, 0, 0); end
+				1: begin off = off + (k & 2); hf_read({bank, off}, 0, 1); end
+				default: hf_read({bank, off}, 0, 2);
+			endcase
+			checks = checks + 2;
+			case (size_sel)
+				0: if (hgot[0][8*(off & 3) +: 8] !== mb(bank, off)) fail("flat byte read: wrong byte");
+				1: if (hgot[0][8*(off & 3) +: 16] !== {mb(bank, off + 1), mb(bank, off)}) fail("flat halfword read wrong");
+				default: if (hgot[0] !== {mb(bank, off + 3), mb(bank, off + 2), mb(bank, off + 1), mb(bank, off)})
+					fail("flat word read wrong");
+			endcase
+			if (n_cycles != c0 + (size_sel == 2 ? 2 : 1)) fail("flat read: wrong number of word cycles");
+		end
+		else begin
+			w = $random(seed);
+			hbeat_data[0] = w;
+			case (size_sel)
+				0: begin off = off + k; strb = 4'b0001 << k; end
+				1: begin off = off + (k & 2); strb = (k & 2) ? 4'b1100 : 4'b0011; end
+				default: strb = 4'b1111;
+			endcase
+			hf_write({bank, off & 20'hFFFFC}, 0, size_sel, strb);
+			hf_read({bank, off & 20'hFFFFC}, 0, 2);
+			checks = checks + 1;
+			for (lanes = 0; lanes < 4; lanes = lanes + 1)
+				if (strb[lanes] && hgot[0][8*lanes +: 8] !== w[8*lanes +: 8]) fail("flat write did not land");
+		end
+	end
+	ctl_read(2, v); checks = checks + 1;
+	if (v !== 32'h3) fail("a flat access moved BANK");
+
+	// the two views agree: written flat at $000100, read through bank 0
+	hbeat_data[0] = 32'hA5C31E7F;
+	hf_write(30'h0000100, 0, 2, 4'hF);
+	ctl_write(2, 4'h0);
+	axi_read(WIN + 21'h00100, 0, 2);
+	checks = checks + 1;
+	if (got[0] !== 32'hA5C31E7F) fail("banked read does not see the flat write");
+
+	// nothing at 16 MB and above: all ones, no cycle
+	c0 = n_cycles;
+	hf_read(30'h1000000, 0, 2);
+	checks = checks + 2;
+	if (hgot[0] !== 32'hFFFFFFFF) fail("flat read above 16 MB not all ones");
+	if (n_cycles != c0) fail("a cycle ran for an address above 16 MB");
+
+	// both masters at once: control reads on one, flat reads on the other
+	fork
+		begin : lwside
+			integer q;
+			reg [31:0] mv;
+			for (q = 0; q < 30; q = q + 1) begin
+				ctl_read(0, mv); checks = checks + 1;
+				if (mv !== 32'h41435055) fail("MAGIC wrong while the flat master runs");
+			end
+		end
+		begin : hfside
+			integer q;
+			for (q = 0; q < 30; q = q + 1) begin
+				hf_read(30'h0000200 + 4 * q, 0, 2); checks = checks + 1;
+				if (hgot[0] !== {mem[mi(24'h203 + 4 * q)], mem[mi(24'h202 + 4 * q)],
+				                 mem[mi(24'h201 + 4 * q)], mem[mi(24'h200 + 4 * q)]})
+					fail("flat read wrong while the lightweight master runs");
+			end
+		end
+	join
 
 	// OWN off again: back to all ones and no cycles
 	ctl_write(1, 0);

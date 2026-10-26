@@ -41,16 +41,22 @@
  * AXI3 slave, one transaction in flight per direction, and one bus access in
  * flight at a time (a write's beats go first). A write waits for its address
  * before taking data, which AXI allows. Responses are always OKAY.
+ *
+ * Step 4 (the JIT, which needs chip RAM as ordinary memory) instantiates it a
+ * second time on the full HPS-to-FPGA bridge with FLAT set: no registers,
+ * every access goes to the bus, and AW is that bridge's 30 address bits.
  */
 
 module lw_echo #(
-	parameter [31:0] MAGIC = 32'h4C574252   // "LWBR"
+	parameter [31:0] MAGIC = 32'h4C574252,  // "LWBR"
+	parameter        AW    = 21,            // address bits
+	parameter        FLAT  = 0              // 1: no registers, everything is bus
 )(
 	input  wire        clk,
 	input  wire        reset,
 
 	input  wire [11:0] awid,
-	input  wire [20:0] awaddr,
+	input  wire [AW-1:0] awaddr,
 	input  wire  [3:0] awlen,
 	input  wire  [2:0] awsize,
 	input  wire  [1:0] awburst,
@@ -69,7 +75,7 @@ module lw_echo #(
 	input  wire        bready,
 
 	input  wire [11:0] arid,
-	input  wire [20:0] araddr,
+	input  wire [AW-1:0] araddr,
 	input  wire  [3:0] arlen,
 	input  wire  [2:0] arsize,
 	input  wire  [1:0] arburst,
@@ -90,7 +96,7 @@ module lw_echo #(
 
 	output reg         bus_req,
 	output reg         bus_we,
-	output reg  [20:0] bus_addr,
+	output reg  [AW-1:0] bus_addr,
 	output reg   [1:0] bus_size,     // reads: 0 byte, 1 halfword, 2 word
 	output reg   [3:0] bus_wstrb,
 	output reg  [31:0] bus_wdata,
@@ -118,12 +124,12 @@ function [31:0] regs(input [2:0] n);
 	endcase
 endfunction
 
-function is_bus(input [20:0] a);
-	is_bus = a[20] | a[19];
+function is_bus(input [AW-1:0] a);
+	is_bus = FLAT ? 1'b1 : (a[20] | a[19]);
 endfunction
 
-function [20:0] next_addr(input [20:0] a, input [2:0] size, input [1:0] burst);
-	next_addr = (burst == 2'b01) ? a + (21'd1 << size) : a;
+function [AW-1:0] next_addr(input [AW-1:0] a, input [2:0] size, input [1:0] burst);
+	next_addr = (burst == 2'b01) ? a + ({{(AW-1){1'b0}}, 1'b1} << size) : a;
 endfunction
 
 // ---- the bus port: one access in flight, a write's beats first --------------
@@ -135,7 +141,7 @@ reg bus_of_w;      // ... and it belongs to the write channel
 
 reg        aw_held;
 reg [11:0] aw_id;
-reg [20:0] aw_a;
+reg [AW-1:0] aw_a;
 reg  [2:0] aw_size;
 reg  [1:0] aw_burst;
 reg        w_last_out;    // the last beat has gone to the bus; bvalid on its ack
@@ -149,7 +155,7 @@ assign wready  =  aw_held & ~bvalid & (aw_bus ? ~bus_busy & ~w_last_out : 1'b1);
 
 reg        r_active;
 reg  [3:0] r_left;
-reg [20:0] r_a;
+reg [AW-1:0] r_a;
 reg  [2:0] r_size;
 reg  [1:0] r_burst;
 reg        r_want;        // a bus read is due for the current beat
