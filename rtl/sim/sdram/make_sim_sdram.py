@@ -35,8 +35,10 @@ for d in hoist:
 # Z for our read-only test, so the bench's read pattern always wins). Upstream
 # 26eb46a made it a net in the real file, and its 2026-10-20 re-landing
 # (ec1353dc) went back to the `inout reg`, so this conversion is back too --
-# now for every procedural driver, since that controller writes it from three
-# places (Z, datawr, and datawr2 for the second half of a 32-bit chip write).
+# now for every procedural driver. That controller wrote it from three places
+# (Z, datawr, and datawr2 for the second half of a 32-bit chip write); since
+# upstream 5306e18 (#289, taken 2026-10-26) the pins are written once a clock
+# from the planned p_oe/p_data, so there is one.
 import re
 def sub1(old, new):
     global c
@@ -45,7 +47,7 @@ def sub1(old, new):
 
 sub1("\tinout  reg [15:0] sd_data," + NL, "\tinout      [15:0] sd_data," + NL)
 c, n = re.subn(r"\bsd_data(\s*<=)", r"sd_data_o\1", c)
-assert n >= 3, f"expected the three procedural sd_data drivers, found {n}"
+assert n >= 1, f"expected a procedural sd_data driver, found {n}"
 
 block = (
     "// --- sim-only forward declarations (hoisted for ModelSim -sv) ---" + NL
