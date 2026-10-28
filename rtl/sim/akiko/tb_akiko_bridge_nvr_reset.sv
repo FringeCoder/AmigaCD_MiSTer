@@ -39,7 +39,7 @@ akiko_hps_bridge dut (
 	.uio_wr(uio_wr), .uio_rd(uio_rd), .uio_din(uio_din), .uio_dout(),
 	.cmd_pending(1'b0), .cmd_byte(8'h00), .cmd_pop(), .cmd_done(),
 	.result_push(), .result_byte(), .result_done(),
-	.sec_req(1'b0), .sec_status(8'h00), .sec_push(), .sec_word(), .sec_done(),
+	.sec_req(1'b0), .sec_status(16'h0000), .sec_push(), .sec_word(), .sec_done(),
 	.subcode_push(), .subcode_byte(), .subcode_done(),
 	.nvr_addr(nvr_addr), .nvr_dout(8'h00),
 	.nvr_load_din(nvr_load_din), .nvr_load_we(nvr_load_we),

@@ -115,6 +115,7 @@ wire [SS_W-1:0] ss_state;
 wire            ss_idle;
 
 akiko #(.NATIVE_CD32(1)) u_dut (
+	.cd_rate(2'd0),
 	.clk(clk), .reset(reset),
 	.cs(1'b0), .rd(1'b0), .wr(1'b0),
 	.lds(1'b0), .uds(1'b0),

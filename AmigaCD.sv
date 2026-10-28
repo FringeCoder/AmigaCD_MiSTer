@@ -1637,6 +1637,9 @@ fastchip fastchip
 	.akiko_dma_we    (akiko_dma_we_w    ),
 	.akiko_dma_baddr (akiko_dma_baddr_w ),
 	.akiko_dma_wbyte (akiko_dma_wbyte_w ),
+	// The CD sector rate the Main asks for (akiko.v). Not upstream's
+	// status[54:53]: those are the save state's restore request and slot here.
+	.akiko_cd_rate   (status[62:61]     ),
 	.akiko_dma_rbyte (akiko_dma_rbyte_w ),
 	.akiko_dma_ack   (akiko_dma_ack_w   ),
 	.akiko_dma_arm   (akiko_dma_arm_w   ),

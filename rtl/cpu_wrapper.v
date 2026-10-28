@@ -358,6 +358,7 @@ wire        s21_en;
 wire        long_cand;
 wire [15:0] cpu_dout_lo_p;
 wire        long_ack;
+wire        skipfetch;
 
 TG68KdotC_Kernel
 #(
@@ -400,6 +401,7 @@ cpu_inst_p
   .opc_dbx(opc_dbx),
   .opc_cacr(cacr_x),
   .mmu_busy(mmu_busy),
+  .skipfetch(skipfetch),
   .busstate(cpustate_p),		// 0: fetch code, 1: no memaccess, 2: read data, 3: write data
   .cacr_out(cacr_p),
   // The D-cache software toggle is gone since upstream 26eb46a.
@@ -557,6 +559,14 @@ wire ss_cpu_hold   = ss_arm & (ss_at_boundary | ss_parked);
 assign ss_bus_settled = ~cpu_req | chipready | ramready | fastchip_ready | cdtv_selack;
 wire clkena_p_base = ss_bus_settled & ~ss_cpu_hold;
 
+// From the 68010 on, CLR and Scc write their operand without reading it
+// first; TG68K flags that read with skipfetch. It must not reach the chip
+// bus, where reading a write-only register writes $FFFF into it (CLR.W
+// INTREQ raised every interrupt request -- Pierre le Chef, CD32). It is
+// acknowledged at once and kept out of chipreq. Minimig-AGA f1af4fe; the
+// CDTV bridge is excluded as fastchip is, since it serves its own reads.
+wire skip_rd       = skipfetch & (cpustate_p == 2) & ~ramsel_i & ~fastchip_selack & ~cdtv_selack;
+
 wire cyc_hold;
 cpu_cycles cycles
 (
@@ -570,7 +580,7 @@ cpu_cycles cycles
 	.opc_snd(opc_snd),
 	.opc_dbx(opc_dbx),
 	.cpu_ena(clkena_p_throttled & ~mmu_busy),
-	.bus_ack(clkena_p_throttled & cpu_req),
+	.bus_ack(clkena_p_throttled & cpu_req & ~skip_rd),
 	.bus_state(cpustate_p),
 	.bus_addr(cpu_addr_m),
 	.bus_long(longword),
@@ -601,7 +611,7 @@ always @(posedge clk) begin
 	// chipreq drives the chip-bus DTACK handshake. Gate off the CDTV bridge
 	// the same way fastchip is gated — when cdtv_selack fires, the bridge
 	// is serving the access and the chip bus must stay idle.
-	chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~cdtv_selack & ~req_gate;
+	chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~cdtv_selack & ~req_gate & ~skip_rd;
 	cpu_ipl <= ipl_i;
 end
 
@@ -654,7 +664,8 @@ always @(negedge clk, negedge reset) begin
 
 		now = 0;
 		if (~|stage & cpu_req & ~req_gate) begin
-			if (r32 & wr & (cpu_addr_m[23:2] == r32_adr) & cpu_addr_m[1]) begin
+			if (skip_rd) now = 1;
+			else if (r32 & wr & (cpu_addr_m[23:2] == r32_adr) & cpu_addr_m[1]) begin
 				chipdout_i <= r32_lo;
 				r32 <= 0;
 				now = 1;
