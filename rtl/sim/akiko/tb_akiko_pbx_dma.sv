@@ -5,7 +5,7 @@
 module tb_akiko_pbx_dma;
 
 initial begin
-	#5000000 $fatal(1, "tb_akiko_pbx_dma: watchdog timeout");
+	#20000000 $fatal(1, "tb_akiko_pbx_dma: watchdog timeout");
 end
 
 logic clk = 0;
@@ -37,7 +37,13 @@ logic [15:0] hps_sec_word = 0;
 logic       hps_sec_done = 0;
 
 
-akiko #(.NATIVE_CD32(1)) u_dut (
+// CD_TICK_1X shrunk so the pacing (Test J) runs in bench time: 1x is 96000
+// clocks here, 8x -- the rate every other test runs at -- 12000.
+localparam int TICK_1X = 96000;
+logic [1:0] cd_rate = 2'd0;
+
+akiko #(.NATIVE_CD32(1), .CD_TICK_1X(TICK_1X)) u_dut (
+	.cd_rate(cd_rate),
 	.clk(clk), .reset(reset),
 	.cs(cs), .rd(rd), .wr(wr),
 	.lds(lds), .uds(uds),
@@ -161,6 +167,24 @@ always @(posedge clk) begin
 	end else if (dma_req && !dma_ack) begin
 		bfm_in_xfer <= 1'b1;
 		dma_arm     <= 1'b1;
+	end
+end
+
+// Ship starts, for Test J: the clock each PBX ship leaves PBX_IDLE.
+longint clk_n = 0;
+longint ship_t [4];
+int     ship_n = 0;
+longint push_done_t = 0;
+always @(posedge clk) begin
+	clk_n <= clk_n + 1;
+	if (hps_sec_done && ship_n == 0) push_done_t <= clk_n;
+end
+logic [2:0] pbx_state_d = 3'd0;
+always @(posedge clk) begin
+	pbx_state_d <= u_dut.g_cd.pbx_state;
+	if (pbx_state_d == 3'd0 && u_dut.g_cd.pbx_state != 3'd0 && ship_n < 4) begin
+		ship_t[ship_n] <= clk_n;
+		ship_n         <= ship_n + 1;
 	end
 end
 
@@ -289,6 +313,8 @@ endtask
 
 initial begin
 	int cyc;
+	int period, n;
+	string tag;
 
 	$display("tb_akiko_pbx_dma starting");
 	@(posedge clk);
@@ -552,6 +578,40 @@ initial begin
 	check_slot("I.slot0", 'h10000, 8'hC0, 8'd255);
 	check_bit("I.counter_256",    1'b1, u_dut.g_cd.cdrom_sector_counter == 16'd256);
 	check_bit("I.sec_status_256", 1'b1, hps_sec_status == 16'd256);
+
+	// Test J: the sector rate (cd_rate, after Minimig-AGA ce1f386). The host
+	// pushes each sector the moment sec_req asks, as the Main does now that
+	// it no longer sleeps, so any spacing between ship starts is the core's.
+	// Starts must be one period apart, the period running from each start,
+	// at every rate. The first ship after reset must not wait at all.
+	$display("--- Test J: sector rate ---");
+	for (int r = 0; r < 4; r++) begin
+		period = (r == 1) ? TICK_1X : (r == 2) ? TICK_1X/2 :
+		         (r == 3) ? TICK_1X/4 : TICK_1X/8;
+		tag = $sformatf("J.rate%0d", r);
+		do_reset();
+		bus_write_long(5'b00100, 32'hFF000000);
+		set_addressdata(24'h010000);
+		cd_rate = r[1:0];
+		repeat (4) @(posedge clk);       // cd_rate_r, then cd_period
+		set_config(CFG_ENABLE | CFG_PBX);
+		ship_n = 0;
+		write_pbx(16'h0007);
+		for (int k = 0; k < 3; k++) begin
+			n = 0;
+			while (!hps_sec_req && n < 4*TICK_1X) begin @(posedge clk); n++; end
+			push_sector(8'h10 + k[7:0]);
+		end
+		wait_pbx_clear(4*TICK_1X, cyc);
+		check_bit({tag, ".three_ships"}, 1'b1, ship_n == 3);
+		check_bit({tag, ".first_at_once"}, 1'b1, ship_t[0] - push_done_t < 8);
+		check_bit({tag, ".gap1"}, 1'b1, ship_t[1] - ship_t[0] == period);
+		check_bit({tag, ".gap2"}, 1'b1, ship_t[2] - ship_t[1] == period);
+		$display("    %s: period %0d, gaps %0d %0d, first %0d after push",
+		         tag, period, ship_t[1] - ship_t[0], ship_t[2] - ship_t[1],
+		         ship_t[0] - push_done_t);
+	end
+	cd_rate = 2'd0;
 
 	$display("------------------------------------");
 	$display("checks=%0d errors=%0d", checks, errs);

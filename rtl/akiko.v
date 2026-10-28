@@ -48,10 +48,19 @@
 
 `include "rtl/ss_state.vh"
 
-module akiko #(parameter NATIVE_CD32 = 0)
+module akiko #(
+	parameter NATIVE_CD32 = 0,
+	// clk cycles per sector at 1x (75 sectors a second). 28.6875 MHz / 75.
+	// Benches shrink it; nothing else should.
+	parameter CD_TICK_1X  = 382500
+)
 (
 	input             clk,
 	input             reset,
+	// The sector rate, from the Main (status[62:61]): 0 = 8x, 1 = 1x, 2 = 2x,
+	// 3 = 4x. 0 is 8x so that an older Main, which leaves these bits clear
+	// and paces sectors itself, is not slowed down by a newer core.
+	input       [1:0] cd_rate,
 	input             cs,
 	input             rd,
 	input             wr,        // ~rnw & (lds|uds), pre-OR'd at fastchip
@@ -472,6 +481,36 @@ if (NATIVE_CD32) begin : g_cd
 	// of rises.
 	reg        pbx_ship_invalid;
 
+	// Sector pacing (after Minimig-AGA ce1f386). At most one PBX ship STARTS
+	// per period, so the guest sees the drive's rate however fast the Main
+	// pushes. Upstream reads the rate out of the guest's READ command and the
+	// OSD; here the Main sends the rate it wants, cd_rate, because it already
+	// tracks the commanded speed and keeps it across a save state, which a
+	// register here would not. cd_tick is set when a period has run out and
+	// stays set until a ship takes it, so the first sector after an idle
+	// spell goes at once; a ship restarts the period. Neither is in the save state: a restore sets
+	// cd_tick, which can only let one sector go a period early.
+	// Minus two: the count restarts at 0 on the ship's start, and cd_tick is
+	// itself a register, read by PBX_IDLE a clock after it is set. So the next
+	// start lands exactly one period after the last (tb_akiko_pbx_dma, J).
+	localparam [18:0] CD_PERIOD_1X = CD_TICK_1X     - 2;
+	localparam [18:0] CD_PERIOD_2X = CD_TICK_1X / 2 - 2;
+	localparam [18:0] CD_PERIOD_4X = CD_TICK_1X / 4 - 2;
+	localparam [18:0] CD_PERIOD_8X = CD_TICK_1X / 8 - 2;
+	reg  [1:0] cd_rate_r;
+	reg [18:0] cd_period;
+	reg [18:0] cd_tick_cnt;
+	reg        cd_tick;
+	always @(posedge clk) begin
+		cd_rate_r <= cd_rate;
+		case (cd_rate_r)
+			2'd1:    cd_period <= CD_PERIOD_1X;
+			2'd2:    cd_period <= CD_PERIOD_2X;
+			2'd3:    cd_period <= CD_PERIOD_4X;
+			default: cd_period <= CD_PERIOD_8X;
+		endcase
+	end
+
 	// Subcode streaming (WinUAE akiko.cpp:1486-1509). subbuf holds one 96-byte
 	// INTERLEAVED P-W subchannel block pushed by Main during CDDA play; the DMA
 	// FSM writes it to (addressmisc|0x100)+offset, appends a 0xffff0000 marker,
@@ -616,7 +655,7 @@ if (NATIVE_CD32) begin : g_cd
 	                   && cdrom_flags[CDFLAG_ENABLE_BIT]
 	                   && cdrom_flags[CDFLAG_PBX_BIT]
 	                   && (cdrom_pbx != 16'h0)
-	                   && sector_ready;
+	                   && sector_ready && cd_tick;
 	wire others_busy     = rx_busy | pbx_busy | tx_busy;
 	wire others_starting = rx_can_start | tx_can_start | pbx_can_start;
 
@@ -728,7 +767,7 @@ if (NATIVE_CD32) begin : g_cd
 	                 && cdrom_flags[CDFLAG_ENABLE_BIT]
 	                 && cdrom_flags[CDFLAG_PBX_BIT]
 	                 && (cdrom_pbx != 16'h0)
-	                 && sector_ready && !subcode_busy;
+	                 && sector_ready && cd_tick && !subcode_busy;
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -781,7 +820,16 @@ if (NATIVE_CD32) begin : g_cd
 			pbx_byte_idx         <= 12'h0;
 			pbx_cnt              <= 5'h0;
 			pbx_ship_invalid     <= 1'b0;
+			cd_tick_cnt          <= 19'd0;
+			cd_tick              <= 1'b1;
 		end else begin
+			if (cd_tick_cnt >= cd_period) begin
+				cd_tick_cnt <= 19'd0;
+				cd_tick     <= 1'b1;
+			end else begin
+				cd_tick_cnt <= cd_tick_cnt + 19'd1;
+			end
+
 			// Post-write delay decay, one tick per scanline, as WinUAE does
 			// it in AKIKO_hsync_handler (akiko.cpp:1481-1484). The prescaler
 			// runs free, so a delay loaded mid-line expires after two whole
@@ -1097,7 +1145,13 @@ if (NATIVE_CD32) begin : g_cd
 					if (cdrom_flags[CDFLAG_ENABLE_BIT]
 					    && cdrom_flags[CDFLAG_PBX_BIT]
 					    && (cdrom_pbx != 16'h0)
-					    && sector_ready && !subcode_busy) begin
+					    && sector_ready && cd_tick && !subcode_busy) begin
+						// The period runs from this start, as the Main's own
+						// pacing did; upstream's counter runs free, which
+						// lets the second sector after an idle spell follow
+						// the first by anything from nothing to a period.
+						cd_tick      <= 1'b0;
+						cd_tick_cnt  <= 19'd0;
 						pbx_seccnt   <= highest_bit(cdrom_pbx);
 						// The status long (bytes 0..3) goes last, from
 						// PBX_STAT: the Core Design loader (Chuck Rock,
@@ -1426,6 +1480,8 @@ if (NATIVE_CD32) begin : g_cd
 				pbx_seccnt           <= 4'h0;
 				pbx_byte_idx         <= 12'h0;
 				pbx_cnt              <= 5'h0;
+				cd_tick_cnt          <= 19'd0;
+				cd_tick              <= 1'b1;
 			end
 		end // else !reset
 	end

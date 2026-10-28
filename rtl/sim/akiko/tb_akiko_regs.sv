@@ -32,6 +32,7 @@ akiko_legacy_ref u_ref (
 );
 
 akiko #(.NATIVE_CD32(0)) u_dut0 (
+	.cd_rate(2'd0),
 	.clk(clk), .reset(reset),
 	.cs(cs), .rd(rd), .wr(wr),
 	.lds(lds), .uds(uds),
@@ -54,6 +55,7 @@ akiko #(.NATIVE_CD32(0)) u_dut0 (
 );
 
 akiko #(.NATIVE_CD32(1)) u_dut1 (
+	.cd_rate(2'd0),
 	.clk(clk), .reset(reset),
 	.cs(cs), .rd(rd), .wr(wr),
 	.lds(lds), .uds(uds),
