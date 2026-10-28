@@ -42,7 +42,7 @@ logic       uio_cs_nvr = 0;
 logic       uio_wr     = 0;
 logic       uio_rd     = 0;
 logic [15:0] uio_din   = 0;
-wire  [7:0] uio_dout;
+wire [15:0] uio_dout;
 wire        uio_req;
 
 wire  [9:0] nvr_addr_w;
@@ -96,7 +96,7 @@ akiko_hps_bridge u_bridge (
 	.cmd_pop(hps_cmd_pop), .cmd_done(hps_cmd_done),
 	.result_push(hps_result_push), .result_byte(hps_result_byte),
 	.result_done(hps_result_done),
-	.sec_req(1'b0), .sec_status(8'h00),
+	.sec_req(1'b0), .sec_status(16'h0000),
 	.sec_push(), .sec_word(), .sec_done(),
 	.nvr_addr(nvr_addr_w), .nvr_dout(nvr_dout_drv),
 	.nvr_load_din(nvr_din_w), .nvr_load_we(nvr_we_w),
@@ -216,7 +216,7 @@ task automatic uio_end;
 endtask
 
 task automatic uio_read_byte(output logic [7:0] b);
-	b = uio_dout;
+	b = uio_dout[7:0];
 	uio_rd <= 1;
 	@(posedge clk);
 	uio_rd <= 0;

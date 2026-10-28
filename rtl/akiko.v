@@ -104,7 +104,7 @@ module akiko #(parameter NATIVE_CD32 = 0)
 	// cdrom_sector_counter). Inactive (zero) when NATIVE_CD32 = 0.
 	// ---------------------------------------------------------------------
 	output            hps_sec_req,     // status: I have a free PBX slot and an empty buffer
-	output      [7:0] hps_sec_status,  // 1-byte read mux (currently == cdrom_sector_counter)
+	output     [15:0] hps_sec_status,  // read mux (currently == cdrom_sector_counter, 16 bits)
 	input             hps_sec_push,    // pulse: store hps_sec_word at sec_wr_ptr++
 	input      [15:0] hps_sec_word,
 	input             hps_sec_done,    // pulse: commit; if sec_wr_ptr == 11'd1176, sector_ready<=1
@@ -209,7 +209,11 @@ localparam SS_O_RXINX    = 192; //  8  cdcomrxinx
 localparam SS_O_TXCMP    = 200; //  8  cdcomtxcmp
 localparam SS_O_RXCMP    = 208; //  8  cdcomrxcmp
 localparam SS_O_SUBOFF   = 216; //  8  subcode_off (the DMA write base, 0/128)
-localparam SS_O_SECCNT   = 224; //  8  cdrom_sector_counter
+localparam SS_O_SECCNT   = 224; //  8  cdrom_sector_counter, low 8 of its 16 bits.
+                                //     Widening it would move every field after
+                                //     it; a state saved past sector 255 of one
+                                //     ENABLE period restores mod 256, as the
+                                //     8-bit counter always did.
 localparam SS_O_NVRIO    = 232; //  8  nvram_io
 localparam SS_O_NVRDIR   = 240; //  8  nvram_dir
 localparam SS_O_PIO      = 248; //  8  pio_byte
@@ -288,7 +292,7 @@ wire  [7:0] cd_dma_wbyte;
 wire        cd_hps_cmd_pending;
 wire  [7:0] cd_hps_cmd_byte;
 wire        cd_hps_sec_req;
-wire  [7:0] cd_hps_sec_status;
+wire [15:0] cd_hps_sec_status;
 wire        cd_hps_rx_busy;
 wire  [7:0] cd_hps_nvr_dout;
 wire        cd_hps_nvr_dirty;
@@ -424,9 +428,11 @@ if (NATIVE_CD32) begin : g_cd
 	// PBX engine FSM:
 	//   PBX_IDLE  : await (CDFLAG_ENABLE & CDFLAG_PBX & cdrom_pbx & sector_ready);
 	//               latch seccnt = highest_set_bit(cdrom_pbx); -> PBX_DATA.
-	//   PBX_DATA  : drive write of byte_idx 0..2351 to slot+byte_idx.
+	//   PBX_DATA  : drive write of byte_idx 4..2351 to slot+byte_idx.
 	//               byte source is computed below (zeros / counter / buffer).
 	//   PBX_ZERO  : drive write of zero to slot+0xc00 + zero_idx for 0..145.
+	//   PBX_STAT  : the status long, bytes 0, 1, 3 and 2 in that order, so the
+	//               $8000 mark in byte 2 goes last (Minimig-AGA 1abd1fa).
 	//   PBX_FIN   : clear pbx[seccnt], set CDINT_PBX, increment counter,
 	//               drop sector_ready, -> PBX_IDLE.
 	// One sector is 1176 16-bit words, not 2352 bytes. The host pushes the
@@ -439,15 +445,21 @@ if (NATIVE_CD32) begin : g_cd
 	wire        sec_w_we   = hps_sec_push && sec_wr_ptr != 11'd1176;
 	wire [10:0] sec_w_addr = sec_wr_ptr;
 	wire [15:0] sec_w_din  = hps_sec_word;
-	reg  [7:0] cdrom_sector_counter;
+	// 16 bits, as WinUAE's int (Minimig-AGA 3192739): the Main takes the next
+	// sector's LBA as the start of the read plus this, and at 8 bits it
+	// wrapped after 256 sectors in one ENABLE period. The PBX header still
+	// takes the low 5 bits, and the save state still carries the low 8.
+	reg [15:0] cdrom_sector_counter;
 	reg        pbx_busy;
-	reg  [1:0] pbx_state;
-	localparam PBX_IDLE = 2'd0;
-	localparam PBX_DATA = 2'd1;
-	localparam PBX_ZERO = 2'd2;
-	localparam PBX_FIN  = 2'd3;
+	reg  [2:0] pbx_state;
+	localparam PBX_IDLE = 3'd0;
+	localparam PBX_DATA = 3'd1;
+	localparam PBX_ZERO = 3'd2;
+	localparam PBX_FIN  = 3'd3;
+	localparam PBX_STAT = 3'd4;
 	reg  [3:0] pbx_seccnt;       // selected slot (0..15)
-	reg [11:0] pbx_byte_idx;     // 0..2351 in DATA, 0..145 in ZERO
+	reg [11:0] pbx_byte_idx;     // 4..2351 in DATA, 0..145 in ZERO, 0..3 in STAT
+	reg  [4:0] pbx_cnt;          // the counter's low 5 bits, latched at ship start
 
 	// STICKY ship-invalidation. A PBX ship in flight
 	// (or starting this cycle) when a new READ DATA fires (CDFLAG_ENABLE 0->1)
@@ -617,9 +629,9 @@ if (NATIVE_CD32) begin : g_cd
 	//   bytes 4..2351: sector_buffer[idx]
 	wire [23:0] pbx_slot_base = cdrom_addressdata[23:0] + {8'h0, pbx_seccnt, 12'h0};
 	wire [23:0] pbx_addr_c    = pbx_slot_base
-	                          + ((pbx_state == PBX_DATA)
-	                              ? {12'h0, pbx_byte_idx}
-	                              : (24'h000c00 + {12'h0, pbx_byte_idx}));
+	                          + ((pbx_state == PBX_ZERO)
+	                              ? (24'h000c00 + {12'h0, pbx_byte_idx})
+	                              : {12'h0, pbx_byte_idx});
 	// Register pbx_addr so the SDRAM-bound critical
 	// path no longer carries two cascaded 24-bit adders + chipdma_arb mux
 	// chain in a single combinational arc. The downstream chipdma_arb only
@@ -655,10 +667,10 @@ if (NATIVE_CD32) begin : g_cd
 	// high half.
 	wire [7:0] sector_rd_q = sector_rd_hi ? sector_rd_w[15:8] : sector_rd_w[7:0];
 	wire [7:0]  sector_byte_at_idx = (pbx_byte_idx <  12'd3   ) ? 8'h00 :
-	                                 (pbx_byte_idx == 12'd3   ) ? (cdrom_sector_counter & 8'h1f) :
+	                                 (pbx_byte_idx == 12'd3   ) ? {3'b000, pbx_cnt} :
 	                                 (pbx_byte_idx <  12'd2352) ? sector_rd_q :
 	                                                              8'h00;
-	wire [7:0]  pbx_wbyte = (pbx_state == PBX_DATA) ? sector_byte_at_idx : 8'h00;
+	wire [7:0]  pbx_wbyte = (pbx_state == PBX_DATA || pbx_state == PBX_STAT) ? sector_byte_at_idx : 8'h00;
 
 	// Highest set bit in cdrom_pbx (4-bit slot index 0..15). WinUAE iterates
 	// 15 down to 0 (akiko.cpp:1314-1318); equivalent here is "loop 0..15
@@ -762,11 +774,12 @@ if (NATIVE_CD32) begin : g_cd
 			subcode_state        <= SUB_IDLE;
 			subcode_off          <= 8'h0;
 			sub_idx              <= 8'h0;
-			cdrom_sector_counter <= 8'h0;
+			cdrom_sector_counter <= 16'h0;
 			pbx_busy             <= 1'b0;
 			pbx_state            <= PBX_IDLE;
 			pbx_seccnt           <= 4'h0;
 			pbx_byte_idx         <= 12'h0;
+			pbx_cnt              <= 5'h0;
 			pbx_ship_invalid     <= 1'b0;
 		end else begin
 			// Post-write delay decay, one tick per scanline, as WinUAE does
@@ -918,7 +931,7 @@ if (NATIVE_CD32) begin : g_cd
 					// boot with an already-empty buffer.
 					if (new_flags[CDFLAG_ENABLE_BIT] && !cdrom_flags[CDFLAG_ENABLE_BIT]) begin
 						cdrom_intreq         <= cdrom_intreq & ~CDINT_OVERFLOW;
-						cdrom_sector_counter <= 8'h0;
+						cdrom_sector_counter <= 16'h0;
 						sector_ready         <= 1'b0;
 						sec_wr_ptr           <= 11'h0;
 						// A new READ DATA invalidates any
@@ -1086,7 +1099,15 @@ if (NATIVE_CD32) begin : g_cd
 					    && (cdrom_pbx != 16'h0)
 					    && sector_ready && !subcode_busy) begin
 						pbx_seccnt   <= highest_bit(cdrom_pbx);
-						pbx_byte_idx <= 12'h0;
+						// The status long (bytes 0..3) goes last, from
+						// PBX_STAT: the Core Design loader (Chuck Rock,
+						// Premiere) does not wait for CDINT_PBX, it polls a
+						// slot and takes it the moment the $8000 mark in byte
+						// 2 is gone, which in address order was ~1.4 ms
+						// before the data behind it was the new sector's.
+						// Minimig-AGA 1abd1fa.
+						pbx_byte_idx <= 12'd4;
+						pbx_cnt      <= cdrom_sector_counter[4:0];
 						pbx_busy     <= 1'b1;
 						pbx_state    <= PBX_DATA;
 					end
@@ -1105,10 +1126,27 @@ if (NATIVE_CD32) begin : g_cd
 					if (dma_ack && own_pbx) begin
 						if (pbx_byte_idx == 12'd145) begin
 							pbx_byte_idx <= 12'h0;
-							pbx_state    <= PBX_FIN;
+							// A stale ship (see PBX_FIN) writes no status:
+							// the slot keeps its $8000 mark, so a loader
+							// that polls rather than waiting for the
+							// interrupt cannot take the previous read's
+							// sector either. Upstream has no stale-ship
+							// rule and always writes it.
+							pbx_state    <= (pbx_ship_invalid || enable_rising)
+							                ? PBX_FIN : PBX_STAT;
 						end else begin
 							pbx_byte_idx <= pbx_byte_idx + 12'd1;
 						end
+					end
+				end
+				PBX_STAT: begin
+					if (dma_ack && own_pbx) begin
+						case (pbx_byte_idx[1:0])
+							2'd0: pbx_byte_idx <= 12'd1;
+							2'd1: pbx_byte_idx <= 12'd3;
+							2'd3: pbx_byte_idx <= 12'd2;
+							default: pbx_state <= PBX_FIN;
+						endcase
 					end
 				end
 				PBX_FIN: begin
@@ -1142,7 +1180,7 @@ if (NATIVE_CD32) begin : g_cd
 					if (!pbx_ship_invalid && !enable_rising) begin
 						cdrom_pbx[pbx_seccnt] <= 1'b0;
 						cdrom_intreq          <= cdrom_intreq | CDINT_PBX;
-						cdrom_sector_counter  <= cdrom_sector_counter + 8'd1;
+						cdrom_sector_counter  <= cdrom_sector_counter + 16'd1;
 					end
 					sector_ready          <= 1'b0;
 					pbx_busy              <= 1'b0;
@@ -1346,7 +1384,7 @@ if (NATIVE_CD32) begin : g_cd
 				cdcomtxcmp           <= ss_ld_data[SS_O_TXCMP    +:  8];
 				cdcomrxcmp           <= ss_ld_data[SS_O_RXCMP    +:  8];
 				subcode_off          <= ss_ld_data[SS_O_SUBOFF   +:  8];
-				cdrom_sector_counter <= ss_ld_data[SS_O_SECCNT   +:  8];
+				cdrom_sector_counter <= {8'h0, ss_ld_data[SS_O_SECCNT +: 8]};
 				nvram_io             <= ss_ld_data[SS_O_NVRIO    +:  8];
 				nvram_dir            <= ss_ld_data[SS_O_NVRDIR   +:  8];
 				pio_byte             <= ss_ld_data[SS_O_PIO      +:  8];
@@ -1387,6 +1425,7 @@ if (NATIVE_CD32) begin : g_cd
 				pbx_state            <= PBX_IDLE;
 				pbx_seccnt           <= 4'h0;
 				pbx_byte_idx         <= 12'h0;
+				pbx_cnt              <= 5'h0;
 			end
 		end // else !reset
 	end
@@ -1536,7 +1575,7 @@ if (NATIVE_CD32) begin : g_cd
 		pio_byte,               // [255:248]
 		nvram_dir,              // [247:240]
 		nvram_io,               // [239:232]
-		cdrom_sector_counter,   // [231:224]
+		cdrom_sector_counter[7:0], // [231:224] (low 8 of 16, see SS_O_SECCNT)
 		subcode_off,            // [223:216]
 		cdcomrxcmp,             // [215:208]
 		cdcomtxcmp,             // [207:200]
@@ -1587,7 +1626,7 @@ end else begin : g_stub
 	assign cd_hps_cmd_pending = 1'b0;
 	assign cd_hps_cmd_byte    = 8'h0;
 	assign cd_hps_sec_req     = 1'b0;
-	assign cd_hps_sec_status  = 8'h0;
+	assign cd_hps_sec_status  = 16'h0;
 	assign cd_hps_rx_busy     = 1'b0;
 	assign cd_hps_nvr_dout    = 8'h0;
 	assign cd_hps_nvr_dirty   = 1'b0;

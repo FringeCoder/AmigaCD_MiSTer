@@ -31,7 +31,7 @@ logic       dma_ack;
 logic       dma_arm;
 
 wire        hps_sec_req;
-wire  [7:0] hps_sec_status;
+wire [15:0] hps_sec_status;
 logic       hps_sec_push = 0;
 logic [15:0] hps_sec_word = 0;
 logic       hps_sec_done = 0;
@@ -133,19 +133,28 @@ endtask
 
 logic [7:0] mem [262144];
 logic       bfm_in_xfer = 1'b0;
+// The order of the DMA writes: wseq[a] is the index of the last write to a.
+// check_slot uses it to see that the status long goes in after everything
+// else, byte 2 last (Minimig-AGA 1abd1fa) -- contents alone cannot show it.
+int         wseq [262144];
+int         wseq_n = 1;
 
 initial begin
 	dma_ack   = 0;
 	dma_arm   = 0;
 	dma_rbyte = 8'h00;
-	for (int i = 0; i < 262144; i++) mem[i] = 8'h55;
+	for (int i = 0; i < 262144; i++) begin mem[i] = 8'h55; wseq[i] = 0; end
 end
 
 always @(posedge clk) begin
 	dma_ack <= 0;
 	dma_arm <= 0;
 	if (bfm_in_xfer) begin
-		if (dma_we) mem[dma_baddr[17:0]] <= dma_wbyte;
+		if (dma_we) begin
+			mem[dma_baddr[17:0]]  <= dma_wbyte;
+			wseq[dma_baddr[17:0]] <= wseq_n;
+			wseq_n                <= wseq_n + 1;
+		end
 		else        dma_rbyte <= mem[dma_baddr[17:0]];
 		dma_ack     <= 1'b1;
 		bfm_in_xfer <= 1'b0;
@@ -253,6 +262,28 @@ task automatic check_slot(string tag,
 		check8({tag, ".gap_lo"},    8'h55, mem[slot_base_addr + 'h0931]);
 		check8({tag, ".gap_hi"},    8'h55, mem[slot_base_addr + 'h0c92]);
 		check8({tag, ".gap_end"},   8'h55, mem[slot_base_addr + 'h0fff]);
+		check_status_last(tag, slot_base_addr);
+	end
+endtask
+
+// The Core Design loader (Chuck Rock, Premiere) polls a slot and takes it as
+// soon as the $8000 mark in byte 2 is gone, without waiting for CDINT_PBX. So
+// the status long must be written after the data and the zero tail, and byte
+// 2 after the other three.
+task automatic check_status_last(string tag, input int b);
+	int last_body;
+	begin
+		last_body = 0;
+		for (int i = 4; i < 2352; i++)
+			if (wseq[b + i] > last_body) last_body = wseq[b + i];
+		for (int i = 'h0c00; i <= 'h0c91; i++)
+			if (wseq[b + i] > last_body) last_body = wseq[b + i];
+		check_bit({tag, ".stat0_after_body"}, 1'b1, wseq[b + 0] > last_body);
+		check_bit({tag, ".stat1_after_body"}, 1'b1, wseq[b + 1] > last_body);
+		check_bit({tag, ".stat3_after_body"}, 1'b1, wseq[b + 3] > last_body);
+		check_bit({tag, ".stat2_last"},       1'b1,
+		          wseq[b + 2] > wseq[b + 0] && wseq[b + 2] > wseq[b + 1]
+		          && wseq[b + 2] > wseq[b + 3]);
 	end
 endtask
 
@@ -457,6 +488,10 @@ initial begin
 	check_bit("H1.no_intpbx",  1'b0, u_dut.g_cd.cdrom_intreq[26]);
 	check8   ("H1.offer_held", 8'h01, u_dut.g_cd.cdrom_pbx[7:0]);
 	check8   ("H1.counter_0",  8'd0,  u_dut.g_cd.cdrom_sector_counter);
+	// Nor may the slot look complete to a loader that polls it instead of
+	// waiting for the interrupt: the stale ship writes no status long, so
+	// byte 2 still holds what the BIOS left there.
+	check8   ("H1.stat2_untouched", 8'h55, mem['h10002]);
 
 	// And the new read's own first sector lands in that slot.
 	push_sector(8'hF0);
@@ -499,6 +534,24 @@ initial begin
 	$display("    H2: pbx clear in %0d cycles", cyc);
 	check_slot("H2.slot0", 'h10000, 8'hB8, 8'd0);
 	check8("H2.counter", 8'd1, u_dut.g_cd.cdrom_sector_counter);
+
+	// Test I: the counter carries past 255 (Minimig-AGA 3192739). The Main
+	// takes the next LBA as the start of the read plus this, so at 8 bits a
+	// read longer than 256 sectors served its start again. Preloaded rather
+	// than shipped 256 times; the PBX header still takes the low 5 bits.
+	$display("--- Test I: sector counter past 255 ---");
+	do_reset();
+	bus_write_long(5'b00100, 32'hFF000000);
+	for (int i = 'h10000; i < 'h20000; i++) mem[i] = 8'h55;
+	set_addressdata(24'h010000);
+	set_config(CFG_ENABLE | CFG_PBX);
+	u_dut.g_cd.cdrom_sector_counter = 16'd255;
+	push_sector(8'hC0);
+	write_pbx(16'h0001);
+	wait_pbx_clear(20000, cyc);
+	check_slot("I.slot0", 'h10000, 8'hC0, 8'd255);
+	check_bit("I.counter_256",    1'b1, u_dut.g_cd.cdrom_sector_counter == 16'd256);
+	check_bit("I.sec_status_256", 1'b1, hps_sec_status == 16'd256);
 
 	$display("------------------------------------");
 	$display("checks=%0d errors=%0d", checks, errs);
