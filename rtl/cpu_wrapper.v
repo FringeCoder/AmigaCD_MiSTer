@@ -160,6 +160,9 @@ module cpu_wrapper
 	// from cdtv.cpp cdtv_init.
 	input             cdtv_mode,
 
+	input             ar_on,         // the Action Replay is fitted ($A80000-$AFFFFF through the chip bus)
+	output reg        ar_fetch = 0,  // an instruction fetch outside $A80000-$AFFFFF (one clock)
+
 	// CDTV bridge data path. After autoconfig at $E80000, the BIOS talks
 	// to the bridge at $E90000-$E9FFFF (DMAC/TPI/CR-511) and $DC8000-
 	// $DCFFFF (NVRAM). Both windows are decoded in gary.v (sel_cdtv +
@@ -256,6 +259,7 @@ memory_router u_memory_router
 	.wr            (wr            ),
 	.bootrom       (bootrom       ),
 	.cdtv_mode     (cdtv_mode     ),
+	.ar_on         (ar_on         ),
 	.z2ram_ena     (z2ram_ena     ),
 	.z3ram_base0   (z3ram_base0   ),
 	.z3ram_ena0    (z3ram_ena0    ),
@@ -375,6 +379,7 @@ wire        s21_en;
 wire        long_cand;
 wire [15:0] cpu_dout_lo_p;
 wire        long_ack;
+wire        skipfetch;
 
 TG68KdotC_Kernel
 #(
@@ -417,6 +422,7 @@ cpu_inst_p
   .opc_dbx(opc_dbx),
   .opc_cacr(cacr_x),
   .mmu_busy(mmu_busy),
+  .skipfetch(skipfetch),
   .busstate(cpustate_p),		// 0: fetch code, 1: no memaccess, 2: read data, 3: write data
   .cacr_out(cacr_p),
   // The D-cache software toggle is gone since upstream 26eb46a.
@@ -664,6 +670,14 @@ wire ss_cpu_hold   = ss_arm & (ss_at_boundary | ss_parked);
 assign ss_bus_settled = ~cpu_req | chipready | ramready | fastchip_ready | cdtv_selack;
 wire clkena_p_base = ss_bus_settled & ~ss_cpu_hold;
 
+// From the 68010 on, CLR and Scc write their operand without reading it
+// first; TG68K flags that read with skipfetch. It must not reach the chip
+// bus, where reading a write-only register writes $FFFF into it (CLR.W
+// INTREQ raised every interrupt request -- Pierre le Chef, CD32). It is
+// acknowledged at once and kept out of chipreq. Minimig-AGA f1af4fe; the
+// CDTV bridge is excluded as fastchip is, since it serves its own reads.
+wire skip_rd       = skipfetch & (cpustate_p == 2) & ~ramsel_i & ~fastchip_selack & ~cdtv_selack;
+
 wire cyc_hold;
 cpu_cycles cycles
 (
@@ -677,7 +691,7 @@ cpu_cycles cycles
 	.opc_snd(opc_snd),
 	.opc_dbx(opc_dbx),
 	.cpu_ena(clkena_p_throttled & ~mmu_busy),
-	.bus_ack(clkena_p_throttled & cpu_req),
+	.bus_ack(clkena_p_throttled & cpu_req & ~skip_rd),
 	.bus_state(cpustate_p),
 	.bus_addr(cpu_addr_m),
 	.bus_long(longword),
@@ -686,6 +700,17 @@ cpu_cycles cycles
 	.cacr_clr(cacr_p[3]),
 	.hold(cyc_hold)
 );
+
+// the Action Replay hides at the first instruction fetched from outside it:
+// a fetch the CPU takes (TG68K: busstate 0 acknowledged; the 68000: AS with
+// FC program space)
+reg as_o_d = 1;
+always @(posedge clk) begin
+	as_o_d <= as_o;
+	if (cpucfg[1:0]) ar_fetch <= clkena_p_throttled & (cpustate_p == 0) & ~skip_rd & ~req_gate &
+	                             ~(cpu_addr_m[31:19] == {8'h00, 5'b10101});
+	else             ar_fetch <= as_o_d & ~as_o & (fc_o[1:0] == 2'b10) & ~(cpu_addr_o[23:19] == 5'b10101);
+end
 
 reg inflight;
 always @(posedge clk) begin
@@ -708,7 +733,7 @@ always @(posedge clk) begin
 	// chipreq drives the chip-bus DTACK handshake. Gate off the CDTV bridge
 	// the same way fastchip is gated — when cdtv_selack fires, the bridge
 	// is serving the access and the chip bus must stay idle.
-	chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~cdtv_selack & ~req_gate;
+	chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~cdtv_selack & ~req_gate & ~skip_rd;
 	cpu_ipl <= ipl_i;
 end
 
@@ -761,7 +786,8 @@ always @(negedge clk, negedge reset) begin
 
 		now = 0;
 		if (~|stage & cpu_req & ~req_gate) begin
-			if (r32 & wr & (cpu_addr_m[23:2] == r32_adr) & cpu_addr_m[1]) begin
+			if (skip_rd) now = 1;
+			else if (r32 & wr & (cpu_addr_m[23:2] == r32_adr) & cpu_addr_m[1]) begin
 				chipdout_i <= r32_lo;
 				r32 <= 0;
 				now = 1;

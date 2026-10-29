@@ -37,6 +37,7 @@ logic       dma_ack;
 logic       dma_arm;
 
 akiko #(.NATIVE_CD32(1)) u_dut (
+	.cd_rate(2'd0),
 	.clk(clk), .reset(reset),
 	.cs(cs), .rd(rd), .wr(wr),
 	.lds(lds), .uds(uds),

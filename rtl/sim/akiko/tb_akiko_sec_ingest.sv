@@ -23,6 +23,7 @@ wire [15:0] sec_word_w;
 wire        sec_done_w;
 
 akiko #(.NATIVE_CD32(1)) u_dut (
+	.cd_rate(2'd0),
 	.clk(clk), .reset(reset),
 	.cs(1'b0), .rd(1'b0), .wr(1'b0),
 	.lds(1'b0), .uds(1'b0),
@@ -54,7 +55,7 @@ akiko_hps_bridge u_bridge (
 	.cmd_pending(1'b0), .cmd_byte(8'h00),
 	.cmd_pop(), .cmd_done(),
 	.result_push(), .result_byte(), .result_done(),
-	.sec_req(1'b0), .sec_status(8'h00),
+	.sec_req(1'b0), .sec_status(16'h0000),
 	.sec_push(sec_push_w), .sec_word(sec_word_w), .sec_done(sec_done_w),
 	.subcode_push(), .subcode_byte(), .subcode_done(),
 	.nvr_addr(), .nvr_dout(8'h00),

@@ -50,7 +50,7 @@ wire        cmd_pending_w;
 wire [7:0]  cmd_byte_w;
 wire        cmd_pop_w;
 wire        cmd_done_w;
-wire [7:0]  uio_dout_w;
+wire [15:0] uio_dout_w;
 wire        req_w;
 
 wire        dma_req_w;
@@ -62,6 +62,7 @@ logic       dma_ack   = 0;
 logic       dma_arm   = 0;
 
 akiko #(.NATIVE_CD32(1)) u_dut (
+	.cd_rate(2'd0),
 	.clk(clk), .reset(reset),
 	.cs(cs), .rd(rd), .wr(wr),
 	.lds(lds), .uds(uds),
@@ -91,7 +92,7 @@ akiko_hps_bridge u_bridge (
 	.cmd_pending(cmd_pending_w), .cmd_byte(cmd_byte_w),
 	.cmd_pop(cmd_pop_w), .cmd_done(cmd_done_w),
 	.result_push(), .result_byte(), .result_done(),
-	.sec_req(1'b0), .sec_status(8'h00),
+	.sec_req(1'b0), .sec_status(16'h0000),
 	.sec_push(), .sec_word(), .sec_done(),
 	.subcode_push(), .subcode_byte(), .subcode_done(),
 	.nvr_addr(), .nvr_dout(8'h00),
@@ -181,7 +182,7 @@ begin
 	uio_cs <= 1'b1;
 	@(posedge clk);
 	for (int i = 0; i < bytes; i++) begin
-		b = uio_dout_w;
+		b = uio_dout_w[7:0];
 		uio_rd <= 1'b1;
 		@(posedge clk);
 		uio_rd <= 1'b0;
