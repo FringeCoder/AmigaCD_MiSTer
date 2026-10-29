@@ -148,7 +148,8 @@ armcpu_bridge #(.WD_BITS(14)) br (
 	.cpu_is_68000(cpu_is_68000), .ipl_n(ipl_n),
 	.px_own(px_own), .px_fast(px_fast), .px_fastw(px_fastw), .px_reset(px_reset), .px_tgl(px_tgl), .px_rw(px_rw), .px_addr(px_addr),
 	.px_uds_n(px_uds_n), .px_lds_n(px_lds_n), .px_wdata(px_wdata),
-	.px_ack_tgl(px_ack_tgl), .px_rdata(px_rdata)
+	.px_ack_tgl(px_ack_tgl), .px_rdata(px_rdata),
+	.mirror_en(), .mirror_idle(1'b1), .mirror_lost(1'b0)
 );
 
 // cpu_wrapper brings px_own and px_fast into clk_sys through two flops

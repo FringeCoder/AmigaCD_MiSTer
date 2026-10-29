@@ -424,6 +424,19 @@ jobs:
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # ARM-CPU plan, step 5: the DDR3 shadow of chip RAM. Random chipset
+      # writes (words, bytes, longs, and the slow RAM and Kickstart areas it
+      # must ignore) against a DDR3 port with random waitrequest; the shadow
+      # has to match a reference byte for byte, idle has to need its quiet
+      # clocks, and an overflow has to set lost until en rises again.
+      - name: chip RAM mirror (tb_chip_mirror.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/armcpu
+          iverilog -g2012 -o tb_cm tb_chip_mirror.sv ../../chip_mirror.v
+          vvp -n tb_cm | tee out_cm.log
+          grep -q "RUN: PASS" out_cm.log
+
       # MEASUREMENT ONLY (step 4 of the ARM-CPU plan): proxy68k writing the
       # set/clear custom registers (INTENA, DMACON) through the chipset's bus
       # logic -- the bus bridge, Gary's data mux, Agnus's CPU register address

@@ -77,7 +77,15 @@ module sdram_ctrl
 	input             cpuU,
 	input      [15:0] cpuWR,
 	output     [15:0] cpuRD,
-	output            ramready
+	output            ramready,
+	// every chipset-port write, as its slot is taken (rtl/chip_mirror.v):
+	// a one-clock pulse with the address, data and byte enables it writes
+	output reg        chip_wev = 0,
+	output reg [24:1] chip_wev_addr,
+	output reg [15:0] chip_wev_data,
+	output reg  [1:0] chip_wev_dqm,
+	output reg        chip_wev_long,
+	output reg [15:0] chip_wev_data2
 );
 
 assign sd_cs = 0;
@@ -358,6 +366,7 @@ always @ (posedge sysclk) begin
 	sd_data <= p_oe ? p_data : 16'hZZZZ;
 
 	if(~sdram_state[0]) chipWE <= 0;
+	chip_wev <= 0;
 
 	if(sdram_state == 4) begin
 		chipWE2 <= a_wr2;
@@ -402,6 +411,12 @@ always @ (posedge sysclk) begin
 					cas_sd_we    <= chipRW;
 					datawr       <= chipWR;
 					chipWE       <= !chipRW;
+					chip_wev       <= !chipRW;
+					chip_wev_addr  <= chipAddr;
+					chip_wev_data  <= chipWR;
+					chip_wev_dqm   <= {chipU,chipL};
+					chip_wev_long  <= chip32;
+					chip_wev_data2 <= chipWR2;
 					a_wr2        <= chip32 & !chipRW;
 					a_rd2        <= chip32 &  chipRW;
 					datawr2      <= chipWR2;
