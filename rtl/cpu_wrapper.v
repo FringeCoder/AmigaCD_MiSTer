@@ -160,6 +160,9 @@ module cpu_wrapper
 	// from cdtv.cpp cdtv_init.
 	input             cdtv_mode,
 
+	input             ar_on,         // the Action Replay is fitted ($A80000-$AFFFFF through the chip bus)
+	output reg        ar_fetch = 0,  // an instruction fetch outside $A80000-$AFFFFF (one clock)
+
 	// CDTV bridge data path. After autoconfig at $E80000, the BIOS talks
 	// to the bridge at $E90000-$E9FFFF (DMAC/TPI/CR-511) and $DC8000-
 	// $DCFFFF (NVRAM). Both windows are decoded in gary.v (sel_cdtv +
@@ -239,6 +242,7 @@ memory_router u_memory_router
 	.wr            (wr            ),
 	.bootrom       (bootrom       ),
 	.cdtv_mode     (cdtv_mode     ),
+	.ar_on         (ar_on         ),
 	.z2ram_ena     (z2ram_ena     ),
 	.z3ram_base0   (z3ram_base0   ),
 	.z3ram_ena0    (z3ram_ena0    ),
@@ -589,6 +593,17 @@ cpu_cycles cycles
 	.cacr_clr(cacr_p[3]),
 	.hold(cyc_hold)
 );
+
+// the Action Replay hides at the first instruction fetched from outside it:
+// a fetch the CPU takes (TG68K: busstate 0 acknowledged; the 68000: AS with
+// FC program space)
+reg as_o_d = 1;
+always @(posedge clk) begin
+	as_o_d <= as_o;
+	if (cpucfg[1:0]) ar_fetch <= clkena_p_throttled & (cpustate_p == 0) & ~skip_rd & ~req_gate &
+	                             ~(cpu_addr_m[31:19] == {8'h00, 5'b10101});
+	else             ar_fetch <= as_o_d & ~as_o & (fc_o[1:0] == 2'b10) & ~(cpu_addr_o[23:19] == 5'b10101);
+end
 
 reg inflight;
 always @(posedge clk) begin

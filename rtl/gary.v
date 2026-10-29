@@ -88,6 +88,7 @@ module gary
 	// by the userspace piggyback path, so the CPU address bits are remapped
 	// before SDRAM read.
 	input         cdtv_mode,
+	input         ar_on,         // the Action Replay is fitted: $A80000-$AFFFFF is its, no Kickstart mirror there
 
 	output        ram_rd, //bus read
 	output        ram_hwr, //bus high write
@@ -156,7 +157,7 @@ assign ram_lwr = dbr ?  dbwe : cpu_lwr;
 // CDTV mirror (gated by cdtv_mode):
 //                         $F0.0000-$F7.FFFF mirrors $E0.0000-$E7.FFFF (CDTV BIOS slot)
 // Remap high address bits so SDRAM lands on the same bytes as the primary region.
-wire kick_mirror_a8 = cpu_address_in[23:19] == 5'b1010_1;
+wire kick_mirror_a8 = cpu_address_in[23:19] == 5'b1010_1 && !ar_on;   // not with the Action Replay fitted: $A80000 is its
 wire kick_mirror_b0 = cpu_address_in[23:19] == 5'b1011_0;
 wire kick_mirror_f0 = cdtv_mode && cpu_address_in[23:19] == 5'b1111_0;
 // Memory card at $E00000. cpu_hlt (bootrom overlay) still wins, so a CDTV

@@ -22,6 +22,8 @@ wire         _cpu_reset;
 wire         _cpu_reset_in;
 wire [31:0]  nmi_addr;
 wire         ovr;
+wire         cart_ar;
+wire         ar_fetch;
 wire [15:0]  ram_data;
 wire [15:0]  ramdata_in;
 wire [23:1]  ram_address;
@@ -198,6 +200,8 @@ reg          drv_cpu_r_w;
 reg          drv_cpu_long;
 reg          drv__cpu_reset_in;
 reg  [31:0]  drv_nmi_addr;
+reg          drv_cart_ar;
+reg          drv_ar_fetch;
 reg  [15:0]  drv_ramdata_in;
 reg  [47:0]  drv_chip48;
 reg          drv_rst_ext;
@@ -271,6 +275,8 @@ assign cpu_r_w = drv_cpu_r_w;
 assign cpu_long = drv_cpu_long;
 assign _cpu_reset_in = drv__cpu_reset_in;
 assign nmi_addr = drv_nmi_addr;
+assign cart_ar = drv_cart_ar;
+assign ar_fetch = drv_ar_fetch;
 assign ramdata_in = drv_ramdata_in;
 assign chip48 = drv_chip48;
 assign rst_ext = drv_rst_ext;
@@ -347,6 +353,8 @@ begin
 	drv_cpu_long = 0;
 	drv__cpu_reset_in = 0;
 	drv_nmi_addr = 0;
+	drv_cart_ar = 0;
+	drv_ar_fetch = 0;
 	drv_ramdata_in = 0;
 	drv_chip48 = 0;
 	drv_rst_ext = 0;
@@ -431,6 +439,8 @@ minimig dut (
 	._cpu_reset_in(_cpu_reset_in),
 	.nmi_addr(nmi_addr),
 	.ovr(ovr),
+	.cart_ar(cart_ar),
+	.ar_fetch(ar_fetch),
 	.ram_data(ram_data),
 	.ramdata_in(ramdata_in),
 	.ram_address(ram_address),

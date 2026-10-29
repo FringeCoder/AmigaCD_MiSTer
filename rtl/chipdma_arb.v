@@ -396,6 +396,7 @@ memory_router u_router
 	.wr            (1'b0),
 	.bootrom       (1'b0),
 	.cdtv_mode     (1'b0),          // only gates sel_kickram, which ckick=0 already kills
+	.ar_on         (1'b0),          // the same: it only gates sel_kickram
 	.z2ram_ena     (z2ram_ena),
 	.z3ram_base0   (z3ram_base0),
 	.z3ram_ena0    (z3ram_ena0),
