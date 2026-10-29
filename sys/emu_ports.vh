@@ -114,6 +114,20 @@ output [63:0] DDRAM_DIN,
 output  [7:0] DDRAM_BE,
 output        DDRAM_WE,
 
+//Lightweight HPS-to-FPGA bridge (MEASUREMENT ONLY, see sys/lw_echo.sv):
+//the core's bus behind it, on LW_CLK (clk_100m, the HPS's clock, which is
+//asynchronous to everything in emu)
+input         LW_CLK,
+//the core's bus behind bridge offsets 0x080000-0x1FFFFF (step 2)
+input         LW_BUS_REQ,
+input         LW_BUS_WE,
+input  [24:0] LW_BUS_ADDR,      // [24]: flat (full bridge), else the lightweight offset
+input   [1:0] LW_BUS_SIZE,
+input   [3:0] LW_BUS_WSTRB,
+input  [31:0] LW_BUS_WDATA,
+output        LW_BUS_ACK,
+output [31:0] LW_BUS_RDATA,
+
 //SDRAM interface with lower latency
 output        SDRAM_CLK,
 output        SDRAM_CKE,

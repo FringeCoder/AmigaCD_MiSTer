@@ -198,7 +198,24 @@ module cpu_wrapper
 
 	// Always 1 since upstream 26eb46a: the data cache is on where the CPU has
 	// one. Kept as a port so the cache keeps its gate.
-	output            dcache_sw_en
+	output            dcache_sw_en,
+
+	// MEASUREMENT ONLY (ARM-CPU plan, step 2): a 68k on the ARM, through
+	// armcpu_bridge. While px_own is high the fx68k is held in reset and
+	// proxy68k drives its pins; only the 68000 path (cpucfg[1:0] == 0) has
+	// the mux, and the bridge only raises px_own with that CPU selected.
+	input             px_own,
+	input             px_fast,
+	input             px_fastw,
+	input             px_reset,       // the ARM's RESET instruction (armcpu_bridge)
+	input             px_tgl,
+	input             px_rw,
+	input      [23:1] px_addr,
+	input             px_uds_n,
+	input             px_lds_n,
+	input      [15:0] px_wdata,
+	output            px_ack_tgl,
+	output     [15:0] px_rdata
 );
 
 assign dcache_sw_en = 1'b1;
@@ -317,21 +334,21 @@ always @* begin
 		fastchip_lw  = longword;
 	end
 	else begin
-		cpu_dout     = cpu_dout_o;
-		cpu_addr     = {cpu_addr_o,1'b0};
-		cpustate     = as_o ? 2'b01 : ~{wr_o,wr_o};
+		cpu_dout     = cpu_dout_x;
+		cpu_addr     = {cpu_addr_x,1'b0};
+		cpustate     = as_x ? 2'b01 : ~{wr_x,wr_x};
 		cacr         = 1;
 		vbr          = 0;
-		wr           = wr_o;
-		uds_in       = uds_o;
-		lds_in       = lds_o;
-		reset_out    = reset_out_o;
-		chip_as      = ramsel | as_o;
-		chip_rw      = wr_o;
-		chip_uds     = uds_o;
-		chip_lds     = lds_o;
-		chip_addr    = cpu_addr_o[23:1];
-		chip_din     = cpu_dout_o;
+		wr           = wr_x;
+		uds_in       = uds_x;
+		lds_in       = lds_x;
+		reset_out    = reset_out_x;
+		chip_as      = ramsel | as_x;
+		chip_rw      = wr_x;
+		chip_uds     = uds_x;
+		chip_lds     = lds_x;
+		chip_addr    = cpu_addr_x[23:1];
+		chip_din     = cpu_dout_x;
 		chip_long    = 0;
 		chip_din2    = 0;
 		chip_data    = chip_dout;
@@ -461,13 +478,100 @@ wire        uds_o;
 wire        lds_o;
 wire        reset_out_o;
 
+// The 68000's pins, from the fx68k or, while the ARM owns the bus, from the
+// proxy (MEASUREMENT ONLY, see proxy68k.v).
+// px_own and px_fast come from the bridge's clock (clk_100m), asynchronous
+// to this one
+reg px_own_m, px_own_s, px_fast_m, px_fast_s, px_fastw_m, px_fastw_s, px_reset_m, px_reset_s;
+always @(posedge clk) begin
+	{px_reset_s, px_reset_m} <= {px_reset_m, px_reset};
+	{px_own_s, px_own_m}     <= {px_own_m, px_own};
+	{px_fast_s, px_fast_m}   <= {px_fast_m, px_fast};
+	{px_fastw_s, px_fastw_m} <= {px_fastw_m, px_fastw};
+end
+
+// Which reads the SDRAM CPU port answers once turbo chip/kick is on (below):
+// the same decode as u_memory_router, on the request's held address, so the
+// proxy knows before it starts a cycle whether it can skip the 68000 phases.
+wire px_sel_chip, px_sel_kick, px_sel_zram, px_sel_dd, px_sel_rtg;
+memory_router u_px_router
+(
+	.cpu_addr      ({8'd0, px_addr, 1'b0}),
+	.cchip         (1'b1          ),
+	.ckick         (1'b1          ),
+	.wr            (1'b1          ),
+	.bootrom       (bootrom       ),
+	.cdtv_mode     (cdtv_mode     ),
+	.z2ram_ena     (z2ram_ena     ),
+	.z3ram_base0   (z3ram_base0   ),
+	.z3ram_ena0    (z3ram_ena0    ),
+	.z3ram_base1   (z3ram_base1   ),
+	.z3ram_ena1    (z3ram_ena1    ),
+	.sel_chipram   (px_sel_chip   ),
+	.sel_kickram   (px_sel_kick   ),
+	.sel_kicklower (              ),
+	.sel_z2ram     (              ),
+	.sel_z3ram0    (              ),
+	.sel_z3ram1    (              ),
+	.sel_zram      (px_sel_zram   ),
+	.sel_dd        (px_sel_dd     ),
+	.sel_rtg       (px_sel_rtg    ),
+	.ramaddr       (              ),
+	.zram_sel      (              )
+);
+wire px_fast_cand  = px_sel_chip | px_sel_kick | px_sel_zram | px_sel_dd | px_sel_rtg;
+// a write never goes to the Kickstart copy
+wire px_fastw_cand = px_sel_chip | px_sel_zram | px_sel_dd | px_sel_rtg;
+
+wire [15:0] px_dout;
+wire [23:1] px_addr_o;
+wire        px_as, px_rw_o, px_uds, px_lds;
+
+proxy68k proxy
+(
+	.clk(clk),
+	.reset_n(reset),
+	.ph1(ph1),
+	.ph2(ph2),
+	.own(px_own_s),
+	.fast_en(px_fast_s),
+	.fast_cand(px_fast_cand),
+	.fastw_en(px_fastw_s),
+	.fastw_cand(px_fastw_cand),
+	.req_tgl(px_tgl),
+	.req_rw(px_rw),
+	.req_addr(px_addr),
+	.req_uds_n(px_uds_n),
+	.req_lds_n(px_lds_n),
+	.req_wdata(px_wdata),
+	.ack_tgl(px_ack_tgl),
+	.rdata(px_rdata),
+	.as_n(px_as),
+	.rw(px_rw_o),
+	.uds_n(px_uds),
+	.lds_n(px_lds),
+	.addr(px_addr_o),
+	.dout(px_dout),
+	.dtack_n(ramsel ? ~ramready_fx : chip_dtack),
+	.din(cpu_din)
+);
+
+wire [15:0] cpu_dout_x  = px_own_s ? px_dout   : cpu_dout_o;
+wire [23:1] cpu_addr_x  = px_own_s ? px_addr_o : cpu_addr_o;
+wire        as_x        = px_own_s ? px_as     : as_o;
+wire        wr_x        = px_own_s ? px_rw_o   : wr_o;
+wire        uds_x       = px_own_s ? px_uds    : uds_o;
+wire        lds_x       = px_own_s ? px_lds    : lds_o;
+// the fx68k's oRESETn, or the ARM's RESET instruction while it owns the bus
+wire        reset_out_x = px_own_s ? ~px_reset_s : reset_out_o;
+
 fx68k cpu_inst_o
 (
 	.clk(clk),
 	.enPhi1(ph1),
 	.enPhi2(ph2),
 
-	.extReset(~reset),
+	.extReset(~reset | px_own_s),
 	.pwrUp(~reset),
 	.oRESETn(reset_out_o),
 	.HALTn(1),
@@ -496,7 +600,9 @@ fx68k cpu_inst_o
 
 wire cpu_req = (cpustate != 1);
 
-wire cchip = turbochip_d & !cpustate;
+// The proxy's FASTW writes take chip RAM through the SDRAM CPU port too
+// (proxy68k.v); turbo chip on its own only ever sends reads there.
+wire cchip = (turbochip_d & !cpustate) | (px_own_s & px_fastw_s & (cpustate == 2'b11));
 wire ckick = turbokick_d & !cpustate;
 
 reg turbochip_d;
@@ -507,8 +613,9 @@ always @(posedge clk) begin
 		turbokick_d <= 0;
 	end
 	else if (~cpu_req) begin	// No mem access, so safe to switch chipram access mode
-		turbochip_d <= cachecfg[0] & cpucfg[1];
-		turbokick_d <= cachecfg[1] & cpucfg[1];
+		// the proxy's FAST reads (proxy68k.v) take the same route
+		turbochip_d <= (cachecfg[0] & cpucfg[1]) | (px_own_s & px_fast_s);
+		turbokick_d <= (cachecfg[1] & cpucfg[1]) | (px_own_s & px_fast_s);
 	end
 end
 

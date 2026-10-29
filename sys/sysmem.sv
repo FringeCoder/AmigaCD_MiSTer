@@ -395,11 +395,8 @@ cyclonev_hps_interface_fpga2hps fpga2hps(
 );
 
 
-cyclonev_hps_interface_hps2fpga hps2fpga(
- .port_size_config({
-    2'b11 // 1:0
-  })
-);
+// cyclonev_hps_interface_hps2fpga: instantiated in sys_top.v, where the ARM
+// CPU's flat window uses it (ARM-CPU plan step 4)
 
 
 cyclonev_hps_interface_fpga2sdram f2sdram(

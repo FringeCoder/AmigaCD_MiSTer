@@ -364,6 +364,114 @@ jobs:
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # MEASUREMENT ONLY (step 1 of the ARM-CPU plan): latprobe_ddr3 echoes an
+      # ARM request word back through DDR3 so the ARM can time the round trip.
+      # It shares the A2065's DDR3 port, so it must never write unless armed,
+      # must poll slowly when idle, and must answer each request exactly once
+      # with an honest read latency. Against a DDR3 model with random
+      # waitrequest and latency. Falsified 2026-10-25: answering without the
+      # magic, answering every poll, always polling fast, timing from the
+      # request instead of its acceptance, and never counting polls each fail
+      # the check that names them.
+      - name: DDR3 latency probe (tb_latprobe.v)
+        run: |
+          set -euo pipefail
+          cd rtl/A2065/sim
+          iverilog -g2012 -o tb_latprobe ../latprobe_ddr3.v tb_latprobe.v
+          vvp -n tb_latprobe | tee out_latprobe.log
+          grep -q "RUN: PASS" out_latprobe.log
+
+      # MEASUREMENT ONLY (step 1d of the ARM-CPU plan): sys/lw_echo.sv is the
+      # only slave on the HPS lightweight bridge, a register echo the ARM times
+      # without DDR3 in the path. A hang here would hang the ARM's load, so the
+      # bench drives it as the HPS does: random valid gaps, random bready and
+      # rready stalls, write data before its address, bursts. Falsified
+      # 2026-10-25: bid or rid not echoing the request's ID, a byte strobe
+      # ignored, rlast on every beat, later burst beats zero, a read-only
+      # register write landing in ECHO and reads left uncounted each fail; so
+      # (step 1e) do ext_wr pulsing for registers 0-3, sticking high, carrying
+      # no data, and registers 4-7 reading the wrong ext_status word.
+      - name: Lightweight bridge echo (tb_lw_echo.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/lw_echo
+          iverilog -g2012 -o tb ../../../sys/lw_echo.sv tb_lw_echo.sv
+          vvp -n tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
+      # MEASUREMENT ONLY (step 2 of the ARM-CPU plan): a 68k on the ARM makes
+      # its bus cycles through the lightweight bridge. lw_echo forwards the
+      # bus offsets, armcpu_bridge splits each access into 68000 word cycles
+      # in the 68k's byte order, and proxy68k plays them on the fx68k's pins
+      # with fx68k's busControl timing, against a 68000 bus slave that checks
+      # every edge. Falsified 2026-10-25: a read's strobes late, no DTACK
+      # wait, read data dropped, AS rising on enPhi1, a write leaving R/W
+      # high, a reset mid-cycle left unanswered, write or read lanes not in
+      # the 68k's byte order, a byte read with both strobes, writes not
+      # posted, OWN or the 68000 check ignored, BANK ignored, WORDS not
+      # counted, INCR bursts not stepped, and a read sent to the bus beside a
+      # write beat or while it is busy each fail. FAST (reads through the
+      # SDRAM port, no 68000 phases): writes taken fast, fast reads outside
+      # the port's addresses, fast read data dropped, ending before the ready,
+      # and FAST never reaching the proxy each fail. FASTW (writes through the
+      # port): fast writes outside its addresses, no data, R/W left high, and
+      # FASTW never reaching the proxy each fail.
+      - name: ARM-CPU bus proxy (tb_armcpu.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/armcpu
+          iverilog -g2012 -o tb tb_armcpu.sv ../../../sys/lw_echo.sv ../../../sys/bus_merge.sv ../../armcpu_bridge.v ../../proxy68k.v
+          vvp -n tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
+      # ARM-CPU plan, step 5: the DDR3 shadow of chip RAM. Random chipset
+      # writes (words, bytes, longs, and the slow RAM and Kickstart areas it
+      # must ignore) against a DDR3 port with random waitrequest; the shadow
+      # has to match a reference byte for byte, idle has to need its quiet
+      # clocks, and an overflow has to set lost until en rises again.
+      - name: chip RAM mirror (tb_chip_mirror.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/armcpu
+          iverilog -g2012 -o tb_cm tb_chip_mirror.sv ../../chip_mirror.v
+          vvp -n tb_cm | tee out_cm.log
+          grep -q "RUN: PASS" out_cm.log
+
+      # MEASUREMENT ONLY (step 4 of the ARM-CPU plan): proxy68k writing the
+      # set/clear custom registers (INTENA, DMACON) through the chipset's bus
+      # logic -- the bus bridge, Gary's data mux, Agnus's CPU register address
+      # and Paula -- and then through the whole minimig.v. Paula's INTENA takes
+      # the data bus on every clock its address is on the register bus, and
+      # Gary drives $FFFF there on reads, so one stray read cycle sets every bit.
+      - name: ARM-CPU proxy writes set/clear registers (tb_proxy_custom.sv)
+        run: |
+          set -euo pipefail
+          iverilog -g2012 -o tb_pc rtl/sim/armcpu/tb_proxy_custom.sv rtl/proxy68k.v rtl/minimig_m68k_bridge.v rtl/paula_intcontroller.v rtl/amiga_clk.v
+          vvp -n tb_pc | tee out_pc.log
+          grep -q "RUN: PASS" out_pc.log
+
+      - name: ARM-CPU proxy against the whole minimig (tb_proxy_minimig.sv)
+        run: |
+          set -euo pipefail
+          bash rtl/sim/armcpu/run_proxy_minimig.sh | tee out_pm.log
+          grep -q "RUN: PASS" out_pm.log
+
+      # MEASUREMENT ONLY (step 1e of the ARM-CPU plan): visprobe_ddr3 times
+      # how long a DDR3 write takes to become visible across the HPS
+      # controller's ports, each direction on its own, with the lightweight
+      # bridge as the start and stop signal. The bench's DDR3 model makes the
+      # ARM's write visible late. Falsified 2026-10-25: accepting any value,
+      # never counting misses, timing B from B_GO instead of the accepted
+      # write, honouring B_SEEN before the write, no timeout, the accept cycle
+      # off by one, no B write at all and the wrong B data each fail.
+      - name: DDR3 visibility probe (tb_visprobe.v)
+        run: |
+          set -euo pipefail
+          cd rtl/A2065/sim
+          iverilog -g2012 -o tb_visprobe ../visprobe_ddr3.v tb_visprobe.v
+          vvp -n tb_visprobe | tee out_visprobe.log
+          grep -q "RUN: PASS" out_visprobe.log
+
       # The SDRAM CPU port claim (freeze | peek_scan) is now ss_ctrl's own
       # register, port_own, loaded with the next values of both, so it leaves a
       # flop instead of a gate on freeze's ~145-load net -- that path into
@@ -840,7 +948,7 @@ jobs:
         run: |
           set -euo pipefail
           cd rtl/sim/cpuwrap
-          iverilog -g2012 -I ../.. -o tb             ../../cpu_wrapper.v ../../memory_router.v ../../cpu_cycles.v             cpu_core_stubs.v tb_cpu_wrapper_park.sv
+          iverilog -g2012 -I ../.. -o tb             ../../cpu_wrapper.v ../../proxy68k.v ../../memory_router.v ../../cpu_cycles.v             cpu_core_stubs.v tb_cpu_wrapper_park.sv
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 

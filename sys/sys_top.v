@@ -601,6 +601,136 @@ end
 wire reset;
 wire clk_100m;
 
+// MEASUREMENT ONLY (ARM-CPU plan, steps 1d and 1e): the lightweight
+// HPS-to-FPGA bridge, ARM physical 0xFF200000, with a register echo as its
+// only slave. Main_MiSTer already releases the bridge; the framework never
+// used it. It runs on clk_100m, the HPS's own clock: asynchronous to the
+// core, so it adds nothing to the core's crowded clk_114 paths, and the core
+// takes the bus requests (LW_BUS_*) across with synchronizers.
+wire [11:0] lw_awid, lw_wid, lw_arid, lw_bid, lw_rid;
+wire [20:0] lw_awaddr, lw_araddr;
+wire  [3:0] lw_awlen, lw_arlen, lw_wstrb;
+wire [31:0] lw_wdata, lw_rdata;
+wire  [1:0] lw_bresp, lw_rresp;
+wire        lw_awvalid, lw_awready, lw_wlast, lw_wvalid, lw_wready, lw_bvalid, lw_bready;
+wire        lw_arvalid, lw_arready, lw_rlast, lw_rvalid, lw_rready;
+wire        lw_clk = clk_100m;
+wire        lw_bus_req, lw_bus_we, lw_bus_ack;
+wire [20:0] lw_bus_addr;
+wire  [1:0] lw_bus_size;
+wire  [3:0] lw_bus_wstrb;
+wire [31:0] lw_bus_wdata, lw_bus_rdata;
+// what the core gets: both bridges' requests, merged (bus_merge below)
+wire        emu_bus_req, emu_bus_we, emu_bus_ack;
+wire [24:0] emu_bus_addr;
+wire  [1:0] emu_bus_size;
+wire  [3:0] emu_bus_wstrb;
+wire [31:0] emu_bus_wdata, emu_bus_rdata;
+wire  [2:0] lw_awsize, lw_arsize;
+wire  [1:0] lw_awburst, lw_arburst;
+
+cyclonev_hps_interface_hps2fpga_light_weight lw_bridge
+(
+	.clk(lw_clk),
+	.awid(lw_awid), .awaddr(lw_awaddr), .awlen(lw_awlen), .awsize(lw_awsize), .awburst(lw_awburst),
+	.awlock(), .awcache(), .awprot(), .awvalid(lw_awvalid), .awready(lw_awready),
+	.wid(lw_wid), .wdata(lw_wdata), .wstrb(lw_wstrb), .wlast(lw_wlast),
+	.wvalid(lw_wvalid), .wready(lw_wready),
+	.bid(lw_bid), .bresp(lw_bresp), .bvalid(lw_bvalid), .bready(lw_bready),
+	.arid(lw_arid), .araddr(lw_araddr), .arlen(lw_arlen), .arsize(lw_arsize), .arburst(lw_arburst),
+	.arlock(), .arcache(), .arprot(), .arvalid(lw_arvalid), .arready(lw_arready),
+	.rid(lw_rid), .rdata(lw_rdata), .rresp(lw_rresp), .rlast(lw_rlast),
+	.rvalid(lw_rvalid), .rready(lw_rready)
+);
+
+// sysmem's reset is clk_100m's; bring it over before lw_echo uses it
+reg [1:0] lw_reset_s = 2'b11;
+always @(posedge lw_clk) lw_reset_s <= {lw_reset_s[0], reset};
+
+lw_echo lw_echo
+(
+	.clk(lw_clk),
+	.reset(lw_reset_s[1]),
+	.awid(lw_awid), .awaddr(lw_awaddr), .awlen(lw_awlen), .awsize(lw_awsize), .awburst(lw_awburst),
+	.awvalid(lw_awvalid), .awready(lw_awready),
+	.wdata(lw_wdata), .wstrb(lw_wstrb), .wlast(lw_wlast), .wvalid(lw_wvalid), .wready(lw_wready),
+	.bid(lw_bid), .bresp(lw_bresp), .bvalid(lw_bvalid), .bready(lw_bready),
+	.arid(lw_arid), .araddr(lw_araddr), .arlen(lw_arlen), .arsize(lw_arsize), .arburst(lw_arburst),
+	.arvalid(lw_arvalid), .arready(lw_arready),
+	.rid(lw_rid), .rdata(lw_rdata), .rresp(lw_rresp), .rlast(lw_rlast), .rvalid(lw_rvalid), .rready(lw_rready),
+	// registers 4-7 were step 1e's probe, no longer built: they read 0
+	.ext_wr(), .ext_waddr(), .ext_wdata(), .ext_status(128'd0),
+	.bus_req(lw_bus_req), .bus_we(lw_bus_we), .bus_addr(lw_bus_addr), .bus_size(lw_bus_size),
+	.bus_wstrb(lw_bus_wstrb), .bus_wdata(lw_bus_wdata), .bus_ack(lw_bus_ack), .bus_rdata(lw_bus_rdata)
+);
+
+// MEASUREMENT ONLY (ARM-CPU plan, step 4): the full HPS-to-FPGA bridge, 32
+// bits wide, maps the 68k's whole 24-bit space flat at ARM physical
+// 0xC0000000, so a JIT on the ARM can use chip RAM as ordinary memory. A
+// second lw_echo, with no registers, turns its accesses into bus requests;
+// bus_merge joins them with the lightweight bridge's for the core. Main
+// already releases this bridge and makes it visible (do_bridge, remap 0x19).
+wire [11:0] hf_awid, hf_wid, hf_arid, hf_bid, hf_rid;
+wire [29:0] hf_awaddr, hf_araddr;
+wire  [3:0] hf_awlen, hf_arlen;
+wire [127:0] hf_wdata, hf_rdata128;
+wire [15:0] hf_wstrb;
+wire [31:0] hf_rdata;
+wire  [1:0] hf_bresp, hf_rresp;
+wire  [2:0] hf_awsize, hf_arsize;
+wire  [1:0] hf_awburst, hf_arburst;
+wire        hf_awvalid, hf_awready, hf_wlast, hf_wvalid, hf_wready, hf_bvalid, hf_bready;
+wire        hf_arvalid, hf_arready, hf_rlast, hf_rvalid, hf_rready;
+wire        hf_bus_req, hf_bus_we, hf_bus_ack;
+wire [29:0] hf_bus_addr;
+wire  [1:0] hf_bus_size;
+wire  [3:0] hf_bus_wstrb;
+wire [31:0] hf_bus_wdata, hf_bus_rdata;
+assign hf_rdata128 = {96'd0, hf_rdata};
+
+cyclonev_hps_interface_hps2fpga hps2fpga
+(
+	.port_size_config(2'b00),       // 32 bits
+	.clk(lw_clk),
+	.awid(hf_awid), .awaddr(hf_awaddr), .awlen(hf_awlen), .awsize(hf_awsize), .awburst(hf_awburst),
+	.awlock(), .awcache(), .awprot(), .awvalid(hf_awvalid), .awready(hf_awready),
+	.wid(hf_wid), .wdata(hf_wdata), .wstrb(hf_wstrb), .wlast(hf_wlast),
+	.wvalid(hf_wvalid), .wready(hf_wready),
+	.bid(hf_bid), .bresp(hf_bresp), .bvalid(hf_bvalid), .bready(hf_bready),
+	.arid(hf_arid), .araddr(hf_araddr), .arlen(hf_arlen), .arsize(hf_arsize), .arburst(hf_arburst),
+	.arlock(), .arcache(), .arprot(), .arvalid(hf_arvalid), .arready(hf_arready),
+	.rid(hf_rid), .rdata(hf_rdata128), .rresp(hf_rresp), .rlast(hf_rlast),
+	.rvalid(hf_rvalid), .rready(hf_rready)
+);
+
+lw_echo #(.AW(30), .FLAT(1)) hf_echo
+(
+	.clk(lw_clk),
+	.reset(lw_reset_s[1]),
+	.awid(hf_awid), .awaddr(hf_awaddr), .awlen(hf_awlen), .awsize(hf_awsize), .awburst(hf_awburst),
+	.awvalid(hf_awvalid), .awready(hf_awready),
+	.wdata(hf_wdata[31:0]), .wstrb(hf_wstrb[3:0]), .wlast(hf_wlast), .wvalid(hf_wvalid), .wready(hf_wready),
+	.bid(hf_bid), .bresp(hf_bresp), .bvalid(hf_bvalid), .bready(hf_bready),
+	.arid(hf_arid), .araddr(hf_araddr), .arlen(hf_arlen), .arsize(hf_arsize), .arburst(hf_arburst),
+	.arvalid(hf_arvalid), .arready(hf_arready),
+	.rid(hf_rid), .rdata(hf_rdata), .rresp(hf_rresp), .rlast(hf_rlast), .rvalid(hf_rvalid), .rready(hf_rready),
+	.ext_wr(), .ext_waddr(), .ext_wdata(), .ext_status(128'd0),
+	.bus_req(hf_bus_req), .bus_we(hf_bus_we), .bus_addr(hf_bus_addr), .bus_size(hf_bus_size),
+	.bus_wstrb(hf_bus_wstrb), .bus_wdata(hf_bus_wdata), .bus_ack(hf_bus_ack), .bus_rdata(hf_bus_rdata)
+);
+
+bus_merge bus_merge
+(
+	.clk(lw_clk),
+	.reset(lw_reset_s[1]),
+	.a_req(lw_bus_req), .a_we(lw_bus_we), .a_addr(lw_bus_addr), .a_size(lw_bus_size),
+	.a_wstrb(lw_bus_wstrb), .a_wdata(lw_bus_wdata), .a_ack(lw_bus_ack), .a_rdata(lw_bus_rdata),
+	.b_req(hf_bus_req), .b_we(hf_bus_we), .b_addr(hf_bus_addr), .b_size(hf_bus_size),
+	.b_wstrb(hf_bus_wstrb), .b_wdata(hf_bus_wdata), .b_ack(hf_bus_ack), .b_rdata(hf_bus_rdata),
+	.o_req(emu_bus_req), .o_we(emu_bus_we), .o_addr(emu_bus_addr), .o_size(emu_bus_size),
+	.o_wstrb(emu_bus_wstrb), .o_wdata(emu_bus_wdata), .o_ack(emu_bus_ack), .o_rdata(emu_bus_rdata)
+);
+
 sysmem_lite sysmem
 (
 	//Reset/Clock
@@ -1845,6 +1975,16 @@ emu emu
 	.DDRAM_DIN(ram_writedata),
 	.DDRAM_BE(ram_byteenable),
 	.DDRAM_WE(ram_write),
+
+	.LW_CLK(lw_clk),
+	.LW_BUS_REQ(emu_bus_req),
+	.LW_BUS_WE(emu_bus_we),
+	.LW_BUS_ADDR(emu_bus_addr),
+	.LW_BUS_SIZE(emu_bus_size),
+	.LW_BUS_WSTRB(emu_bus_wstrb),
+	.LW_BUS_WDATA(emu_bus_wdata),
+	.LW_BUS_ACK(emu_bus_ack),
+	.LW_BUS_RDATA(emu_bus_rdata),
 
 	.SDRAM_DQ(SDRAM_DQ),
 	.SDRAM_A(SDRAM_A),

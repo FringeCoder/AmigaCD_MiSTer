@@ -1249,7 +1249,96 @@ cpu_wrapper cpu_wrapper
 	.z3ram_base1_out (z3ram_base1_w   ),
 	.z3ram_ena1_out  (z3ram_ena1_w    ),
 	// Constant 1 since upstream 26eb46a; see cpu_wrapper.
-	.dcache_sw_en    (dcache_sw_en_w  )
+	.dcache_sw_en    (dcache_sw_en_w  ),
+
+	.px_own          (px_own          ),
+	.px_fast         (px_fast         ),
+	.px_fastw        (px_fastw        ),
+	.px_reset        (px_reset        ),
+	.px_tgl          (px_tgl          ),
+	.px_rw           (px_rw           ),
+	.px_addr         (px_addr         ),
+	.px_uds_n        (px_uds_n        ),
+	.px_lds_n        (px_lds_n        ),
+	.px_wdata        (px_wdata        ),
+	.px_ack_tgl      (px_ack_tgl      ),
+	.px_rdata        (px_rdata        )
+);
+
+// MEASUREMENT ONLY (ARM-CPU plan, step 2): the ARM's 68k bus cycles, from the
+// lightweight HPS bridge (sys/lw_echo.sv) to the proxy in cpu_wrapper. The
+// bridge side runs on LW_CLK, the HPS's clk_100m: on clk_114 its logic joined
+// the near-critical paths there, and on clk_sys every AXI handshake cost a
+// 35 ns cycle. It is asynchronous to clk_sys; armcpu_bridge and proxy68k
+// synchronize what crosses. See rtl/armcpu_bridge.v.
+wire        px_own, px_fast, px_fastw, px_reset, px_tgl, px_rw, px_uds_n, px_lds_n, px_ack_tgl;
+wire [23:1] px_addr;
+wire [15:0] px_wdata, px_rdata;
+
+wire        mirror_en, mirror_idle, mirror_lost;   // chip_mirror, below
+
+armcpu_bridge armcpu_bridge
+(
+	.clk          (LW_CLK          ),
+	.reset        (RESET           ),
+	.bus_req      (LW_BUS_REQ      ),
+	.bus_we       (LW_BUS_WE       ),
+	.bus_addr     (LW_BUS_ADDR     ),
+	.bus_size     (LW_BUS_SIZE     ),
+	.bus_wstrb    (LW_BUS_WSTRB    ),
+	.bus_wdata    (LW_BUS_WDATA    ),
+	.bus_ack      (LW_BUS_ACK      ),
+	.bus_rdata    (LW_BUS_RDATA    ),
+	.cpu_is_68000 (~|cpucfg[1:0]   ),
+	.ipl_n        (chip_ipl        ),
+	.px_own       (px_own          ),
+	.px_fast      (px_fast         ),
+	.px_fastw     (px_fastw        ),
+	.px_reset     (px_reset        ),
+	.px_tgl       (px_tgl          ),
+	.px_rw        (px_rw           ),
+	.px_addr      (px_addr         ),
+	.px_uds_n     (px_uds_n        ),
+	.px_lds_n     (px_lds_n        ),
+	.px_wdata     (px_wdata        ),
+	.px_ack_tgl   (px_ack_tgl      ),
+	.px_rdata     (px_rdata        ),
+	.mirror_en    (mirror_en       ),
+	.mirror_idle  (mirror_idle     ),
+	.mirror_lost  (mirror_lost     )
+);
+
+// ARM-CPU plan, step 5: chip RAM writes the chipset makes, copied into the
+// DDR3 shadow the ARM reads chip RAM from (rtl/chip_mirror.v). Off unless the
+// ARM sets the bridge's MIRROR bit; it then shares ddram_ctrl's second port,
+// behind the A2065 and the drive sounds.
+wire        cm_wev, cm_wev_long;
+wire [24:1] cm_wev_addr;
+wire [15:0] cm_wev_data, cm_wev_data2;
+wire  [1:0] cm_wev_dqm;
+wire [28:0] cm_address;
+wire [63:0] cm_writedata;
+wire  [7:0] cm_byteenable;
+wire        cm_write, cm_waitrequest;
+
+chip_mirror chip_mirror
+(
+	.clk          (clk_114         ),
+	.reset        (reset_d         ),
+	.en_async     (mirror_en       ),
+	.wev          (cm_wev          ),
+	.wev_addr     (cm_wev_addr[23:1]),
+	.wev_data     (cm_wev_data     ),
+	.wev_dqm      (cm_wev_dqm      ),
+	.wev_long     (cm_wev_long     ),
+	.wev_data2    (cm_wev_data2    ),
+	.m_address    (cm_address      ),
+	.m_writedata  (cm_writedata    ),
+	.m_byteenable (cm_byteenable   ),
+	.m_write      (cm_write        ),
+	.m_waitrequest(cm_waitrequest  ),
+	.idle         (mirror_idle     ),
+	.lost         (mirror_lost     )
 );
 
 
@@ -1349,7 +1438,13 @@ sdram_ctrl ram1
 	.chip48       (chip48          ),
 	.chip32       (arb_chip_long   ),
 	.chipWR2      (arb_chip_wr2    ),
-	.chipRD2      (chip_rd2        )
+	.chipRD2      (chip_rd2        ),
+	.chip_wev       (cm_wev          ),
+	.chip_wev_addr  (cm_wev_addr     ),
+	.chip_wev_data  (cm_wev_data     ),
+	.chip_wev_dqm   (cm_wev_dqm      ),
+	.chip_wev_long  (cm_wev_long     ),
+	.chip_wev_data2 (cm_wev_data2    )
 );
 
 // M5: chip-RAM master arbiter. Sits between minimig's chipset DMA signals
@@ -1536,6 +1631,12 @@ wire        mem2_readdatavalid, mem2_waitrequest;
 wire [28:0] dsnd_addr;
 wire        dsnd_rd, dsnd_busy, dsnd_ready;
 
+// dsnd_arb's side of mirror_arb, below
+wire [28:0] dm_address;
+wire  [7:0] dm_burstcount, dm_byteenable;
+wire        dm_read, dm_write, dm_readdatavalid, dm_waitrequest;
+wire [63:0] dm_readdata, dm_writedata;
+
 a2065_ddram_arbiter dsnd_arb
 (
 	.clk             (clk_114),
@@ -1560,6 +1661,44 @@ a2065_ddram_arbiter dsnd_arb
 	.m1_byteenable   (8'hFF),
 	.m1_write        (1'b0),
 	.m1_waitrequest  (dsnd_busy),
+
+	.s_address       (dm_address),
+	.s_burstcount    (dm_burstcount),
+	.s_read          (dm_read),
+	.s_readdata      (dm_readdata),
+	.s_readdatavalid (dm_readdatavalid),
+	.s_writedata     (dm_writedata),
+	.s_byteenable    (dm_byteenable),
+	.s_write         (dm_write),
+	.s_waitrequest   (dm_waitrequest)
+);
+
+// and behind both of them, the chip RAM mirror (ARM-CPU plan, step 5)
+
+a2065_ddram_arbiter mirror_arb
+(
+	.clk             (clk_114),
+	.rst             (reset_d),
+
+	.m0_address      (dm_address),
+	.m0_burstcount   (dm_burstcount),
+	.m0_read         (dm_read),
+	.m0_readdata     (dm_readdata),
+	.m0_readdatavalid(dm_readdatavalid),
+	.m0_writedata    (dm_writedata),
+	.m0_byteenable   (dm_byteenable),
+	.m0_write        (dm_write),
+	.m0_waitrequest  (dm_waitrequest),
+
+	.m1_address      (cm_address),
+	.m1_burstcount   (8'd1),
+	.m1_read         (1'b0),
+	.m1_readdata     (),
+	.m1_readdatavalid(),
+	.m1_writedata    (cm_writedata),
+	.m1_byteenable   (cm_byteenable),
+	.m1_write        (cm_write),
+	.m1_waitrequest  (cm_waitrequest),
 
 	.s_address       (mem2_address),
 	.s_burstcount    (mem2_burstcount),

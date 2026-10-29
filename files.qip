@@ -26,6 +26,9 @@ set_global_assignment -name VERILOG_FILE rtl/minimig_m68k_bridge.v
 set_global_assignment -name VERILOG_FILE rtl/minimig_bankmapper.v
 set_global_assignment -name VERILOG_FILE rtl/minimig.v
 set_global_assignment -name VERILOG_FILE rtl/cpu_wrapper.v
+set_global_assignment -name VERILOG_FILE rtl/proxy68k.v
+set_global_assignment -name VERILOG_FILE rtl/armcpu_bridge.v
+set_global_assignment -name VERILOG_FILE rtl/chip_mirror.v
 set_global_assignment -name VERILOG_FILE rtl/cpu_rdgate.v
 set_global_assignment -name VERILOG_FILE rtl/cpu_cycles.v
 set_global_assignment -name VERILOG_FILE rtl/memory_router.v
