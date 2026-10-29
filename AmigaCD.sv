@@ -1101,6 +1101,7 @@ wire cdtv_mode;
 // fastchip_selack.
 wire [15:0] cdtv_din_w;
 wire        cdtv_selack_w;
+wire        ar_fetch;      // cpu_wrapper -> minimig: an instruction fetch outside the Action Replay
 wire  [7:0] cdtv_base_w;
 
 // CDTV chip-RAM master DMA wires. cdtv_bridge -> chipdma_arb. 32 bits wide:
@@ -1215,6 +1216,12 @@ cpu_wrapper cpu_wrapper
 	.cdtv_din           (cdtv_din_w           ),
 	.cdtv_selack        (cdtv_selack_w        ),
 	.cdtv_base          (cdtv_base_w          ),
+
+	// The Action Replay cartridge (Minimig-AGA bf5d061). status[63], not
+	// upstream's [55], which is the test pattern here: Main's
+	// minimig_status_compose() moves ext_cfg bit 23 there.
+	.ar_on        (status[63]      ),
+	.ar_fetch     (ar_fetch        ),
 
 	.ramsel       (ram_sel         ),
 	.ramaddr      (ram_addr        ),
@@ -1737,6 +1744,8 @@ minimig minimig
 	._cpu_reset   (cpu_rst          ), // M68K reset
 	._cpu_reset_in(cpu_nrst_out     ), // M68K reset out
 	.nmi_addr     (cpu_nmi_addr     ), // M68K NMI address
+	.cart_ar      (status[63]       ), // the cartridge is the Action Replay (Main's ext_cfg bit 23, see above)
+	.ar_fetch     (ar_fetch         ),
 
 	//sram pins
 	.ram_data     (ram_data         ), // SRAM data bus

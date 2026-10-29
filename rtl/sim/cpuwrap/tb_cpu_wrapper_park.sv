@@ -94,6 +94,7 @@ module tb_cpu_wrapper_park;
 		.toccata_ena(), .toccata_base(), .a2065_ena(), .a2065_base(),
 
 		.cdtv_mode(cdtv_mode), .cdtv_din(16'd0), .cdtv_selack(cdtv_selack),
+		.ar_on(1'b0), .ar_fetch(),
 		.cdtv_base(),
 
 		.cpustate(cpustate), .cacr(), .nmi_addr(),
