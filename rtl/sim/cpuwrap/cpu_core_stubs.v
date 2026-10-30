@@ -58,6 +58,9 @@ module TG68KdotC_Kernel
 	output      [1:0] opc_cacr,
 	output            mmu_busy,
 	output            skipfetch,
+	output            opc_cacr_wr,
+	output      [5:0] opc_caar,
+	output      [2:0] fc,
 	output      [1:0] busstate,
 	output      [3:0] cacr_out,
 	output            d_cache_out,
@@ -127,6 +130,9 @@ module TG68KdotC_Kernel
 	assign opc_cacr       = 2'd0;
 	assign mmu_busy       = 1'b0;
 	assign skipfetch      = 1'b0;   // no CLR/Scc here: every read goes out
+	assign opc_cacr_wr    = 1'b0;   // no MOVEC to CACR: the instruction cache is never told to clear
+	assign opc_caar       = 6'd0;
+	assign fc             = 3'd5;   // supervisor data
 	assign cacr_out       = 4'd0;
 	assign d_cache_out    = 1'b1;
 	assign vbr_out        = 32'd0;
