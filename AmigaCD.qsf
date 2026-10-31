@@ -55,6 +55,14 @@ set_global_assignment -name FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION ALWAYS
 set_global_assignment -name SEED 9
 set_global_assignment -name VERILOG_MACRO "MISTER_FB=1"
 set_global_assignment -name VERILOG_MACRO "MISTER_FB_PALETTE=1"
+# ascal without its adaptive (luma-dependent) polyphase filter. Row 42 of
+# docs/seed-lottery.md: ascal (M) is the wall since the 2026-10-30 sync, and
+# row 3 showed this define moves only ascal. No latency change -- ascal's lag
+# is its buffering (vsync_adjust), not its logic. Costs only filter files that
+# begin with "adaptive", which then load as plain filters (ascal.vhd masks the
+# adaptive write bit, so the table lands in the plain h/v memory); plain
+# scanline filters and shadow masks are untouched.
+set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_ADAPTIVE=1"
 
 source sys/sys.tcl
 source sys/sys_analog.tcl
