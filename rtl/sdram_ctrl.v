@@ -344,7 +344,13 @@ reg        p_act = 0;
 wire        chip_req = ~chipDMA | ~chipRW;
 wire        act_chip = p_act & chip_req;
 wire        act_cpu  = p_act & (write_req | cache_req);
-wire [14:0] row      = act_chip ? chipAddr[24:10] : act_cpu ? (write_req ? writeAddr[24:10] : cacheAddr[24:10]) : {p_ba, p_addr};
+// Same function as the one-line mux it replaces (Minimig-AGA 6599190): the CPU
+// requests select in the last LUT before the address pins.
+(* keep *) wire        cpu_slot;
+(* keep *) wire [14:0] row_chip;
+assign      cpu_slot = p_act & ~chip_req;
+assign      row_chip = act_chip ? chipAddr[24:10] : {p_ba, p_addr};
+wire [14:0] row      = (cpu_slot & write_req) ? writeAddr[24:10] : (cpu_slot & cache_req) ? cacheAddr[24:10] : row_chip;   // cacheAddr, as before: see the 10-26 sync
 wire        ras      = p_ras & ~act_chip & ~act_cpu;
 wire        cas      = p_cas | act_chip | act_cpu;
 

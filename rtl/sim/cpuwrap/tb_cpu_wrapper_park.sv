@@ -47,6 +47,7 @@ module tb_cpu_wrapper_park;
 	reg  [2:0]  cachecfg = 3'd0;
 	reg         bootrom = 1'b0;
 	reg         ss_arm = 1'b0;
+	reg         ss_resume = 1'b0;
 	reg         ramready = 1'b0;
 	reg         fastchip_selack = 1'b0;
 	reg         fastchip_ready = 1'b0;
@@ -78,7 +79,7 @@ module tb_cpu_wrapper_park;
 		.ss_sr(), .ss_usp(), .ss_vbr(), .ss_cacr(),
 		.ss_wr_index(4'd0), .ss_wr_data(32'd0), .ss_wr_en(1'b0),
 		.ss_pc_wr(1'b0), .ss_sr_wr(1'b0), .ss_usp_wr(1'b0),
-		.ss_vbr_wr(1'b0), .ss_cacr_wr(1'b0), .ss_resume(1'b0),
+		.ss_vbr_wr(1'b0), .ss_cacr_wr(1'b0), .ss_resume(ss_resume),
 
 		.chip_addr(), .chip_dout(16'd0), .chip_din(),
 		.chip_as(), .chip_uds(), .chip_lds(), .chip_rw(),
@@ -309,6 +310,25 @@ module tb_cpu_wrapper_park;
 		fastchip_selack = 1'b0;
 		repeat (2) @(posedge clk);
 		check("chipreq back after the bridges let go", dut.chipreq, 1);
+
+		// ---- 6. a restore empties the 68EC020 instruction cache -------------
+		// The cache (Minimig-AGA 09226f7) holds code read from chip RAM, and a
+		// restore rewrites chip RAM under it; upstream clears it only at
+		// reset. ss_resume, the end of a restore, must clear every line and the
+		// word held for the next fetch. Filled by hand: the stub CPU never
+		// fetches. The middle check is the control -- without ss_resume the
+		// lines stay -- so a cache that lost its contents on its own would not
+		// pass this for the wrong reason.
+		dut.ic_val = {64{1'b1}};
+		dut.ih_v   = 1'b1;
+		repeat (3) @(posedge clk);
+		check("precondition: the cache keeps its lines", dut.ic_val == {64{1'b1}}, 1);
+		check("precondition: the held word stays", dut.ih_v, 1);
+		@(posedge clk) ss_resume = 1'b1;
+		@(posedge clk) ss_resume = 1'b0;
+		repeat (2) @(posedge clk);
+		check("ss_resume clears every cache line", dut.ic_val == 64'd0, 1);
+		check("ss_resume drops the held word", dut.ih_v, 0);
 
 		if (errors == 0) $display("RUN: PASS");
 		else             $display("RUN: FAIL (%0d)", errors);

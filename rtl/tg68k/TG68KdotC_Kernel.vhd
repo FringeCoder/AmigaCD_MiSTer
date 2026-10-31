@@ -268,6 +268,8 @@ entity TG68KdotC_Kernel is
 		opc_snd					: out std_logic_vector(15 downto 0);
 		opc_dbx					: out std_logic;
 		opc_cacr				: out std_logic_vector(13 downto 0);
+		opc_cacr_wr			: out std_logic;                     -- a MOVEC to CACR, one clock (Minimig-AGA 09226f7)
+		opc_caar				: out std_logic_vector(5 downto 0);  -- CAAR's cache line index
 		mmu_busy				: out std_logic
 		);
 end TG68KdotC_Kernel;
@@ -525,6 +527,7 @@ architecture logic of TG68KdotC_Kernel is
 	signal MSP					: std_logic_vector(31 downto 0);
 	signal ISP					: std_logic_vector(31 downto 0);
 	signal cclr					: std_logic_vector(4 downto 0);
+	signal cacr_wr				: std_logic;
 	-- D-cache bit (CACR bit 8 on real 030).
 	-- CACR_DC defaults '1' so legacy SW that never writes bit 8 still gets
 	-- D-cache.  CACR_DC_owned latches '1' on the first MOVEC CACR write
@@ -4997,6 +5000,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		ISP <= (others => '0');
 		mstack_used <= '0';
 		cclr <= (others => '0');
+		cacr_wr <= '0';
 		CACR_DC <= '1';
 		CACR_DC_owned <= '0';
 	  -- Savestate restore. Outside the clkena_lw guard for the same reason
@@ -5024,11 +5028,13 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		CACR_DC_owned <= ss_wr_data(16);
 	  else
 		if cclr /= "00000" then cclr <= cclr - 1; end if;
+		cacr_wr <= '0';
 		if clkena_lw = '1' and exec(movec_wr) = '1' then
 		  case brief(11 downto 0) is
 		    when X"000" => SFC <= reg_QA(2 downto 0); -- SFC -- 68010+
 		    when X"001" => DFC <= reg_QA(2 downto 0); -- DFC -- 68010+
 		    when X"002" =>
+		      cacr_wr <= '1';
 		      if CPU030 = '1' then
 		        CACR <= reg_QA(13 downto 0) and "11001100010011";
 		        if (reg_QA(11) or reg_QA(10) or reg_QA(3) or reg_QA(2)) = '1' then
@@ -5287,6 +5293,8 @@ PROCESS (clk)
   opc_snd   <= sndOPC;
   opc_dbx   <= '1' when micro_state = dbcc1 and exe_condition = '0' and c_out(1) = '0' else '0';
   opc_cacr  <= CACR;
+  opc_cacr_wr <= cacr_wr;
+  opc_caar  <= CAAR(7 downto 2);
   pmmu_ins <= '1' WHEN CPU030='1' AND opcode(15 downto 6)="1111000000" ELSE '0';
   pmmu_flush <= '1' WHEN state="10" AND exec(movem_action)='1' AND opcode(15)='1' AND pmmu_ext(8)='0' AND movem_run='0' AND
                 (pmmu_ext(14 downto 10)="00010" OR pmmu_ext(14 downto 10)="00011" OR pmmu_ext(14 downto 10)="10000" OR
