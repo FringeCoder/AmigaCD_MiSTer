@@ -138,8 +138,22 @@ wire	sel_bank_1; 				// $200000-$3FFFFF
 
 //--------------------------------------------------------------------------------------
 
+// A CPU read of a custom register still strobes the register address, so a
+// read of a write-only register (INTREQ, INTENA, DMACON, BLTSIZE...) writes
+// whatever is on the chip data bus. On a real Amiga nothing drives the bus
+// then and it holds the last value it carried; WinUAE writes that value too.
+// Driving $FFFF here instead set every bit of INTREQ on a TST.W $DFF09C,
+// including bit 14, and raised a level 6 interrupt nothing expected.
+reg [15:0] chip_bus_last = 16'h0000;
+always @(posedge clk) begin
+	if (dbr)
+		chip_bus_last <= dbwe ? custom_data_out : ram_data_out;
+	else if (cpu_hwr | cpu_lwr)
+		chip_bus_last <= cpu_data_out;
+end
+
 assign ram_data_in    = dbr ? custom_data_out : cpu_data_out;
-assign custom_data_in = dbr ? ram_data_out : cpu_rd ? 16'hFFFF : cpu_data_out;
+assign custom_data_in = dbr ? ram_data_out : cpu_rd ? chip_bus_last : cpu_data_out;
 assign cpu_data_in    = dbr ? 16'h0000 : custom_data_out | ram_data_out | {16{sel_bank_1}};
 
 //read write control signals

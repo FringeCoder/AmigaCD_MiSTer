@@ -571,6 +571,17 @@ jobs:
           set -euo pipefail
           bash rtl/sim/rdgate/run.sh
 
+      # A CPU read of a write-only custom register strobes it with whatever Gary
+      # puts on the custom data bus. That was $FFFF, which set INTREQ bit 14 on a
+      # TST.W $DFF09C and raised level 6; it must be the last value the bus
+      # carried (CPU write, DMA read, DMA write). Falsified on 2026-11-01: the
+      # old $FFFF fails A-E (33 lines), and latching ram_data_out on a DMA write
+      # fails C.
+      - name: Strobe data on a CPU read of a custom register (tb_gary_strobe.sv)
+        run: |
+          set -euo pipefail
+          bash rtl/sim/gary/run.sh
+
       # drive_sounds registers the DDR3 read data (dd_q) before its 4:1 sample
       # select, because the HPS port's readdata straight into smp missed setup
       # in 4 of 58 seeds. That costs one clock per read; this proves the module
