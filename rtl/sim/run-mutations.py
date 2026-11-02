@@ -33,6 +33,8 @@ AKIKO = 'rtl/akiko.v rtl/akiko_nvram.v rtl/sim/cache/dpram_sim.v'
 REGSHADOW = 'rtl/ss_regshadow.v rtl/sim/regshadow/ss_regshadow_ref.v'
 AKIKO_BR = ('rtl/akiko.v rtl/akiko_nvram.v rtl/akiko_hps_bridge.v '
             'rtl/sim/cache/dpram_sim.v')
+FMV = 'rtl/fmv/fmv_afifo.v rtl/fmv/fmv_bus.v rtl/fmv/fmv_ddr.v rtl/fmv/fmv.v'
+FMV_TB = 'rtl/sim/fmv/tb_fmv.sv'
 
 # (label, bench, sources, file to mutate, find, replace, expected failing tests)
 #
@@ -107,6 +109,52 @@ MUTATIONS = [
      "\tsc_val_d <= `SC_REG(rd_addr[7:0]); sc_val_q <= sc_val_d;\nend\n"
      "reg [15:0] sc_val_d;",
      'rd_data at'),
+    # The FMV front end against FringeCoder/AmigaCD docs/fmv-contract.md v3:
+    # one entry per rule tb_fmv.sv claims. Two were not caught when first
+    # written (a mask test that wrote 0, which an OR leaves unchanged, and an
+    # off test whose bench-side decode already gated on fmv_on); both checks
+    # were fixed rather than the entries dropped.
+    ('FMV: 68k write ignores the write mask', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "(cpu_data_in & rf_q[31:16] & lanes)};", "(cpu_data_in & lanes)};",
+     'B.masked write'),
+    ('FMV: HMEM pointer does not step after a write', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "r44[3:0] <= r44[3:0] + 1'd1;", "r44[3:0] <= r44[3:0];",
+     'C.HMEM'),
+    ('FMV: event entry without SEQ', FMV_TB, FMV, 'rtl/fmv/fmv_ddr.v',
+     "avl_writedata  <= {n[15:0], ev_data};", "avl_writedata  <= {16'd0, ev_data};",
+     'D.event SEQ'),
+    ('FMV: CL450 INT taken as HOST_control[7], not its inverse', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "wire cl_int = ~r48[7];", "wire cl_int = r48[7];",
+     'E.'),
+    ('FMV: L64111 status read does not deassert INTR', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "\t\t\t\t\tl64_int     <= 1'b0;\n", "",
+     'F.reading status 2'),
+    ('FMV: guarded raise applied after the ack', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "wire        u_drop     = u_guard & l64_acked & ($signed(u_rdidx - l64_ack_idx) <= 0);",
+     "wire        u_drop     = 1'b0;",
+     'F.guard drops'),
+    ('FMV: IO word without the interrupt mirrors', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "\t\t\t\t\trd_val <= io_view(rf_q[15:0]);", "\t\t\t\t\trd_val <= rf_q[15:0];",
+     'G.IO'),
+    ('FMV: board bytes swapped on a ROM read', FMV_TB, FMV, 'rtl/fmv/fmv_ddr.v',
+     "mrdata <= {avl_readdata[{k, 4'd0} +: 8], avl_readdata[{k, 4'd8} +: 8]};",
+     "mrdata <= {avl_readdata[{k, 4'd8} +: 8], avl_readdata[{k, 4'd0} +: 8]};",
+     'H.ROM: word'),
+    ('FMV: a ROM write reaches DDR3', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "\t\t\t\tif (is_rom & cpu_rw | is_ram) begin", "\t\t\t\tif (is_rom | is_ram) begin",
+     'H.ROM: a write is dropped'),
+    ('FMV: update applied before its SEQ has landed', FMV_TB, FMV, 'rtl/fmv/fmv_ddr.v',
+     "\t\t\tif (w0[63:48] == uq_rd[15:0]) begin", "\t\t\tif (1'b1) begin",
+     'J.not applied'),
+    ('FMV: no back-pressure on a full event ring', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "\twire        ring_full  = (backlog >= 16'd4095);", "\twire        ring_full  = 1'b0;",
+     'I.the 68k is held'),
+    ('FMV: Amiga reset not posted', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "\t\t\trst_pend <= 1'b1;", "\t\t\trst_pend <= 1'b0;",
+     'K.RESET'),
+    ('FMV: status[64] does not gate the bus', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "\twire        access  = sel & ~cpu_as_n & ds & fmv_on;", "\twire        access  = sel & ~cpu_as_n & ds;",
+     'L.off'),
 ]
 
 

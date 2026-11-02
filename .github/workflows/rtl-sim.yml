@@ -364,6 +364,28 @@ jobs:
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # The CD32 FMV module's front end (rtl/fmv) against the FPGA side of
+      # FringeCoder/AmigaCD docs/fmv-contract.md v3 -- whose executable form
+      # is tests/fmv_fpga_ref.h there, which Main's own tests run against.
+      # Neither repository's CI can see the other, so this bench is what keeps
+      # the core honest to the contract. Covers:
+      #   - the masked 68k writes and HMEM indirection;
+      #   - event entries with SEQ, and updates waited for until theirs lands;
+      #   - the INT line, the L64111 read acknowledge and the guard;
+      #   - the IO-word mirrors;
+      #   - ROM/RAM in 68k byte order, with ROM writes dropped;
+      #   - back-pressure on HOST_RDIDX;
+      #   - the RESET event, the register file outliving it, and status[64]
+      #     gating it all.
+      # Falsified 2026-11-02 with 13 mutations, now in run-mutations.py.
+      - name: FMV front end matches the contract (tb_fmv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/fmv
+          iverilog -g2012 -o tb ../../fmv/fmv_afifo.v ../../fmv/fmv_bus.v ../../fmv/fmv_ddr.v ../../fmv/fmv.v tb_fmv.sv
+          vvp -n tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
       # MEASUREMENT ONLY (step 1 of the ARM-CPU plan): latprobe_ddr3 echoes an
       # ARM request word back through DDR3 so the ARM can time the round trip.
       # It shares the A2065's DDR3 port, so it must never write unless armed,
