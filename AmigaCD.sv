@@ -144,7 +144,10 @@ wire [64:0] RTC;
 
 wire        ce_pix;
 wire  [1:0] buttons;
-wire [63:0] status;
+// hps_io drives all 128 bits; status[64] is the CD32 FMV board (Main:
+// support/minimig/fmv.h), the first bit free above [63:32].
+wire [127:0] status;
+wire        fmv_on = status[64];
 wire        forced_scandoubler;
 
 wire        io_strobe;
@@ -1208,6 +1211,11 @@ cpu_wrapper cpu_wrapper
 	.toccata_ena  (toccata_ena     ),
 	.a2065_ena    (a2065_ena       ),
 	.a2065_base   (a2065_base      ),
+	.fmv_present  (fmv_present     ),
+	.fmv_nib      (fmv_nib         ),
+	.fmv_nib_addr (fmv_nib_addr    ),
+	.fmv_ena      (fmv_ena         ),
+	.fmv_base     (fmv_base        ),
 	.toccata_base (toccata_base    ),
 	.cdtv_mode    (cdtv_mode       ),
 
@@ -1614,6 +1622,17 @@ ddram_ctrl ram2
 // controller above. Fast RAM has priority: it carries every 68k access to
 // Zorro RAM, while the card touches DDR3 rarely and can wait.
 
+// The CD32 FMV board: autoconfig between cpu_wrapper and minimig, and its
+// DDR3 port, which joins the chain below behind the chip RAM mirror.
+wire        fmv_present, fmv_ena;
+wire  [3:0] fmv_nib;
+wire  [5:0] fmv_nib_addr;
+wire  [7:0] fmv_base;
+wire [28:0] fmv_mem_address;
+wire  [7:0] fmv_mem_burstcount, fmv_mem_byteenable;
+wire        fmv_mem_read, fmv_mem_write, fmv_mem_readdatavalid, fmv_mem_waitrequest;
+wire [63:0] fmv_mem_readdata, fmv_mem_writedata;
+
 wire [28:0] a2065_mem_address;
 wire [7:0]  a2065_mem_burstcount, a2065_mem_byteenable;
 wire        a2065_mem_read, a2065_mem_write;
@@ -1699,6 +1718,52 @@ a2065_ddram_arbiter mirror_arb
 	.m1_byteenable   (cm_byteenable),
 	.m1_write        (cm_write),
 	.m1_waitrequest  (cm_waitrequest),
+
+	.s_address       (mf_address),
+	.s_burstcount    (mf_burstcount),
+	.s_read          (mf_read),
+	.s_readdata      (mf_readdata),
+	.s_readdatavalid (mf_readdatavalid),
+	.s_writedata     (mf_writedata),
+	.s_byteenable    (mf_byteenable),
+	.s_write         (mf_write),
+	.s_waitrequest   (mf_waitrequest)
+);
+
+// and behind all of them, the CD32 FMV board (rtl/fmv). Lowest priority: its
+// event and update-queue traffic can wait, and its ROM/RAM accesses already
+// stretch the 68k for a DDR3 round trip, so a few more cycles there are only
+// that. It touches DDR3 only while status[64] is on.
+
+wire [28:0] mf_address;
+wire  [7:0] mf_burstcount, mf_byteenable;
+wire        mf_read, mf_write, mf_readdatavalid, mf_waitrequest;
+wire [63:0] mf_readdata, mf_writedata;
+
+a2065_ddram_arbiter fmv_arb
+(
+	.clk             (clk_114),
+	.rst             (reset_d),
+
+	.m0_address      (mf_address),
+	.m0_burstcount   (mf_burstcount),
+	.m0_read         (mf_read),
+	.m0_readdata     (mf_readdata),
+	.m0_readdatavalid(mf_readdatavalid),
+	.m0_writedata    (mf_writedata),
+	.m0_byteenable   (mf_byteenable),
+	.m0_write        (mf_write),
+	.m0_waitrequest  (mf_waitrequest),
+
+	.m1_address      (fmv_mem_address),
+	.m1_burstcount   (fmv_mem_burstcount),
+	.m1_read         (fmv_mem_read),
+	.m1_readdata     (fmv_mem_readdata),
+	.m1_readdatavalid(fmv_mem_readdatavalid),
+	.m1_writedata    (fmv_mem_writedata),
+	.m1_byteenable   (fmv_mem_byteenable),
+	.m1_write        (fmv_mem_write),
+	.m1_waitrequest  (fmv_mem_waitrequest),
 
 	.s_address       (mem2_address),
 	.s_burstcount    (mem2_burstcount),
@@ -1974,6 +2039,12 @@ minimig minimig
 	.toccata_base (toccata_base),
 	.a2065_ena  (a2065_ena),
 	.a2065_base (a2065_base),
+	.fmv_on       (fmv_on),
+	.fmv_ena      (fmv_ena),
+	.fmv_base     (fmv_base),
+	.fmv_present  (fmv_present),
+	.fmv_nib_addr (fmv_nib_addr),
+	.fmv_nib      (fmv_nib),
 	.toccata_aud_left (toccata_aud_left),
 	.toccata_aud_right(toccata_aud_right),
 
@@ -2042,6 +2113,15 @@ minimig minimig
 	.a2065_mem_byteenable(a2065_mem_byteenable),
 	.a2065_mem_write(a2065_mem_write),
 	.a2065_mem_waitrequest(a2065_mem_waitrequest),
+	.fmv_mem_address(fmv_mem_address),
+	.fmv_mem_burstcount(fmv_mem_burstcount),
+	.fmv_mem_read(fmv_mem_read),
+	.fmv_mem_readdata(fmv_mem_readdata),
+	.fmv_mem_readdatavalid(fmv_mem_readdatavalid),
+	.fmv_mem_writedata(fmv_mem_writedata),
+	.fmv_mem_byteenable(fmv_mem_byteenable),
+	.fmv_mem_write(fmv_mem_write),
+	.fmv_mem_waitrequest(fmv_mem_waitrequest),
 
 	.USER_IN              (USER_IN              ),
 	.USER_OUT             (IndirectUserOutFlop  ),

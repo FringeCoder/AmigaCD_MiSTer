@@ -96,6 +96,12 @@ wire [15:0]  toccata_aud_left;
 wire [15:0]  toccata_aud_right;
 wire         a2065_ena;
 wire [7:0]   a2065_base;
+wire         fmv_on;
+wire         fmv_ena;
+wire [7:0]   fmv_base;
+wire         fmv_present;
+wire [5:0]   fmv_nib_addr;
+wire [3:0]   fmv_nib;
 wire         cdtv_mode;
 wire [15:0]  cdtv_din;
 wire         cdtv_selack;
@@ -150,6 +156,15 @@ wire [63:0]  a2065_mem_writedata;
 wire [7:0]   a2065_mem_byteenable;
 wire         a2065_mem_write;
 wire         a2065_mem_waitrequest;
+wire [28:0]  fmv_mem_address;
+wire [7:0]   fmv_mem_burstcount;
+wire         fmv_mem_read;
+wire [63:0]  fmv_mem_readdata;
+wire         fmv_mem_readdatavalid;
+wire [63:0]  fmv_mem_writedata;
+wire [7:0]   fmv_mem_byteenable;
+wire         fmv_mem_write;
+wire         fmv_mem_waitrequest;
 wire [6:0]   USER_IN;
 wire [6:0]   USER_OUT;
 wire [1:0]   user_port_mode;
@@ -229,6 +244,10 @@ reg          drv_toccata_ena;
 reg  [7:0]   drv_toccata_base;
 reg          drv_a2065_ena;
 reg  [7:0]   drv_a2065_base;
+reg          drv_fmv_on;
+reg          drv_fmv_ena;
+reg  [7:0]   drv_fmv_base;
+reg  [5:0]   drv_fmv_nib_addr;
 reg  [7:0]   drv_cdtv_base;
 reg          drv_cdtv_cs;
 reg          drv_cdtv_cs_sec;
@@ -254,6 +273,9 @@ reg          drv_a2065_clk_ddr;
 reg  [63:0]  drv_a2065_mem_readdata;
 reg          drv_a2065_mem_readdatavalid;
 reg          drv_a2065_mem_waitrequest;
+reg  [63:0]  drv_fmv_mem_readdata;
+reg          drv_fmv_mem_readdatavalid;
+reg          drv_fmv_mem_waitrequest;
 reg  [6:0]   drv_USER_IN;
 reg          drv_ss_clut_active;
 reg  [7:0]   drv_ss_clut_addr;
@@ -304,6 +326,10 @@ assign toccata_ena = drv_toccata_ena;
 assign toccata_base = drv_toccata_base;
 assign a2065_ena = drv_a2065_ena;
 assign a2065_base = drv_a2065_base;
+assign fmv_on = drv_fmv_on;
+assign fmv_ena = drv_fmv_ena;
+assign fmv_base = drv_fmv_base;
+assign fmv_nib_addr = drv_fmv_nib_addr;
 assign cdtv_base = drv_cdtv_base;
 assign cdtv_cs = drv_cdtv_cs;
 assign cdtv_cs_sec = drv_cdtv_cs_sec;
@@ -329,6 +355,9 @@ assign a2065_clk_ddr = drv_a2065_clk_ddr;
 assign a2065_mem_readdata = drv_a2065_mem_readdata;
 assign a2065_mem_readdatavalid = drv_a2065_mem_readdatavalid;
 assign a2065_mem_waitrequest = drv_a2065_mem_waitrequest;
+assign fmv_mem_readdata = drv_fmv_mem_readdata;
+assign fmv_mem_readdatavalid = drv_fmv_mem_readdatavalid;
+assign fmv_mem_waitrequest = drv_fmv_mem_waitrequest;
 assign USER_IN = drv_USER_IN;
 assign ss_clut_active = drv_ss_clut_active;
 assign ss_clut_addr = drv_ss_clut_addr;
@@ -382,6 +411,10 @@ begin
 	drv_toccata_base = 0;
 	drv_a2065_ena = 0;
 	drv_a2065_base = 0;
+	drv_fmv_on = 0;
+	drv_fmv_ena = 0;
+	drv_fmv_base = 0;
+	drv_fmv_nib_addr = 0;
 	drv_cdtv_base = 0;
 	drv_cdtv_cs = 0;
 	drv_cdtv_cs_sec = 0;
@@ -407,6 +440,9 @@ begin
 	drv_a2065_mem_readdata = 0;
 	drv_a2065_mem_readdatavalid = 0;
 	drv_a2065_mem_waitrequest = 0;
+	drv_fmv_mem_readdata = 0;
+	drv_fmv_mem_readdatavalid = 0;
+	drv_fmv_mem_waitrequest = 0;
 	drv_USER_IN = 0;
 	drv_ss_clut_active = 0;
 	drv_ss_clut_addr = 0;
@@ -513,6 +549,12 @@ minimig dut (
 	.toccata_aud_right(toccata_aud_right),
 	.a2065_ena(a2065_ena),
 	.a2065_base(a2065_base),
+	.fmv_on(fmv_on),
+	.fmv_ena(fmv_ena),
+	.fmv_base(fmv_base),
+	.fmv_present(fmv_present),
+	.fmv_nib_addr(fmv_nib_addr),
+	.fmv_nib(fmv_nib),
 	.cdtv_mode(cdtv_mode),
 	.cdtv_din(cdtv_din),
 	.cdtv_selack(cdtv_selack),
@@ -567,6 +609,15 @@ minimig dut (
 	.a2065_mem_byteenable(a2065_mem_byteenable),
 	.a2065_mem_write(a2065_mem_write),
 	.a2065_mem_waitrequest(a2065_mem_waitrequest),
+	.fmv_mem_address(fmv_mem_address),
+	.fmv_mem_burstcount(fmv_mem_burstcount),
+	.fmv_mem_read(fmv_mem_read),
+	.fmv_mem_readdata(fmv_mem_readdata),
+	.fmv_mem_readdatavalid(fmv_mem_readdatavalid),
+	.fmv_mem_writedata(fmv_mem_writedata),
+	.fmv_mem_byteenable(fmv_mem_byteenable),
+	.fmv_mem_write(fmv_mem_write),
+	.fmv_mem_waitrequest(fmv_mem_waitrequest),
 	.USER_IN(USER_IN),
 	.USER_OUT(USER_OUT),
 	.user_port_mode(user_port_mode),

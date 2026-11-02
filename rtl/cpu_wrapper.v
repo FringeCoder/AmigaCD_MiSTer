@@ -155,6 +155,16 @@ module cpu_wrapper
 	output            a2065_ena,
 	output reg  [7:0] a2065_base,
 
+	// The CD32 FMV board (rtl/fmv, FringeCoder/AmigaCD docs/fmv-contract.md).
+	// Present when status[64] is on and Main has raised ALIVE, sampled at
+	// reset. It goes first in the chain, so it is given $200000, the base its
+	// ROM expects. Its autoconfig nibbles come from the ROM image Main loaded.
+	input             fmv_present,
+	input       [3:0] fmv_nib,
+	output      [5:0] fmv_nib_addr,
+	output            fmv_ena,
+	output reg  [7:0] fmv_base,
+
 	// CDTV mode. When 1, the CDTV DMAC card joins the autoconfig chain
 	// ahead of Toccata/Z2 fastram with the WinUAE-canonical ROM bytes
 	// from cdtv.cpp cdtv_init.
@@ -1011,6 +1021,8 @@ end
 reg       ac_toccata;
 reg       ac_a2065;
 reg       ac_cdtv;
+reg       ac_fmv;
+reg       fmv_cfgd;
 reg [2:0] ac_memcard;
 reg [3:0] autocfg_data;
 
@@ -1018,6 +1030,12 @@ reg [3:0] autocfg_data;
 always @(*) begin
 	autocfg_data = 4'b1111;
 
+	// The CD32 FMV board, first in the chain: its nibbles as the ROM holds
+	// them (nibble n = the high nibble of ROM byte 2n).
+	if (ac_fmv) begin
+		autocfg_data = fmv_nib;
+	end
+	else
 	// CDTV DMAC — first in the chain when cdtv_mode is on. ROM image is
 	// the WinUAE cdtv.cpp dmacmemory[] (cdtv_init: ew(0x00,0xC1),
 	// ew(0x04,0x03), ew(0x08,0x40), ew(0x10,0x02), ew(0x14,0x02), serial
@@ -1137,7 +1155,8 @@ always @(*) begin
 	end
 end
 
-wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_toccata || ac_a2065 || ac_cdtv); //$E80000 - $E8FFFF
+wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_toccata || ac_a2065 || ac_cdtv || ac_fmv); //$E80000 - $E8FFFF
+assign fmv_nib_addr = chip_addr[6:1];
 
 reg       z2ram_ena;
 reg [4:0] z3ram_base0;
@@ -1151,6 +1170,14 @@ always @(posedge clk) begin
 
 	if (~reset | ~reset_out) begin
 		ac_memcard  <= (cpucfg[1] & ~ec020) ? fastramcfg : fastramcfg[2] ? 3'd3 : {1'b0, fastramcfg[1:0]};
+		// Zorro II fast RAM is decoded at a fixed $200000-$9FFFFF whatever
+		// base it is given (memory_router.v), so it cannot share the space
+		// with the FMV board: with the board present only Z3 RAM is offered.
+		// A real CD32 with the cartridge had no Z2 RAM either.
+		if (fmv_present && !((cpucfg[1] & ~ec020) ? fastramcfg[2] : 1'b0))
+			ac_memcard <= 3'd0;
+		ac_fmv      <= fmv_present;
+		fmv_cfgd    <= 0;
 		// In CDTV mode, suppress Toccata (a real CDTV had no soundcard) so
 		// the DMAC card is alone in the chain, matching the WinUAE log
 		// "Card 01: CDTV DMAC" / end.
@@ -1171,7 +1198,17 @@ always @(posedge clk) begin
 		z3ram_base1 <= 1;
 	end
 	else if (sel_autoconfig && ~chip_rw && ~chip_uds && old_uds) begin
-		if(ac_cdtv) begin
+		if(ac_fmv) begin
+			if (chip_addr[6:1] == 6'b100100) begin // Register 0x48 - base address, the FMV board
+				fmv_base <= cpu_dout[7:0];
+				fmv_cfgd <= 1;
+				ac_fmv   <= 0;
+			end
+			else if (chip_addr[6:1] == 6'b100110) begin // Register 0x4C - shut up
+				ac_fmv   <= 0;
+			end
+		end
+		else if(ac_cdtv) begin
 			if (chip_addr[6:1] == 6'b100100) begin // Register 0x48 — KS writes the base address byte
 				cdtv_base <= cpu_dout[15:8];
 				ac_cdtv   <= 0;
@@ -1220,5 +1257,6 @@ end
 // would claim addr $00xxxx (the CPU reset vector) at FPGA boot. Mask it out.
 assign toccata_ena = ~ac_toccata & ~cdtv_mode;
 assign a2065_ena   = ~ac_a2065;
+assign fmv_ena     = fmv_cfgd;
 
 endmodule

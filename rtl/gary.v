@@ -78,6 +78,8 @@ module gary
 
 	input         a2065_ena,
 	input   [7:0] a2065_base,
+	input         fmv_ena,       // the CD32 FMV board is configured (rtl/fmv)
+	input   [7:0] fmv_base,
 	input         toccata_ena,
 	input   [7:0] toccata_base,
 	input   [7:0] cdtv_base,
@@ -109,6 +111,7 @@ module gary
 	output       sel_gayle, //select $DExxxx
 	output       sel_toccata,
 	output       sel_a2065,
+	output       sel_fmv,       // the FMV board's 1 MB
 
 	// CDTV bridge selects (gated on cdtv_mode):
 	//   sel_cdtv       = $E90000-$E9FFFF post-autoconfig DMAC / TPI / CR-511 window.
@@ -241,10 +244,14 @@ assign sel_cia   = cpu_address_in[23:16]==8'hBF; // $BFxxxx
 assign sel_cia_a = sel_cia & ~cpu_address_in[12];
 assign sel_cia_b = sel_cia & ~cpu_address_in[13];
 assign sel_rtg   = cpu_address_in[23:16]==8'hB8; // $B8xxxx
-assign sel_bank_1 = cpu_address_in[23:21]==3'b001;
+// $200000-$3FFFFF reads as open bus, 0xFFFF ORed into every read below --
+// except where the CD32 FMV board sits (autoconfig puts it at $200000).
+// Without the exclusion every read from the board would come back 0xFFFF.
+assign sel_bank_1 = cpu_address_in[23:21]==3'b001 && !sel_fmv;
 
 assign sel_toccata = toccata_ena && cpu_address_in[23:16]==toccata_base; // Nominally $e9xxxx
 assign sel_a2065   = a2065_ena && cpu_address_in[23:16]==a2065_base;
+assign sel_fmv     = fmv_ena && cpu_address_in[23:20]==fmv_base[7:4];   // a 1 MB board
 
 // CDTV bridge selects — gated on cdtv_mode so non-CDTV builds see exactly
 // the same address map as before. Spec section 1 (memory map):
