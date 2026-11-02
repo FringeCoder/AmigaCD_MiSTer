@@ -82,8 +82,11 @@ module fmv_bus (
 	reg [15:0] io_map_cl = 16'h0000;               // 0xC4
 	reg [15:0] io_map_l64 = 16'h0000;              // 0xC5
 	reg [15:0] io_pol    = 16'h0000;               // 0xC6
-	reg [15:0] autocfg [0:15];                     // 0xD0-0xDF
-	initial for (i = 0; i < 16; i = i + 1) autocfg[i] = 16'h0000;
+	// 0xD0-0xDF as one vector, not an array: register r is bits 16r+15:16r,
+	// so nibble n is bits 4n+3:4n. Quartus 17 infers an array as RAM and then
+	// fails to map the random reads below to a read port (an internal error in
+	// its Verilog frontend), so this stays plain flops.
+	reg [255:0] autocfg = 256'd0;
 
 	reg [31:0] ev_count    = 32'd0;   // events posted, ever
 	reg [31:0] l64_ack_idx = 32'd0;
@@ -92,8 +95,7 @@ module fmv_bus (
 	wire cl_int = ~r48[7];                         // [CL 8-12]
 	assign int2       = fmv_on & alive & (cl_int | l64_int);
 	assign ac_present = fmv_on & alive;
-	wire [15:0] ac_reg = autocfg[ac_nib_addr[5:2]];
-	assign ac_nib = ac_reg[{ac_nib_addr[1:0], 2'b00} +: 4];
+	assign ac_nib = autocfg[{ac_nib_addr, 2'b00} +: 4];
 
 	// ---------------------------------------------------------- the access
 
@@ -102,7 +104,6 @@ module fmv_bus (
 	wire [19:0] off     = {cpu_addr[19:1], 1'b0};
 	wire        is_rom  = (off[19:18] == 2'b00);
 	wire        is_ram  =  off[19];
-	wire        is_io   = (off[19:16] == 4'h4);
 	wire        is_l64  = (off[19:16] == 4'h5);
 	wire        is_cmem = (off[19:16] == 4'h6);
 	wire        is_cl   = (off[19:16] == 4'h7);
@@ -110,8 +111,6 @@ module fmv_bus (
 	wire  [4:0] l64_r   = cpu_addr[5:1];
 	wire [15:0] lanes   = {{8{~cpu_uds_n}}, {8{~cpu_lds_n}}};
 
-	// Ring-bound: registers and the data port, and writes into the ROM range.
-	wire        ring_bound = ~is_ram & (~is_rom | ~cpu_rw);
 	wire [15:0] backlog    = ev_count[15:0] - rdidx_lo;
 	wire        ring_full  = (backlog >= 16'd4095);   // contract: low half, mod 2^16
 
@@ -124,7 +123,6 @@ module fmv_bus (
 	reg [31:0] rf_q;          // registered RAM read
 	reg [15:0] rd_val;        // what a read returns
 	reg  [3:0] ev_haddr;
-	reg        ack_l64;
 	reg [74:0] upd;
 	reg        rst_d = 1'b0, rst_pend = 1'b0;
 	reg        mack_s1 = 1'b0, mack_s2 = 1'b0, mack_s3 = 1'b0;
@@ -149,21 +147,24 @@ module fmv_bus (
 		end
 	endfunction
 
-	// Special (flop) registers, read and written by index
-	function [15:0] ff_read(input [7:0] x);
-		case (x)
-			8'h44: ff_read = r44;
-			8'h48: ff_read = r48;
-			8'hC0: ff_read = {15'd0, alive};
-			8'hC1: ff_read = {15'd0, l64_int};
-			8'hC2: ff_read = rdidx_lo;
-			8'hC3: ff_read = rdidx_hi;
-			8'hC4: ff_read = io_map_cl;
-			8'hC5: ff_read = io_map_l64;
-			8'hC6: ff_read = io_pol;
-			default: ff_read = (x[7:4] == 4'hD) ? autocfg[x[3:0]] : 16'h0000;
-		endcase
-	endfunction
+	// The flop registers a 68k access can reach: HOST_raddr and HOST_control.
+	// (0xC0-0xDF have no 68k address.)
+	wire [15:0] ff_q = (idx == 8'h44) ? r44 : r48;
+
+	// The register file RAM: one read port, one registered write port, so
+	// Quartus maps it to block RAM. The read address is the access's index,
+	// or the update's while one is being applied (S_UP1); the data is in
+	// rf_q a clock later. A write is issued from S_RD2 or S_UP2 and lands on
+	// the next clock, before anything can read that entry again.
+	wire [7:0] rf_ra = (st == S_UP1) ? upd[7:0] : idx;
+	reg        rf_we = 1'b0;
+	reg  [7:0] rf_wa;
+	reg [31:0] rf_wd;
+	always @(posedge clk) begin
+		rf_q <= rf[rf_ra];
+		if (rf_we)
+			rf[rf_wa] <= rf_wd;
+	end
 
 	// update fields
 	wire  [7:0] u_index    = upd[7:0];
@@ -178,6 +179,7 @@ module fmv_bus (
 	always @(posedge clk) begin
 		ev_wr <= 1'b0;
 		up_rd <= 1'b0;
+		rf_we <= 1'b0;
 
 		mack_s1 <= mack_t;
 		mack_s2 <= mack_s1;
@@ -191,7 +193,6 @@ module fmv_bus (
 		case (st)
 		S_IDLE: begin
 			if (access) begin
-				ack_l64 <= 1'b0;
 				ev_haddr <= 4'd0;
 				if (is_rom & cpu_rw | is_ram) begin
 					// ROM and RAM: a DDR3 access, not an event
@@ -228,8 +229,7 @@ module fmv_bus (
 			end
 		end
 
-		S_RD1: begin                          // RAM read in flight
-			rf_q <= rf[idx];
+		S_RD1: begin                          // RAM read in flight (rf_ra = idx)
 			st   <= S_RD2;
 		end
 
@@ -237,7 +237,7 @@ module fmv_bus (
 			// A read returns the register; a write merges under the mask.
 			if (cpu_rw) begin
 				if (use_ff)
-					rd_val <= ff_read(idx);
+					rd_val <= ff_q;
 				else if (idx == 8'hA0)
 					rd_val <= io_view(rf_q[15:0]);
 				else
@@ -254,10 +254,13 @@ module fmv_bus (
 					r44 <= (r44 & ~(m44 & lanes)) | (cpu_data_in & m44 & lanes);
 				else if (idx == 8'h48)
 					r48 <= (r48 & ~(m48 & lanes)) | (cpu_data_in & m48 & lanes);
-				else
-					rf[idx] <= {rf_q[31:16],
-					            (rf_q[15:0] & ~(rf_q[31:16] & lanes)) |
-					            (cpu_data_in & rf_q[31:16] & lanes)};
+				else begin
+					rf_we <= 1'b1;
+					rf_wa <= idx;
+					rf_wd <= {rf_q[31:16],
+					          (rf_q[15:0] & ~(rf_q[31:16] & lanes)) |
+					          (cpu_data_in & rf_q[31:16] & lanes)};
+				end
 				// HOST_rdata: HAddr steps on after a write [CL 8-13]
 				if (idx[7:4] == 4'hB)
 					r44[3:0] <= r44[3:0] + 1'd1;
@@ -285,8 +288,7 @@ module fmv_bus (
 				st <= S_IDLE;
 		end
 
-		S_UP1: begin                          // read the entry being updated
-			rf_q <= rf[u_index];
+		S_UP1: begin                          // RAM read in flight (rf_ra = u_index)
 			st   <= S_UP2;
 		end
 
@@ -294,7 +296,11 @@ module fmv_bus (
 			if (u_maskfile) begin
 				if (u_index == 8'h44)      m44 <= u_value;
 				else if (u_index == 8'h48) m48 <= u_value;
-				else if (!u_ff)            rf[u_index] <= {u_value, rf_q[15:0]};
+				else if (!u_ff) begin
+					rf_we <= 1'b1;
+					rf_wa <= u_index;
+					rf_wd <= {u_value, rf_q[15:0]};
+				end
 			end else if (!u_drop) begin
 				case (u_index)
 				8'h44: r44 <= (r44 & ~u_mask) | (u_value & u_mask);
@@ -308,9 +314,13 @@ module fmv_bus (
 				8'hC6: io_pol     <= (io_pol     & ~u_mask) | (u_value & u_mask);
 				default:
 					if (u_index[7:4] == 4'hD)
-						autocfg[u_index[3:0]] <= (autocfg[u_index[3:0]] & ~u_mask) | (u_value & u_mask);
-					else if (u_index < 8'hC0)
-						rf[u_index] <= {rf_q[31:16], (rf_q[15:0] & ~u_mask) | (u_value & u_mask)};
+						autocfg[{u_index[3:0], 4'd0} +: 16] <=
+							(autocfg[{u_index[3:0], 4'd0} +: 16] & ~u_mask) | (u_value & u_mask);
+					else if (u_index < 8'hC0) begin
+						rf_we <= 1'b1;
+						rf_wa <= u_index;
+						rf_wd <= {rf_q[31:16], (rf_q[15:0] & ~u_mask) | (u_value & u_mask)};
+					end
 				endcase
 			end
 			st <= S_IDLE;
