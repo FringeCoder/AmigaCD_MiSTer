@@ -63,7 +63,7 @@ module tb_fmv_chain;
 		.ramready_l(),
 		.dmaAddr(28'd0), .dmaCS(1'b0), .dmaWE(1'b0),
 		.dmaL(1'b0), .dmaU(1'b0), .dmaWR(16'd0), .dmaRD(dmaRD),
-		.dmaACK(dmaACK), .dbg(ram2_dbg)
+		.dmaACK(dmaACK), .dbg(ram2_dbg), .dbg_hps(hps_dbg)
 	);
 
 	// ---- fmv_arb, m0 (the mirror/A2065/drive sounds side) idle
@@ -74,6 +74,15 @@ module tb_fmv_chain;
 
 	wire [31:0] arb_dbg;
 	wire [39:0] ram2_dbg;
+	wire [127:0] hps_dbg;
+	integer     hps_cmds_seen = 0, hps_beats_seen = 0;
+	reg  [28:0] hps_last_seen = 0;
+	always @(posedge sysclk) begin
+		if ((DDRAM_RD | DDRAM_WE) & ~DDRAM_BUSY) begin
+			hps_cmds_seen = hps_cmds_seen + 1; hps_last_seen = DDRAM_ADDR;
+		end
+		if (DDRAM_DOUT_READY) hps_beats_seen = hps_beats_seen + 1;
+	end
 	reg         q2_seen = 0, busy_seen = 0;
 	always @(posedge sysclk) begin
 		if (ram2_dbg[7]) q2_seen <= 1;        // q2_v
@@ -119,6 +128,13 @@ module tb_fmv_chain;
 	reg [28:0] q_addr [0:15]; reg [7:0] q_beats [0:15]; integer q_due [0:15];
 	integer q_h = 0, q_t = 0, q_n = 0, cyc = 0, beat = 0;
 	integer out_of_window = 0;
+	integer busy_seed = 11, busy_max = 0, busy_run = 0;
+	always @(posedge sysclk) begin
+		// The HPS port's waitrequest: high one cycle in three, in runs
+		DDRAM_BUSY <= (($random(busy_seed) % 3) == 0);
+		busy_run = DDRAM_BUSY ? busy_run + 1 : 0;
+		if (busy_run > busy_max) busy_max = busy_run;
+	end
 	always @(posedge sysclk) begin
 		DDRAM_DOUT_READY <= 1'b0;
 		cyc = cyc + 1;
@@ -186,6 +202,11 @@ module tb_fmv_chain;
 		check(ram2_dbg[7] == 0 && q2_seen, "arb dbg: q2 held a request, and is empty now");
 		check(busy_seen, "arb dbg: fmv_arb busy seen during the reads");
 		check(ram2_dbg[31:24] != 0, "arb dbg: ddram_ctrl's arbiter granted q2");
+		// The HPS port counters (ddram_ctrl dbg_hps), against the pins
+		check(hps_dbg[15:0] == hps_cmds_seen[15:0] && hps_cmds_seen > 0, "hps dbg: commands accepted");
+		check(hps_dbg[31:16] == hps_beats_seen[15:0], "hps dbg: read beats returned");
+		check({hps_dbg[44:32], hps_dbg[63:48]} == hps_last_seen, "hps dbg: last accepted address");
+		check(hps_dbg[111:96] <= busy_max && busy_max > 0, "hps dbg: BUSY run bounded by the longest seen");
 		if (fails == 0) $display("RUN: PASS"); else $display("RUN: FAIL");
 		$finish;
 	end

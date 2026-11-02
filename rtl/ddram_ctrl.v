@@ -146,7 +146,10 @@ module ddram_ctrl
 	// Debug only (the FMV diag window, AmigaCD.sv): {the inner arbiter's
 	// a2065_ddram_arbiter dbg, q2_v, q2_read, q2_write, ss_port_own, ram_rd,
 	// ram_we, DDRAM_BUSY, hs_waitrequest}.
-	output     [39:0] dbg
+	output     [39:0] dbg,
+	// Debug only: the HPS port itself, at ddr_cmd_pipe's output (see dbg_hps
+	// below for the layout).
+	output    [127:0] dbg_hps
 );
 
 wire ramsel = cpuCS & (~&cpustate | ~cpuU | ~cpuL);
@@ -520,6 +523,34 @@ end
 wire [31:0] arb_dbg;
 assign dbg = {arb_dbg, q2_v, q2_read, q2_write, ss_port_own, ram_rd, ram_we,
               DDRAM_BUSY, hs_waitrequest};
+
+// What the HPS port took and gave back, counted at the pins (FMV diag, gate
+// 1 arbiter run: DDRAM_BUSY stuck at 1 after a handful of A2065 commands).
+// Not reset, so it counts from configuration. Word 0 first:
+//   0 commands accepted (RD|WE with BUSY low)   1 read beats returned
+//   2/3 last accepted {rd, wr, 0, address[28:16]}, address[15:0]
+//   4/5 the command on the pins now, same form   6 clocks BUSY has been
+//   continuously high, saturating   7 {its burstcount, the last accepted's}
+reg [15:0] hps_cmds = 16'd0, hps_beats = 16'd0, hps_busy_run = 16'd0;
+reg [28:0] hps_last_a = 29'd0;
+reg  [7:0] hps_last_bc = 8'd0;
+reg        hps_last_rd = 1'b0, hps_last_wr = 1'b0;
+always @(posedge sysclk) begin
+	if ((DDRAM_RD | DDRAM_WE) & ~DDRAM_BUSY) begin
+		hps_cmds    <= hps_cmds + 1'd1;
+		hps_last_a  <= DDRAM_ADDR;
+		hps_last_bc <= DDRAM_BURSTCNT;
+		hps_last_rd <= DDRAM_RD;
+		hps_last_wr <= DDRAM_WE;
+	end
+	if (DDRAM_DOUT_READY) hps_beats <= hps_beats + 1'd1;
+	if (!DDRAM_BUSY)          hps_busy_run <= 16'd0;
+	else if (~&hps_busy_run)  hps_busy_run <= hps_busy_run + 1'd1;
+end
+assign dbg_hps = {DDRAM_BURSTCNT, hps_last_bc, hps_busy_run,
+                  DDRAM_ADDR[15:0], {DDRAM_RD, DDRAM_WE, 1'b0, DDRAM_ADDR[28:16]},
+                  hps_last_a[15:0], {hps_last_rd, hps_last_wr, 1'b0, hps_last_a[28:16]},
+                  hps_beats, hps_cmds};
 
 a2065_ddram_arbiter arbiter
 (

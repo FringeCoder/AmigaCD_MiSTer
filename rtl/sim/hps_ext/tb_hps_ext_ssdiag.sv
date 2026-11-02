@@ -112,6 +112,8 @@ wire [127:0] fmv_diag = { 16'hF8F8, 16'hF7F7, 16'hF6F6, 16'hF5F5,
                           16'hF4F4, 16'hF3F3, 16'hF2F2, 16'hF401 };
 wire [127:0] fmv_diag_x = { 16'hE8E8, 16'hE7E7, 16'hE6E6, 16'hE5E5,
                             16'hE4E4, 16'hE3E3, 16'hE2E2, 16'hE1E1 };
+wire [127:0] fmv_diag_y = { 16'hD8D8, 16'hD7D7, 16'hD6D6, 16'hD5D5,
+                            16'hD4D4, 16'hD3D3, 16'hD2D2, 16'hD1D1 };
 wire [127:0] ss_pc_snapshot = { 32'h00FC0004, 32'h00003210, 32'h00002200, 32'h00001100 };
 wire  [63:0] ss_kick_pair   = { 32'hFEEDFACE, 32'hC0FFEE00 };
 
@@ -260,7 +262,7 @@ initial begin
 	xfer(16'h0062);
 	xfer(16'hFA00);
 	xfer(16'h0000);
-	for (k = 0; k < 19; k = k + 1) xfer_rd(w[k]);
+	for (k = 0; k < 28; k = k + 1) xfer_rd(w[k]);
 	check("fmv: signature",        {16'd0, w[0]}, 32'h0000A5F4);
 	check("fmv: version word",     {16'd0, w[1]}, 32'h0000F401);
 	check("fmv: word 2",           {16'd0, w[2]}, 32'h0000F2F2);
@@ -268,7 +270,10 @@ initial begin
 	check("fmv: arbiter marker",   {16'd0, w[9]}, 32'h0000A5F5);
 	check("fmv: arbiter word 0",   {16'd0, w[10]}, 32'h0000E1E1);
 	check("fmv: arbiter word 7",   {16'd0, w[17]}, 32'h0000E8E8);
-	check("fmv: past the end",     {16'd0, w[18]}, 32'h00000000);
+	check("fmv: HPS marker",       {16'd0, w[18]}, 32'h0000A5F6);
+	check("fmv: HPS word 0",       {16'd0, w[19]}, 32'h0000D1D1);
+	check("fmv: HPS word 7",       {16'd0, w[26]}, 32'h0000D8D8);
+	check("fmv: past the end",     {16'd0, w[27]}, 32'h00000000);
 	check("fmv: not the ss window", {31'd0, ss_diag_cs_probe}, 32'd0);
 	@(negedge clk_sys); hps_uio = 1'b0;
 	@(negedge clk_sys);

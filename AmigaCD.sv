@@ -278,6 +278,7 @@ wire [127:0] ss_diag;
 // it (assembled at fmv_arb below), on hps_ext's 0xFA00 read.
 wire [127:0] fmv_diag;
 wire [127:0] fmv_diag_x;
+wire [127:0] fmv_diag_y;    // the HPS port's counters (ddram_ctrl dbg_hps)
 
 // Live memory peek: hps_ext (clk_sys) asks, ss_ctrl (clk_114) answers.
 //
@@ -305,7 +306,7 @@ end
 wire ss_peek_req_114 = ss_peek_tgl_sync ^ ss_peek_tgl_d;
 
 hps_ext hps_ext(.*, .ide_req(ide_fast ? ide_f_req : ide_c_req),  .ide_din(ide_fast ? ide_f_readdata : ide_c_readdata), .ss_diag(ss_diag),
-	.fmv_diag(fmv_diag), .fmv_diag_x(fmv_diag_x),
+	.fmv_diag(fmv_diag), .fmv_diag_x(fmv_diag_x), .fmv_diag_y(fmv_diag_y),
 	.ss_peek_addr(ss_peek_addr), .ss_peek_req(ss_peek_req_sys),
 	.ss_peek_data(ss_peek_data), .ss_peek_valid(ss_peek_valid),
 	.ss_pc_snapshot(ss_pc_snapshot), .ss_kick_pair(ss_kick_pair),
@@ -1548,6 +1549,7 @@ wire        ram_ready2;
 // The DDR3 arbiters' debug words, assembled into fmv_diag_x below
 wire [31:0] dsnd_arb_dbg, mirror_arb_dbg, fmv_arb_dbg;
 wire [39:0] ram2_dbg;
+wire [127:0] ram2_dbg_hps;
 
 ddram_ctrl ram2
 (
@@ -1623,7 +1625,8 @@ ddram_ctrl ram2
 	.dmaWR        (dma_ddr_wr_w    ),
 	.dmaRD        (dma_ddr_rd_w    ),
 	.dmaACK       (dma_ddr_ack_w   ),
-	.dbg          (ram2_dbg)
+	.dbg          (ram2_dbg),
+	.dbg_hps      (ram2_dbg_hps)
 );
 
 ////////////////////////////  A2065 ETHERNET  ///////////////////////////////
@@ -1764,6 +1767,14 @@ always @(posedge clk_sys) begin
 	fmv_dx_2 <= fmv_dx_1;
 end
 assign fmv_diag_x = fmv_dx_2;
+
+reg  [127:0] fmv_dy_114, fmv_dy_1, fmv_dy_2;
+always @(posedge clk_114) fmv_dy_114 <= ram2_dbg_hps;
+always @(posedge clk_sys) begin
+	fmv_dy_1 <= fmv_dy_114;
+	fmv_dy_2 <= fmv_dy_1;
+end
+assign fmv_diag_y = fmv_dy_2;
 
 // and behind all of them, the CD32 FMV board (rtl/fmv). Lowest priority: its
 // event and update-queue traffic can wait, and its ROM/RAM accesses already

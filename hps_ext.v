@@ -145,6 +145,8 @@ module hps_ext
 	// and the DDR3 arbiters' state behind it, after a 0xA5F5 marker
 	// (AmigaCD.sv, fmv_diag_x)
 	input     [127:0] fmv_diag_x,
+	// and the HPS port's own counters after a 0xA5F6 marker
+	input     [127:0] fmv_diag_y,
 
 	// Live memory peek. Same UIO class as the diagnostics (0xF600) with
 	// io_din[5] as the sub-channel bit, so it costs no new class and cannot be
@@ -534,6 +536,15 @@ always@(posedge clk_sys) begin : main_proc
 							5'd18: io_dout <= fmv_diag_x[95:80];
 							5'd19: io_dout <= fmv_diag_x[111:96];
 							5'd20: io_dout <= fmv_diag_x[127:112];
+							5'd21: io_dout <= 16'hA5F6;
+							5'd22: io_dout <= fmv_diag_y[15:0];
+							5'd23: io_dout <= fmv_diag_y[31:16];
+							5'd24: io_dout <= fmv_diag_y[47:32];
+							5'd25: io_dout <= fmv_diag_y[63:48];
+							5'd26: io_dout <= fmv_diag_y[79:64];
+							5'd27: io_dout <= fmv_diag_y[95:80];
+							5'd28: io_dout <= fmv_diag_y[111:96];
+							5'd29: io_dout <= fmv_diag_y[127:112];
 							default: io_dout <= 16'd0;
 						endcase
 					end
