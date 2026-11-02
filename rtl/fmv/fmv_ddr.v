@@ -10,9 +10,16 @@
 //      one burst, apply it only once its SEQ matches (a cross-port write can
 //      land late), hand it to fmv_bus, and write UQ_RDPTR.
 // Word addresses are 64-bit (DDRAM_ADDR); the window is ARM 0x27000000.
+//
+// Off (status[64] clear) there are no events and no queue polls, and both
+// counters stand at 0 (contract v4): a session starts from zero on both
+// sides, whatever the window held from before -- DDR3 is not cleared
+// between core loads, and on 2026-11-02 the core and Main disagreed on
+// where the queue was and the board never came alive.
 
 module fmv_ddr (
 	input  wire        clk,
+	input  wire        on,          // status[64], from the 68k clock domain
 
 	// events from fmv_bus (show-ahead FIFO read side)
 	input  wire        ev_empty,
@@ -58,6 +65,7 @@ module fmv_ddr (
 	reg [31:0] uq_w  = 32'd0;    // UQ_WPTR as last read
 	reg  [7:0] poll  = 8'd0;
 	reg        mreq_s1 = 1'b0, mreq_s2 = 1'b0, mreq_seen = 1'b0;
+	reg        on_s1 = 1'b0, on_s2 = 1'b0;
 	reg [63:0] w0;
 	reg  [1:0] k;                // 16-bit lane of a ROM/RAM access
 
@@ -71,6 +79,8 @@ module fmv_ddr (
 		up_wr <= 1'b0;
 		mreq_s1 <= mreq_t;
 		mreq_s2 <= mreq_s1;
+		on_s1   <= on;
+		on_s2   <= on_s1;
 		if (poll != 8'd0)
 			poll <= poll - 1'd1;
 
@@ -91,6 +101,12 @@ module fmv_ddr (
 					avl_write      <= 1'b1;
 					st             <= S_MWR;
 				end
+			end else if (!on_s2) begin
+				n     <= 32'd0;
+				uq_rd <= 32'd0;
+				uq_w  <= 32'd0;
+				poll  <= 8'd0;
+				ev_rd <= ~ev_empty;     // a straggler from the last session
 			end else if (!ev_empty) begin
 				avl_address    <= EV + {17'd0, n[11:0]};
 				avl_burstcount <= 8'd1;

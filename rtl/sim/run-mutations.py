@@ -109,7 +109,7 @@ MUTATIONS = [
      "\tsc_val_d <= `SC_REG(rd_addr[7:0]); sc_val_q <= sc_val_d;\nend\n"
      "reg [15:0] sc_val_d;",
      'rd_data at'),
-    # The FMV front end against FringeCoder/AmigaCD docs/fmv-contract.md v3:
+    # The FMV front end against FringeCoder/AmigaCD docs/fmv-contract.md v4:
     # one entry per rule tb_fmv.sv claims. Two were not caught when first
     # written (a mask test that wrote 0, which an OR leaves unchanged, and an
     # off test whose bench-side decode already gated on fmv_on); both checks
@@ -155,8 +155,22 @@ MUTATIONS = [
     ('FMV: status[64] does not gate the bus', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
      "\twire        access  = sel & ~cpu_as_n & ds & fmv_on;", "\twire        access  = sel & ~cpu_as_n & ds;",
      'L.off'),
+    # v4, after the 2026-11-02 hardware run: a session starts from zero. Not
+    # covered: an update straggling into fmv_bus while off is dropped (the
+    # bench cannot make one; it needs the off edge to land mid-transfer).
+    ('FMV: queue counters kept across an off', FMV_TB, FMV, 'rtl/fmv/fmv_ddr.v',
+     "\t\t\t\tn     <= 32'd0;\n\t\t\t\tuq_rd <= 32'd0;\n", "",
+     'M.on: the queue is read from entry 0'),
+    ('FMV: the DDR3 master polls while off', FMV_TB, FMV, 'rtl/fmv/fmv_ddr.v',
+     "\t\t\tend else if (!on_s2) begin", "\t\t\tend else if (1'b0) begin",
+     'M.off: no DDR3 traffic'),
+    ('FMV: back-pressure count kept across an off', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "\t\t\tev_count    <= 32'd0;\n", "",
+     'M.on: back-pressure'),
+    ('FMV: ALIVE kept across an off', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "\t\t\talive       <= 1'b0;\n", "",
+     'M.on: ALIVE does not survive'),
 ]
-
 
 def build_and_run(bench, sources, out):
     argv = (['iverilog', '-g2012', '-I.', '-o', out] +

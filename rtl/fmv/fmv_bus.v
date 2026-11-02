@@ -190,6 +190,21 @@ module fmv_bus (
 		if (amiga_reset & ~rst_d & fmv_on & alive)
 			rst_pend <= 1'b1;
 
+		// Off, a session's counters stand at zero (contract v4): Main sets
+		// status[64] only once it has zeroed the window's pointers, so both
+		// sides start a session from 0 whatever DDR3 held before. ALIVE
+		// drops with it; Main raises it again in the new session.
+		if (!fmv_on) begin
+			ev_count    <= 32'd0;
+			rdidx_lo    <= 16'h0000;
+			rdidx_hi    <= 16'h0000;
+			l64_acked   <= 1'b0;
+			l64_ack_idx <= 32'd0;
+			l64_int     <= 1'b0;
+			alive       <= 1'b0;
+			rst_pend    <= 1'b0;
+		end
+
 		case (st)
 		S_IDLE: begin
 			if (access) begin
@@ -223,9 +238,12 @@ module fmv_bus (
 				ev_count <= ev_count + 1'd1;
 				rst_pend <= 1'b0;
 			end else if (!up_empty) begin
-				upd   <= up_data;
 				up_rd <= 1'b1;
-				st    <= S_UP1;
+				if (fmv_on) begin
+					upd <= up_data;
+					st  <= S_UP1;
+				end
+				// off: a straggler from the last session is dropped
 			end
 		end
 

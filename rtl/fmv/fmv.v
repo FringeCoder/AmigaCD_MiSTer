@@ -8,9 +8,9 @@
 //   $200000 ROM, $280000 RAM  fmv_ddr: board image    <-->   window, 0x27000000
 //   INT2               <----  ~HOST_control[7] | L64111 latch
 //
-// The contract is FringeCoder/AmigaCD docs/fmv-contract.md (v3). Off
-// (status[64] clear) the board never joins the autoconfig chain and its DDR3
-// master stays idle.
+// The contract is FringeCoder/AmigaCD docs/fmv-contract.md (v4). Off
+// (status[64] clear) the board never joins the autoconfig chain, its DDR3
+// master stays idle, and its ring and queue counters stand at zero.
 
 module fmv (
 	input  wire        clk_sys,
@@ -75,7 +75,7 @@ module fmv (
 	);
 
 	fmv_ddr ddr (
-		.clk(clk_ddr),
+		.clk(clk_ddr), .on(fmv_on),
 		.ev_empty(ev_empty), .ev_data(ev_rdata), .ev_rd(ev_rd),
 		.up_wr(up_wr), .up_data(up_wdata), .up_full(up_full),
 		.mreq_t(mreq_t), .maddr(maddr), .mrw(mrw), .mbe(mbe), .mwdata(mwdata),

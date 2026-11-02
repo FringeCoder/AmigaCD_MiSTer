@@ -1,5 +1,5 @@
 // tb_fmv.sv -- the FMV front end (rtl/fmv) against the FPGA side of
-// FringeCoder/AmigaCD docs/fmv-contract.md (v3), whose executable statement
+// FringeCoder/AmigaCD docs/fmv-contract.md (v4), whose executable statement
 // is tests/fmv_fpga_ref.h in that repository. Each check here is one rule of
 // it; the labels name the rule.
 //
@@ -38,6 +38,8 @@ module tb_fmv;
 	reg  [63:0] m_readdata = 0;
 	reg         m_readdatavalid = 0;
 	reg         m_waitrequest = 1;
+	integer     off_xfers = 0;          // DDR3 transfers accepted while off (M)
+	reg         count_off = 0;
 
 	fmv dut (
 		.clk_sys(clk_sys), .amiga_reset(amiga_reset), .fmv_on(fmv_on),
@@ -72,6 +74,8 @@ module tb_fmv;
 	always @(posedge clk_ddr) begin
 		m_waitrequest <= ($random(seed) & 3) == 0;     // 1 cycle in 4 busy
 		m_readdatavalid <= 0;
+		if (count_off && !m_waitrequest && (m_read || m_write))
+			off_xfers = off_xfers + 1;
 		if (!m_waitrequest && m_write)
 			for (ii = 0; ii < 8; ii = ii + 1)
 				if (m_byteenable[ii]) mem[m_address - BASE][8 * ii +: 8] <= m_writedata[8 * ii +: 8];
@@ -357,13 +361,38 @@ module tb_fmv;
 		check(!nrdy && cpu_din == 16'h0000, "L.off: accesses are not answered");
 		as_n = 1; uds_n = 1; lds_n = 1;
 
+		// --- M: a session starts from zero (contract v4). The hardware
+		// failure of 2026-11-02: the window held another session's
+		// pointers, Main and the core disagreed on where the queue was, and
+		// ALIVE never landed. Off, the core leaves DDR3 alone and its
+		// counters fall to 0; Main zeroes the pointers and queues from 0.
+		repeat (40) @(posedge clk_ddr);          // in-flight transfers finish
+		count_off = 1;
+		repeat (3000) @(posedge clk_ddr);
+		count_off = 0;
+		check(off_xfers == 0, "M.off: no DDR3 traffic (no queue polls)");
+		uq_wr = 0; ev_rd = 0;
+		mem[EV_WPTR >> 3] = 0; mem[UQ_RDPTR >> 3] = 0; mem[UQ_WPTR >> 3] = 0;
+		upd(8'hC0, 1, 1);                        // ALIVE, entry 0, SEQ 0
+		fmv_on = 1;
+		repeat (4) @(posedge clk_sys);
+		check(!ac_present, "M.on: ALIVE does not survive an off");
+		uq_sync;
+		check(mem[UQ_RDPTR >> 3][31:0] == 1, "M.on: the queue is read from entry 0");
+		check(ac_present, "M.on: the new session's ALIVE lands");
+		wr(B(20'h70022), 16'h4321);
+		check(bus_cycles < 1000, "M.on: back-pressure counts from 0 again");
+		ev_next(e);
+		check(e[63:48] == 16'd0 && e[23:4] == 20'h70022, "M.on: the first event is entry 0, SEQ 0");
+		check(mem[EV_WPTR >> 3][31:0] == 1, "M.on: EV_WPTR counts from 0");
+
 		$display("%0d checks, %0d failed", checks, fails);
 		if (fails == 0) $display("RUN: PASS"); else $display("RUN: FAIL");
 		$finish;
 	end
 
 	initial begin
-		// The passing run takes 8.2 ms of simulated time; a mutation that
+		// The passing run takes about 8.3 ms of simulated time; a mutation that
 		// hangs gives up here instead of running for minutes.
 		#50_000_000;
 		$display("FAIL timeout");
