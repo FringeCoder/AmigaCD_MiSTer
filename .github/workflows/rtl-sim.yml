@@ -394,7 +394,9 @@ jobs:
       # passes, so the fault is not in this path when it is otherwise idle; it
       # would catch a grant, routing or address bug on the way to the window.
       # Falsified 2026-11-02: the outer arbiter's m1 readdatavalid tied low,
-      # and the diag uq_rd field wired to the event count.
+      # and the diag uq_rd field wired to the event count; and for the
+      # arbiters' debug words (the diag run that followed), their grant
+      # counters swapped, busy tied low, and q2_v tied low.
       - name: FMV front end through ddram_ctrl (tb_fmv_chain.sv)
         run: |
           set -euo pipefail

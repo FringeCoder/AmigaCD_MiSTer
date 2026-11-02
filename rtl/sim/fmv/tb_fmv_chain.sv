@@ -63,7 +63,7 @@ module tb_fmv_chain;
 		.ramready_l(),
 		.dmaAddr(28'd0), .dmaCS(1'b0), .dmaWE(1'b0),
 		.dmaL(1'b0), .dmaU(1'b0), .dmaWR(16'd0), .dmaRD(dmaRD),
-		.dmaACK(dmaACK)
+		.dmaACK(dmaACK), .dbg(ram2_dbg)
 	);
 
 	// ---- fmv_arb, m0 (the mirror/A2065/drive sounds side) idle
@@ -72,6 +72,13 @@ module tb_fmv_chain;
 	wire        f_read, f_write, f_readdatavalid, f_waitrequest;
 	wire [63:0] f_readdata, f_writedata;
 
+	wire [31:0] arb_dbg;
+	wire [39:0] ram2_dbg;
+	reg         q2_seen = 0, busy_seen = 0;
+	always @(posedge sysclk) begin
+		if (ram2_dbg[7]) q2_seen <= 1;        // q2_v
+		if (arb_dbg[15]) busy_seen <= 1;      // fmv_arb busy
+	end
 	a2065_ddram_arbiter fmv_arb (
 		.clk(sysclk), .rst(~reset_n),
 		.m0_address(29'd0), .m0_burstcount(8'd1), .m0_read(1'b0), .m0_readdata(),
@@ -84,7 +91,8 @@ module tb_fmv_chain;
 		.s_address(mem2_address), .s_burstcount(mem2_burstcount), .s_read(mem2_read),
 		.s_readdata(mem2_readdata), .s_readdatavalid(mem2_readdatavalid),
 		.s_writedata(mem2_writedata), .s_byteenable(mem2_byteenable),
-		.s_write(mem2_write), .s_waitrequest(mem2_waitrequest)
+		.s_write(mem2_write), .s_waitrequest(mem2_waitrequest),
+		.dbg(arb_dbg)
 	);
 
 	wire [15:0] cpu_din;
@@ -172,6 +180,12 @@ module tb_fmv_chain;
 		check(dut.diag[63:48] >= 16'd520, "diag: every queue beat counted");
 		check(dut.diag[95:80] == uq_wr[15:0], "diag: uq_rd");
 		check(dut.diag[111:96] == uq_wr[15:0], "diag: UQ_WPTR as last read");
+		// The arbiters' debug words (AmigaCD.sv's fmv_diag_x)
+		check(arb_dbg[15] == 0 && arb_dbg[11] == 0, "arb dbg: fmv_arb idle, no m1 request");
+		check(arb_dbg[23:16] != 0 && arb_dbg[31:24] == 0, "arb dbg: m1 grants counted, m0 none");
+		check(ram2_dbg[7] == 0 && q2_seen, "arb dbg: q2 held a request, and is empty now");
+		check(busy_seen, "arb dbg: fmv_arb busy seen during the reads");
+		check(ram2_dbg[31:24] != 0, "arb dbg: ddram_ctrl's arbiter granted q2");
 		if (fails == 0) $display("RUN: PASS"); else $display("RUN: FAIL");
 		$finish;
 	end

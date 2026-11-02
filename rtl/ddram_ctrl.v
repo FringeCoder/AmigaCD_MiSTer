@@ -141,7 +141,12 @@ module ddram_ctrl
 	input             dmaU,
 	input      [15:0] dmaWR,
 	output reg [15:0] dmaRD,
-	output            dmaACK
+	output            dmaACK,
+
+	// Debug only (the FMV diag window, AmigaCD.sv): {the inner arbiter's
+	// a2065_ddram_arbiter dbg, q2_v, q2_read, q2_write, ss_port_own, ram_rd,
+	// ram_we, DDRAM_BUSY, hs_waitrequest}.
+	output     [39:0] dbg
 );
 
 wire ramsel = cpuCS & (~&cpustate | ~cpuU | ~cpuL);
@@ -512,6 +517,10 @@ always @(posedge sysclk) begin
 	end
 end
 
+wire [31:0] arb_dbg;
+assign dbg = {arb_dbg, q2_v, q2_read, q2_write, ss_port_own, ram_rd, ram_we,
+              DDRAM_BUSY, hs_waitrequest};
+
 a2065_ddram_arbiter arbiter
 (
 	.clk             (sysclk),
@@ -549,7 +558,8 @@ a2065_ddram_arbiter arbiter
 	.s_writedata     (hs_writedata),
 	.s_byteenable    (hs_byteenable),
 	.s_write         (hs_write),
-	.s_waitrequest   (hs_waitrequest)
+	.s_waitrequest   (hs_waitrequest),
+	.dbg             (arb_dbg)
 );
 
 // This fork's ddr_cmd_pipe in place of upstream's ddram_hold: both sit

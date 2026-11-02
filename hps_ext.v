@@ -142,6 +142,9 @@ module hps_ext
 	// The CD32 FMV front end's state (rtl/fmv/fmv.v), on 0xFA00: word 0 is
 	// the signature 0xA5F4, then fmv_diag from its version word up.
 	input     [127:0] fmv_diag,
+	// and the DDR3 arbiters' state behind it, after a 0xA5F5 marker
+	// (AmigaCD.sv, fmv_diag_x)
+	input     [127:0] fmv_diag_x,
 
 	// Live memory peek. Same UIO class as the diagnostics (0xF600) with
 	// io_din[5] as the sub-channel bit, so it costs no new class and cannot be
@@ -522,6 +525,15 @@ always@(posedge clk_sys) begin : main_proc
 							5'd9:  io_dout <= fmv_diag[95:80];
 							5'd10: io_dout <= fmv_diag[111:96];
 							5'd11: io_dout <= fmv_diag[127:112];
+							5'd12: io_dout <= 16'hA5F5;
+							5'd13: io_dout <= fmv_diag_x[15:0];
+							5'd14: io_dout <= fmv_diag_x[31:16];
+							5'd15: io_dout <= fmv_diag_x[47:32];
+							5'd16: io_dout <= fmv_diag_x[63:48];
+							5'd17: io_dout <= fmv_diag_x[79:64];
+							5'd18: io_dout <= fmv_diag_x[95:80];
+							5'd19: io_dout <= fmv_diag_x[111:96];
+							5'd20: io_dout <= fmv_diag_x[127:112];
 							default: io_dout <= 16'd0;
 						endcase
 					end

@@ -274,6 +274,11 @@ wire [35:0] EXT_BUS;
 // that this port is wired.
 wire [127:0] ss_diag;
 
+// The FMV front end's state (rtl/fmv/fmv.v) and the DDR3 arbiters' behind
+// it (assembled at fmv_arb below), on hps_ext's 0xFA00 read.
+wire [127:0] fmv_diag;
+wire [127:0] fmv_diag_x;
+
 // Live memory peek: hps_ext (clk_sys) asks, ss_ctrl (clk_114) answers.
 //
 // The request is a single clk_sys pulse and clk_114 is four times faster, so
@@ -300,7 +305,7 @@ end
 wire ss_peek_req_114 = ss_peek_tgl_sync ^ ss_peek_tgl_d;
 
 hps_ext hps_ext(.*, .ide_req(ide_fast ? ide_f_req : ide_c_req),  .ide_din(ide_fast ? ide_f_readdata : ide_c_readdata), .ss_diag(ss_diag),
-	.fmv_diag(fmv_diag),
+	.fmv_diag(fmv_diag), .fmv_diag_x(fmv_diag_x),
 	.ss_peek_addr(ss_peek_addr), .ss_peek_req(ss_peek_req_sys),
 	.ss_peek_data(ss_peek_data), .ss_peek_valid(ss_peek_valid),
 	.ss_pc_snapshot(ss_pc_snapshot), .ss_kick_pair(ss_kick_pair),
@@ -1540,6 +1545,10 @@ chipdma_arb chipdma_arb
 wire [15:0] ram_dout2;
 wire        ram_ready2;
 
+// The DDR3 arbiters' debug words, assembled into fmv_diag_x below
+wire [31:0] dsnd_arb_dbg, mirror_arb_dbg, fmv_arb_dbg;
+wire [39:0] ram2_dbg;
+
 ddram_ctrl ram2
 (
 	.sysclk       (clk_114         ),
@@ -1613,7 +1622,8 @@ ddram_ctrl ram2
 	.dmaU         (dma_ddr_u_w     ),
 	.dmaWR        (dma_ddr_wr_w    ),
 	.dmaRD        (dma_ddr_rd_w    ),
-	.dmaACK       (dma_ddr_ack_w   )
+	.dmaACK       (dma_ddr_ack_w   ),
+	.dbg          (ram2_dbg)
 );
 
 ////////////////////////////  A2065 ETHERNET  ///////////////////////////////
@@ -1627,8 +1637,6 @@ ddram_ctrl ram2
 // DDR3 port, which joins the chain below behind the chip RAM mirror.
 wire        fmv_present, fmv_ena;
 wire  [3:0] fmv_nib;
-// The FMV front end's state, on hps_ext's 0xFA00 read (rtl/fmv/fmv.v)
-wire [127:0] fmv_diag;
 wire  [5:0] fmv_nib_addr;
 wire  [7:0] fmv_base;
 wire [28:0] fmv_mem_address;
@@ -1692,7 +1700,8 @@ a2065_ddram_arbiter dsnd_arb
 	.s_writedata     (dm_writedata),
 	.s_byteenable    (dm_byteenable),
 	.s_write         (dm_write),
-	.s_waitrequest   (dm_waitrequest)
+	.s_waitrequest   (dm_waitrequest),
+	.dbg             (dsnd_arb_dbg)
 );
 
 // and behind both of them, the chip RAM mirror (ARM-CPU plan, step 5)
@@ -1730,8 +1739,31 @@ a2065_ddram_arbiter mirror_arb
 	.s_writedata     (mf_writedata),
 	.s_byteenable    (mf_byteenable),
 	.s_write         (mf_write),
-	.s_waitrequest   (mf_waitrequest)
+	.s_waitrequest   (mf_waitrequest),
+	.dbg             (mirror_arb_dbg)
 );
+
+// The DDR3 arbiters' state for the FMV diag window (hps_ext 0xFA00, after
+// fmv_diag). Gate 1 diag run, 2026-11-02: fmv_ddr sat in S_QW with
+// waitrequest high from its first request, so the grant is held above it.
+// These say at which level. Debug only, sampled in clk_114 and moved into
+// clk_sys through two flops; a read can catch a field mid-change.
+//   x0 fmv_arb {busy, owner, owner_is_read, m0_req, m1_req, s_waitrequest,
+//      m0_waitrequest, m1_waitrequest, beats_left[7:0]}  x1 fmv_arb {m0
+//      grants, m1 grants}  x2 mirror_arb as x0  x3 dsnd_arb as x0
+//   x4 ddram_ctrl's own arbiter as x0  x5 its {m0 grants, m1 grants}
+//   x6 {q2_v, q2_read, q2_write, ss_port_own, ram_rd, ram_we, DDRAM_BUSY,
+//      hs_waitrequest, dsnd_arb m1 grants}  x7 mirror_arb {m0, m1 grants}
+reg  [127:0] fmv_dx_114, fmv_dx_1, fmv_dx_2;
+always @(posedge clk_114)
+	fmv_dx_114 <= {mirror_arb_dbg[31:16], ram2_dbg[7:0], dsnd_arb_dbg[23:16],
+	               ram2_dbg[39:24], ram2_dbg[23:8], dsnd_arb_dbg[15:0],
+	               mirror_arb_dbg[15:0], fmv_arb_dbg[31:16], fmv_arb_dbg[15:0]};
+always @(posedge clk_sys) begin
+	fmv_dx_1 <= fmv_dx_114;
+	fmv_dx_2 <= fmv_dx_1;
+end
+assign fmv_diag_x = fmv_dx_2;
 
 // and behind all of them, the CD32 FMV board (rtl/fmv). Lowest priority: its
 // event and update-queue traffic can wait, and its ROM/RAM accesses already
@@ -1776,7 +1808,8 @@ a2065_ddram_arbiter fmv_arb
 	.s_writedata     (mem2_writedata),
 	.s_byteenable    (mem2_byteenable),
 	.s_write         (mem2_write),
-	.s_waitrequest   (mem2_waitrequest)
+	.s_waitrequest   (mem2_waitrequest),
+	.dbg             (fmv_arb_dbg)
 );
 
 wire [15:0] fastchip_dout;
