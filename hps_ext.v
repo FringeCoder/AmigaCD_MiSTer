@@ -139,6 +139,9 @@ module hps_ext
 	// 7'b1111011 is the one free class in the range: ide is 1111000, cdda
 	// 1111001, akiko 1111010 and cdtv 1111100.
 	input     [127:0] ss_diag,
+	// The CD32 FMV front end's state (rtl/fmv/fmv.v), on 0xFA00: word 0 is
+	// the signature 0xA5F4, then fmv_diag from its version word up.
+	input     [127:0] fmv_diag,
 
 	// Live memory peek. Same UIO class as the diagnostics (0xF600) with
 	// io_din[5] as the sub-channel bit, so it costs no new class and cannot be
@@ -210,6 +213,7 @@ reg  [5:0] byte_cnt;
 // branch clears it at the end of every transaction, which is before any read
 // can reach it.
 reg        ss_diag_cs;
+reg        fmv_diag_cs;
 reg        ss_peek_cs;
 reg        ss_peek_arm;
 
@@ -245,6 +249,7 @@ always@(posedge clk_sys) begin : main_proc
 		cdtv_cs_nvr  <= 0;
 		cdtv_cs_card <= 0;
 		ss_diag_cs <= 0;
+		fmv_diag_cs <= 0;
 		ss_peek_cs <= 0;
 		ss_peek_arm <= 0;
 		ss_peek_req <= 0;
@@ -283,6 +288,7 @@ always@(posedge clk_sys) begin : main_proc
 			// io_din[5] picks between them, so the status window is unchanged
 			// for any host that never asks for a peek.
 			ss_diag_cs       <= (io_din[15:9] == 7'b1111011) && !io_din[5];
+			fmv_diag_cs      <= (io_din[15:9] == 7'b1111101);
 			ss_peek_cs       <= (io_din[15:9] == 7'b1111011) &&  io_din[5];
 			// io_din[4] ARMS a new read; without it the transaction only reads
 			// back what the last one fetched. They have to be separate, because
@@ -502,6 +508,20 @@ always@(posedge clk_sys) begin : main_proc
 							6'd52: io_dout <= {7'd0, ss_hpos_max};
 							6'd53: io_dout <= {8'd0, ss_vbl_int_count};
 							6'd54: io_dout <= {5'd0, ss_harddis, ss_varbeamen, ss_htotal};
+							default: io_dout <= 16'd0;
+						endcase
+					end
+					if(byte_cnt >= 3 && fmv_diag_cs) begin
+						case(byte_cnt)
+							5'd3:  io_dout <= 16'hA5F4;
+							5'd4:  io_dout <= fmv_diag[15:0];
+							5'd5:  io_dout <= fmv_diag[31:16];
+							5'd6:  io_dout <= fmv_diag[47:32];
+							5'd7:  io_dout <= fmv_diag[63:48];
+							5'd8:  io_dout <= fmv_diag[79:64];
+							5'd9:  io_dout <= fmv_diag[95:80];
+							5'd10: io_dout <= fmv_diag[111:96];
+							5'd11: io_dout <= fmv_diag[127:112];
 							default: io_dout <= 16'd0;
 						endcase
 					end

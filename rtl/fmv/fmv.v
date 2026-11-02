@@ -41,7 +41,13 @@ module fmv (
 	output wire [63:0] mem_writedata,
 	output wire  [7:0] mem_byteenable,
 	output wire        mem_write,
-	input  wire        mem_waitrequest
+	input  wire        mem_waitrequest,
+
+	// The diag window (hps_ext 0xFA00), read by Main over SPI so it works
+	// when the DDR3 path is what has failed (gate 1 rerun, 2026-11-02). In
+	// clk_sys; the DDR3-side fields are sampled through two flops, so a
+	// read can catch a multi-bit field mid-change. Fine for a debug window.
+	output reg [127:0] diag
 );
 	wire        ev_wr, ev_full, ev_empty, ev_rd;
 	wire [47:0] ev_wdata, ev_rdata;
@@ -52,6 +58,9 @@ module fmv (
 	wire  [1:0] mbe;
 	wire [15:0] mwdata, mrdata;
 
+	wire  [3:0] bus_dbg;
+	wire [15:0] d_flags, d_polls, d_rvalid, d_dwell, d_uq_rd, d_uq_w, d_n;
+
 	fmv_bus bus (
 		.clk(clk_sys), .amiga_reset(amiga_reset), .fmv_on(fmv_on),
 		.cpu_addr(cpu_addr), .cpu_data_in(cpu_data_in), .cpu_data_out(cpu_data_out),
@@ -61,7 +70,7 @@ module fmv (
 		.ev_wr(ev_wr), .ev_data(ev_wdata), .ev_full(ev_full),
 		.up_empty(up_empty), .up_data(up_rdata), .up_rd(up_rd),
 		.mreq_t(mreq_t), .maddr(maddr), .mrw(mrw), .mbe(mbe), .mwdata(mwdata),
-		.mack_t(mack_t), .mrdata(mrdata)
+		.mack_t(mack_t), .mrdata(mrdata), .dbg(bus_dbg)
 	);
 
 	fmv_afifo #(.W(48), .AW(4)) ev_fifo (
@@ -83,6 +92,26 @@ module fmv (
 		.avl_address(mem_address), .avl_burstcount(mem_burstcount),
 		.avl_read(mem_read), .avl_write(mem_write), .avl_writedata(mem_writedata),
 		.avl_byteenable(mem_byteenable), .avl_readdata(mem_readdata),
-		.avl_readdatavalid(mem_readdatavalid), .avl_waitrequest(mem_waitrequest)
+		.avl_readdatavalid(mem_readdatavalid), .avl_waitrequest(mem_waitrequest),
+		.dbg_flags(d_flags), .dbg_polls(d_polls), .dbg_rvalid(d_rvalid),
+		.dbg_dwell(d_dwell), .dbg_uq_rd(d_uq_rd), .dbg_uq_w(d_uq_w), .dbg_n(d_n)
 	);
+
+	// Layout, word 0 first (FringeCoder/AmigaCD support/minimig/fmv.cpp
+	// decodes it; bump the version word if it changes):
+	//   w0 0xF401   w1 flags: [15:12] fmv_ddr state, [11] on (synchronised),
+	//   [10] up_full, [9] ev_empty, [8] poll timer at 0, [7] avl_read,
+	//   [6] avl_write, [5] waitrequest, [4:2] fmv_bus state, [1] ALIVE,
+	//   [0] status[64]   w2 UQ_WPTR polls accepted   w3 readdatavalid beats
+	//   w4 clocks in the fmv_ddr state   w5 uq_rd   w6 UQ_WPTR as last read
+	//   w7 events written
+	reg [111:0] dd1, dd2;
+	always @(posedge clk_ddr)
+		dd1 <= {d_n, d_uq_w, d_uq_rd, d_dwell, d_rvalid, d_polls, d_flags};
+	always @(posedge clk_sys) begin
+		dd2  <= dd1;
+		diag <= {dd2[111:16],
+		         dd2[11:4], dd2[3:1], bus_dbg, fmv_on,   // flags word, see above
+		         16'hF401};
+	end
 endmodule

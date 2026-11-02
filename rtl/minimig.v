@@ -358,6 +358,7 @@ module minimig
 	output [7:0]  fmv_mem_byteenable,
 	output        fmv_mem_write,
 	input         fmv_mem_waitrequest,
+	output [127:0] fmv_diag,         // hps_ext 0xFA00 (rtl/fmv/fmv.v)
 
 	// MiSTer Floppy / PSX SNAC (SNAC user port). USER_OUT is muxed against
 	// MT32-pi at the top level on user_port_mode; the tenants cannot be
@@ -1300,7 +1301,8 @@ fmv fmv_inst (
 	.mem_writedata    (fmv_mem_writedata),
 	.mem_byteenable   (fmv_mem_byteenable),
 	.mem_write        (fmv_mem_write),
-	.mem_waitrequest  (fmv_mem_waitrequest)
+	.mem_waitrequest  (fmv_mem_waitrequest),
+	.diag             (fmv_diag)
 );
 
 wire [15:0] a2065_dout;

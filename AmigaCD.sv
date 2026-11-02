@@ -300,6 +300,7 @@ end
 wire ss_peek_req_114 = ss_peek_tgl_sync ^ ss_peek_tgl_d;
 
 hps_ext hps_ext(.*, .ide_req(ide_fast ? ide_f_req : ide_c_req),  .ide_din(ide_fast ? ide_f_readdata : ide_c_readdata), .ss_diag(ss_diag),
+	.fmv_diag(fmv_diag),
 	.ss_peek_addr(ss_peek_addr), .ss_peek_req(ss_peek_req_sys),
 	.ss_peek_data(ss_peek_data), .ss_peek_valid(ss_peek_valid),
 	.ss_pc_snapshot(ss_pc_snapshot), .ss_kick_pair(ss_kick_pair),
@@ -1626,6 +1627,8 @@ ddram_ctrl ram2
 // DDR3 port, which joins the chain below behind the chip RAM mirror.
 wire        fmv_present, fmv_ena;
 wire  [3:0] fmv_nib;
+// The FMV front end's state, on hps_ext's 0xFA00 read (rtl/fmv/fmv.v)
+wire [127:0] fmv_diag;
 wire  [5:0] fmv_nib_addr;
 wire  [7:0] fmv_base;
 wire [28:0] fmv_mem_address;
@@ -2122,6 +2125,7 @@ minimig minimig
 	.fmv_mem_byteenable(fmv_mem_byteenable),
 	.fmv_mem_write(fmv_mem_write),
 	.fmv_mem_waitrequest(fmv_mem_waitrequest),
+	.fmv_diag     (fmv_diag),
 
 	.USER_IN              (USER_IN              ),
 	.USER_OUT             (IndirectUserOutFlop  ),

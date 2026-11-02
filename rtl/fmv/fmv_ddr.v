@@ -49,7 +49,16 @@ module fmv_ddr (
 	output reg   [7:0] avl_byteenable,
 	input  wire [63:0] avl_readdata,
 	input  wire        avl_readdatavalid,
-	input  wire        avl_waitrequest
+	input  wire        avl_waitrequest,
+
+	// For the diag window (fmv.v): what this side is doing, without DDR3.
+	output wire [15:0] dbg_flags,     // {st, on, up_full, ev_empty, poll==0, read, write, waitrequest}
+	output reg  [15:0] dbg_polls = 16'd0,   // UQ_WPTR reads accepted
+	output reg  [15:0] dbg_rvalid = 16'd0,  // readdatavalid beats seen
+	output reg  [15:0] dbg_dwell = 16'd0,   // clocks in the current state, saturating
+	output wire [15:0] dbg_uq_rd,
+	output wire [15:0] dbg_uq_w,
+	output wire [15:0] dbg_n
 );
 	localparam [28:0] BASE     = 29'h04E00000;      // ARM 0x27000000 >> 3
 	localparam [28:0] EV_WPTR  = BASE + 29'h20000;  // byte 0x100000
@@ -73,6 +82,20 @@ module fmv_ddr (
 	           S_EV = 4'd4, S_EVP = 4'd5, S_QW = 4'd6, S_QW_D = 4'd7,
 	           S_QE = 4'd8, S_QE_D0 = 4'd9, S_QE_D1 = 4'd10, S_QP = 4'd11;
 	reg  [3:0] st = S_IDLE;
+	reg  [3:0] st_d = S_IDLE;
+
+	assign dbg_flags = {4'd0, st, on_s2, up_full, ev_empty, poll == 8'd0,
+	                    avl_read, avl_write, avl_waitrequest, 1'b0};
+	assign dbg_uq_rd = uq_rd[15:0];
+	assign dbg_uq_w  = uq_w[15:0];
+	assign dbg_n     = n[15:0];
+	always @(posedge clk) begin
+		st_d <= st;
+		if (st != st_d)            dbg_dwell <= 16'd0;
+		else if (~&dbg_dwell)      dbg_dwell <= dbg_dwell + 1'd1;
+		if (st == S_QW && !avl_waitrequest) dbg_polls <= dbg_polls + 1'd1;
+		if (avl_readdatavalid)              dbg_rvalid <= dbg_rvalid + 1'd1;
+	end
 
 	always @(posedge clk) begin
 		ev_rd <= 1'b0;

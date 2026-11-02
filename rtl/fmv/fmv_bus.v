@@ -61,7 +61,9 @@ module fmv_bus (
 	output reg   [1:0] mbe,             // {UDS, LDS}
 	output reg  [15:0] mwdata,
 	input  wire        mack_t,          // toggles when the access is done
-	input  wire [15:0] mrdata
+	input  wire [15:0] mrdata,
+
+	output wire  [3:0] dbg             // {st, alive}, for the diag window
 );
 
 	// ---------------------------------------------------------------- state
@@ -117,6 +119,7 @@ module fmv_bus (
 	localparam S_IDLE = 3'd0, S_RD1 = 3'd1, S_RD2 = 3'd2, S_MEM = 3'd3,
 	           S_POST = 3'd4, S_DONE = 3'd5, S_UP1 = 3'd6, S_UP2 = 3'd7;
 	reg  [2:0] st = S_IDLE;
+	assign dbg = {st, alive};
 
 	reg  [7:0] idx;           // register-file index of the access or update
 	reg        use_ff;        // the index lives in a flop, not the RAM

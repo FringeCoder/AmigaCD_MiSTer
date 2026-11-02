@@ -108,6 +108,8 @@ wire [127:0] ss_peek_data = { 16'hFEDC, 16'hBA98, 16'h7654, 16'h3210,
 wire         ss_peek_valid = 1'b1;
 
 // The restore post-mortem, behind the peek data in the same window.
+wire [127:0] fmv_diag = { 16'hF8F8, 16'hF7F7, 16'hF6F6, 16'hF5F5,
+                          16'hF4F4, 16'hF3F3, 16'hF2F2, 16'hF401 };
 wire [127:0] ss_pc_snapshot = { 32'h00FC0004, 32'h00003210, 32'h00002200, 32'h00001100 };
 wire  [63:0] ss_kick_pair   = { 32'hFEEDFACE, 32'hC0FFEE00 };
 
@@ -247,6 +249,22 @@ initial begin
 	xfer_rd(w[0]);
 	check("akiko class still reads akiko", {16'd0, w[0]}, 32'h0000AAAA);
 
+	@(negedge clk_sys); hps_uio = 1'b0;
+	@(negedge clk_sys);
+
+	// The FMV diag window on 0xFA00 (rtl/fmv/fmv.v): its own signature,
+	// then fmv_diag low word first, and the save state window untouched.
+	hps_uio = 1'b1;
+	xfer(16'h0062);
+	xfer(16'hFA00);
+	xfer(16'h0000);
+	for (k = 0; k < 10; k = k + 1) xfer_rd(w[k]);
+	check("fmv: signature",        {16'd0, w[0]}, 32'h0000A5F4);
+	check("fmv: version word",     {16'd0, w[1]}, 32'h0000F401);
+	check("fmv: word 2",           {16'd0, w[2]}, 32'h0000F2F2);
+	check("fmv: last word",        {16'd0, w[8]}, 32'h0000F8F8);
+	check("fmv: past the end",     {16'd0, w[9]}, 32'h00000000);
+	check("fmv: not the ss window", {31'd0, ss_diag_cs_probe}, 32'd0);
 	@(negedge clk_sys); hps_uio = 1'b0;
 	@(negedge clk_sys);
 

@@ -165,6 +165,7 @@ wire [63:0]  fmv_mem_writedata;
 wire [7:0]   fmv_mem_byteenable;
 wire         fmv_mem_write;
 wire         fmv_mem_waitrequest;
+wire [127:0] fmv_diag;
 wire [6:0]   USER_IN;
 wire [6:0]   USER_OUT;
 wire [1:0]   user_port_mode;
@@ -618,6 +619,7 @@ minimig dut (
 	.fmv_mem_byteenable(fmv_mem_byteenable),
 	.fmv_mem_write(fmv_mem_write),
 	.fmv_mem_waitrequest(fmv_mem_waitrequest),
+	.fmv_diag(fmv_diag),
 	.USER_IN(USER_IN),
 	.USER_OUT(USER_OUT),
 	.user_port_mode(user_port_mode),
