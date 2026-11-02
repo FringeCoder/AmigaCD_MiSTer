@@ -408,6 +408,27 @@ jobs:
           vvp -n tbc | tee outc.log
           grep -q "RUN: PASS" outc.log
 
+      # The A2065 mailbox behind the same real path (dsnd_arb, mirror_arb,
+      # fmv_arb, ddram_ctrl, ddr_cmd_pipe), polling as it does from reset
+      # and then serving random 68k board RAM reads, RMW writes and register
+      # commands, against a DDR3 model with random BUSY. On hardware (gate 1,
+      # 2026-11-02 night) the HPS port wedged after a few mailbox commands,
+      # FMV idle. This checks the core does not lose the beat: every read
+      # comes back, the mailbox keeps polling, no arbiter waits on a beat,
+      # and no burstcount-0 read reaches the pins. It passes, so a beat lost
+      # on hardware is not lost by this RTL with a well-behaved slave.
+      # Falsified 2026-11-02: one readdatavalid dropped at an arbiter, and
+      # ddr_cmd_pipe clearing a held read without presenting it.
+      - name: A2065 mailbox through the DDR3 path (tb_a2065_chain.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/fmv
+          iverilog -g2012 -o tba ../../ddram_ctrl.v ../../ddr_cmd_pipe.v ../../cpu_cache_new.v \
+            ../../A2065/a2065_ddram_arbiter.v ../../A2065/a2065_ddr3_mailbox.v \
+            ../cache/dpram_sim.v tb_a2065_chain.sv
+          vvp -n tba | tee outa.log
+          grep -q "RUN: PASS" outa.log
+
       # MEASUREMENT ONLY (step 1 of the ARM-CPU plan): latprobe_ddr3 echoes an
       # ARM request word back through DDR3 so the ARM can time the round trip.
       # It shares the A2065's DDR3 port, so it must never write unless armed,
