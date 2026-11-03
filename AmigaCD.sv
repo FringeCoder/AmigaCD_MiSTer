@@ -278,6 +278,8 @@ wire [127:0] ss_diag;
 // it (assembled at fmv_arb below), on hps_ext's 0xFA00 read.
 wire [127:0] fmv_diag;
 wire [127:0] fmv_diag_x;
+wire  [31:0] fmv_diag_z;    // Paula INTENA/INTREQ and Akiko's IRQ (below)
+wire        akiko_f_irq;    // fastchip's Akiko IRQ; declared here for fmv_diag_z
 wire [127:0] fmv_diag_y;    // the HPS port's counters (ddram_ctrl dbg_hps)
 
 // Live memory peek: hps_ext (clk_sys) asks, ss_ctrl (clk_114) answers.
@@ -306,7 +308,7 @@ end
 wire ss_peek_req_114 = ss_peek_tgl_sync ^ ss_peek_tgl_d;
 
 hps_ext hps_ext(.*, .ide_req(ide_fast ? ide_f_req : ide_c_req),  .ide_din(ide_fast ? ide_f_readdata : ide_c_readdata), .ss_diag(ss_diag),
-	.fmv_diag(fmv_diag), .fmv_diag_x(fmv_diag_x), .fmv_diag_y(fmv_diag_y),
+	.fmv_diag(fmv_diag), .fmv_diag_x(fmv_diag_x), .fmv_diag_y(fmv_diag_y), .fmv_diag_z(fmv_diag_z),
 	.ss_peek_addr(ss_peek_addr), .ss_peek_req(ss_peek_req_sys),
 	.ss_peek_data(ss_peek_data), .ss_peek_valid(ss_peek_valid),
 	.ss_pc_snapshot(ss_pc_snapshot), .ss_kick_pair(ss_kick_pair),
@@ -1776,6 +1778,20 @@ always @(posedge clk_sys) begin
 end
 assign fmv_diag_y = fmv_dy_2;
 
+// The Amiga's side of the interrupt, for the FMV diag (gate 1 run v18: the
+// 68k stopped asking the CD and the FMV board for anything at the same
+// moment; storm or wait). Paula's live INTENA and INTREQ (clk_sys), and
+// Akiko's IRQ line, which shares INT2 with the FMV board, sampled through
+// two flops from clk_114. Debug only.
+reg akiko_irq_s1, akiko_irq_s2;
+reg [31:0] fmv_dz;
+always @(posedge clk_sys) begin
+	akiko_irq_s1 <= akiko_f_irq;
+	akiko_irq_s2 <= akiko_irq_s1;
+	fmv_dz <= {akiko_irq_s2, ss_intreq, 1'b0, ss_intena};
+end
+assign fmv_diag_z = fmv_dz;
+
 // and behind all of them, the CD32 FMV board (rtl/fmv). Lowest priority: its
 // event and update-queue traffic can wait, and its ROM/RAM accesses already
 // stretch the 68k for a DDR3 round trip, so a few more cycles there are only
@@ -1835,7 +1851,6 @@ wire        fastchip_lw;
 wire        ide_fast;
 wire        ide_f_led;
 wire        ide_f_irq;
-wire        akiko_f_irq;
 wire  [5:0] ide_f_req;
 wire [15:0] ide_f_readdata;
 

@@ -147,6 +147,9 @@ module hps_ext
 	input     [127:0] fmv_diag_x,
 	// and the HPS port's own counters after a 0xA5F6 marker
 	input     [127:0] fmv_diag_y,
+	// and the Amiga's interrupt state after a 0xA5F7 marker: {0, INTENA},
+	// {Akiko IRQ, INTREQ} (AmigaCD.sv fmv_diag_z)
+	input      [31:0] fmv_diag_z,
 
 	// Live memory peek. Same UIO class as the diagnostics (0xF600) with
 	// io_din[5] as the sub-channel bit, so it costs no new class and cannot be
@@ -545,6 +548,9 @@ always@(posedge clk_sys) begin : main_proc
 							5'd27: io_dout <= fmv_diag_y[95:80];
 							5'd28: io_dout <= fmv_diag_y[111:96];
 							5'd29: io_dout <= fmv_diag_y[127:112];
+							5'd30: io_dout <= 16'hA5F7;
+							5'd31: io_dout <= fmv_diag_z[15:0];
+							6'd32: io_dout <= fmv_diag_z[31:16];
 							default: io_dout <= 16'd0;
 						endcase
 					end
