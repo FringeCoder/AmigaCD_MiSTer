@@ -58,7 +58,7 @@ module fmv (
 	wire  [1:0] mbe;
 	wire [15:0] mwdata, mrdata;
 
-	wire  [3:0] bus_dbg;
+	wire  [6:0] bus_dbg;
 	wire [15:0] d_flags, d_polls, d_rvalid, d_dwell, d_uq_rd, d_uq_w, d_n;
 
 	fmv_bus bus (
@@ -103,15 +103,17 @@ module fmv (
 	//   [10] up_full, [9] ev_empty, [8] poll timer at 0, [7] avl_read,
 	//   [6] avl_write, [5] waitrequest, [4:2] fmv_bus state, [1] ALIVE,
 	//   [0] status[64]   w2 UQ_WPTR polls accepted   w3 readdatavalid beats
-	//   w4 clocks in the fmv_ddr state   w5 uq_rd   w6 UQ_WPTR as last read
+	//   w4 clocks in the fmv_ddr state   w5 uq_rd
+	//   w6 [15] INT2, [14] the L64111 latch, [13] the CL450 INT (~Int),
+	//      [11:0] UQ_WPTR as last read (from 0xF402; 0xF401 had all 16 bits)
 	//   w7 events written
 	reg [111:0] dd1, dd2;
 	always @(posedge clk_ddr)
 		dd1 <= {d_n, d_uq_w, d_uq_rd, d_dwell, d_rvalid, d_polls, d_flags};
 	always @(posedge clk_sys) begin
 		dd2  <= dd1;
-		diag <= {dd2[111:16],
-		         dd2[11:4], dd2[3:1], bus_dbg, fmv_on,   // flags word, see above
-		         16'hF401};
+		diag <= {dd2[111:96], bus_dbg[6:4], 1'b0, dd2[91:80], dd2[79:16],
+		         dd2[11:4], dd2[3:1], bus_dbg[3:0], fmv_on,   // flags word, see above
+		         16'hF402};
 	end
 endmodule
