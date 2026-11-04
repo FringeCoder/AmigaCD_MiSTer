@@ -210,7 +210,15 @@ module fmv_bus (
 
 		case (st)
 		S_IDLE: begin
-			if (access) begin
+			// An access is served when it can be. One that is held for room
+			// in the ring or the crossing does NOT stop updates from being
+			// applied: the update that releases it (HOST_RDIDX, from Main)
+			// comes through the update queue. The first version applied
+			// updates only with no access pending, so a held access blocked
+			// its own release and the 68k hung for good, its INTEN off around
+			// the driver's command (gate 1 run v20, 2026-11-04: PC 203cfe,
+			// the read of HOST_newcmd, this state machine IDLE, up_full 1).
+			if (access && (is_rom & cpu_rw | is_ram | (!ev_full && !ring_full))) begin
 				ev_haddr <= 4'd0;
 				if (is_rom & cpu_rw | is_ram) begin
 					// ROM and RAM: a DDR3 access, not an event
@@ -220,7 +228,7 @@ module fmv_bus (
 					mwdata <= cpu_data_in;
 					mreq_t <= ~mreq_t;
 					st     <= S_MEM;
-				end else if (!ev_full && !ring_full) begin
+				end else begin                    // room in the ring (above)
 					if (is_rom | is_cmem) begin
 						// A write into the ROM is dropped; the data port is
 						// write-only and reads return 0xFFFF. Both are posted.
@@ -234,13 +242,13 @@ module fmv_bus (
 						st <= S_RD1;
 					end
 				end
-				// else: the ring or the crossing is full; hold the 68k
 			end else if (rst_pend && !ev_full) begin
 				ev_data  <= 48'h8;          // RESET, every other field 0
 				ev_wr    <= 1'b1;
 				ev_count <= ev_count + 1'd1;
 				rst_pend <= 1'b0;
 			end else if (!up_empty) begin
+				// (also while an access is held: see above)
 				up_rd <= 1'b1;
 				if (fmv_on) begin
 					upd <= up_data;

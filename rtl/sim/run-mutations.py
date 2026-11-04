@@ -170,8 +170,14 @@ MUTATIONS = [
     ('FMV: ALIVE kept across an off', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
      "\t\t\talive       <= 1'b0;\n", "",
      'M.on: ALIVE does not survive'),
+    # Gate 1 run v20 (2026-11-04): a held access must not block the update
+    # that releases it. Applying updates only with no access pending, as
+    # the first version did, brings the deadlock back.
+    ('FMV: a held access blocks its own release', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "\t\t\tend else if (!up_empty) begin\n\t\t\t\t// (also while an access is held: see above)",
+     "\t\t\tend else if (!up_empty && !access) begin\n\t\t\t\t// (also while an access is held: see above)",
+     'I.released by the HOST_RDIDX update'),
 ]
-
 def build_and_run(bench, sources, out):
     argv = (['iverilog', '-g2012', '-I.', '-o', out] +
             sources.split() + [bench])

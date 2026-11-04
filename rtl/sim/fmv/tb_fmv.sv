@@ -342,6 +342,14 @@ module tb_fmv;
 			end
 		join
 		check(bus_cycles >= 3000, "I.released only once HOST_RDIDX moved");
+		// ...and by that update, not by the bus task giving up (200000
+		// cycles). The update that releases the hold arrives through the
+		// update queue; the first version applied updates only while no
+		// access was pending, so a held access blocked its own release and
+		// the 68k hung for good (gate 1 run v20, 2026-11-04: PC 203cfe, the
+		// read of HOST_newcmd, fmv_bus IDLE, up_full 1). This check passed
+		// then because the bus task timed out and dropped AS.
+		check(bus_cycles < 20000, "I.released by the HOST_RDIDX update while the access is held");
 		ev_rd = mem[EV_WPTR >> 3][31:0];             // the host skips ahead
 
 		// --- K: an Amiga reset is an event, and the register file survives it
