@@ -278,7 +278,7 @@ wire [127:0] ss_diag;
 // it (assembled at fmv_arb below), on hps_ext's 0xFA00 read.
 wire [127:0] fmv_diag;
 wire [127:0] fmv_diag_x;
-wire  [31:0] fmv_diag_z;    // Paula INTENA/INTREQ and Akiko's IRQ (below)
+wire [207:0] fmv_diag_z;    // Paula INTENA/INTREQ, Akiko's IRQ, the 68k's PC (below)
 wire        akiko_f_irq;    // fastchip's Akiko IRQ; declared here for fmv_diag_z
 wire [127:0] fmv_diag_y;    // the HPS port's counters (ddram_ctrl dbg_hps)
 
@@ -1783,12 +1783,35 @@ assign fmv_diag_y = fmv_dy_2;
 // moment; storm or wait). Paula's live INTENA and INTREQ (clk_sys), and
 // Akiko's IRQ line, which shares INT2 with the FMV board, sampled through
 // two flops from clk_114. Debug only.
+//
+// Run v19 (2026-11-04) answered that: INTEN (INTENA bit 14) clear at both
+// stalls, every Paula source pending, the board's INT2 down. So the 68k is
+// spinning in a Disable()d section, in an Alert, or stopped. Where it is
+// comes next: the TG68K's executing PC now, a ring of four PCs about 1.15 ms
+// apart (2^15 clk_sys), and its halt flag (a double address error).
+//   [15:0] {0, INTENA}   [31:16] {Akiko IRQ, INTREQ}   [63:32] PC now
+//   [79:64] {halted, 0}  [207:80] the ring, oldest first, 32 bits each
 reg akiko_irq_s1, akiko_irq_s2;
-reg [31:0] fmv_dz;
+reg [31:0] fmv_pc_now;
+reg [31:0] fmv_pc_ring [0:3];
+reg [14:0] fmv_pc_tick;
+reg        fmv_halt_s;
+reg [207:0] fmv_dz;
 always @(posedge clk_sys) begin
 	akiko_irq_s1 <= akiko_f_irq;
 	akiko_irq_s2 <= akiko_irq_s1;
-	fmv_dz <= {akiko_irq_s2, ss_intreq, 1'b0, ss_intena};
+	fmv_pc_now   <= ss_pc;
+	fmv_halt_s   <= ss_cpu_halted;
+	fmv_pc_tick  <= fmv_pc_tick + 1'd1;
+	if (&fmv_pc_tick) begin
+		fmv_pc_ring[0] <= fmv_pc_ring[1];
+		fmv_pc_ring[1] <= fmv_pc_ring[2];
+		fmv_pc_ring[2] <= fmv_pc_ring[3];
+		fmv_pc_ring[3] <= fmv_pc_now;
+	end
+	fmv_dz <= {fmv_pc_ring[3], fmv_pc_ring[2], fmv_pc_ring[1], fmv_pc_ring[0],
+	           fmv_halt_s, 15'd0, fmv_pc_now,
+	           akiko_irq_s2, ss_intreq, 1'b0, ss_intena};
 end
 assign fmv_diag_z = fmv_dz;
 

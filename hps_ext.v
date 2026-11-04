@@ -147,9 +147,10 @@ module hps_ext
 	input     [127:0] fmv_diag_x,
 	// and the HPS port's own counters after a 0xA5F6 marker
 	input     [127:0] fmv_diag_y,
-	// and the Amiga's interrupt state after a 0xA5F7 marker: {0, INTENA},
-	// {Akiko IRQ, INTREQ} (AmigaCD.sv fmv_diag_z)
-	input      [31:0] fmv_diag_z,
+	// and the Amiga's state after a 0xA5F7 marker: {0, INTENA}, {Akiko IRQ,
+	// INTREQ}, the 68k's PC, its halt flag and a ring of four PCs
+	// (AmigaCD.sv fmv_diag_z, words 31-43)
+	input     [207:0] fmv_diag_z,
 
 	// Live memory peek. Same UIO class as the diagnostics (0xF600) with
 	// io_din[5] as the sub-channel bit, so it costs no new class and cannot be
@@ -551,6 +552,17 @@ always@(posedge clk_sys) begin : main_proc
 							5'd30: io_dout <= 16'hA5F7;
 							5'd31: io_dout <= fmv_diag_z[15:0];
 							6'd32: io_dout <= fmv_diag_z[31:16];
+							6'd33: io_dout <= fmv_diag_z[47:32];
+							6'd34: io_dout <= fmv_diag_z[63:48];
+							6'd35: io_dout <= fmv_diag_z[79:64];
+							6'd36: io_dout <= fmv_diag_z[95:80];
+							6'd37: io_dout <= fmv_diag_z[111:96];
+							6'd38: io_dout <= fmv_diag_z[127:112];
+							6'd39: io_dout <= fmv_diag_z[143:128];
+							6'd40: io_dout <= fmv_diag_z[159:144];
+							6'd41: io_dout <= fmv_diag_z[175:160];
+							6'd42: io_dout <= fmv_diag_z[191:176];
+							6'd43: io_dout <= fmv_diag_z[207:192];
 							default: io_dout <= 16'd0;
 						endcase
 					end
