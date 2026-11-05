@@ -139,8 +139,8 @@ MUTATIONS = [
      "\t\t\t\t\trd_val <= io_view(rf_q[15:0]);", "\t\t\t\t\trd_val <= rf_q[15:0];",
      'G.IO'),
     ('FMV: board bytes swapped on a ROM read', FMV_TB, FMV, 'rtl/fmv/fmv_ddr.v',
-     "mrdata <= {avl_readdata[{k, 4'd0} +: 8], avl_readdata[{k, 4'd8} +: 8]};",
-     "mrdata <= {avl_readdata[{k, 4'd8} +: 8], avl_readdata[{k, 4'd0} +: 8]};",
+     "mrdata <= {rd_q[{k, 4'd0} +: 8], rd_q[{k, 4'd8} +: 8]};",
+     "mrdata <= {rd_q[{k, 4'd8} +: 8], rd_q[{k, 4'd0} +: 8]};",
      'H.ROM: word'),
     ('FMV: a ROM write reaches DDR3', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
      "\t\t\t\tif (is_rom & cpu_rw | is_ram) begin", "\t\t\t\tif (is_rom | is_ram) begin",
@@ -228,6 +228,12 @@ MUTATIONS = [
      "localparam [6:0] FBURST = 7'd32;",
      "localparam [6:0] FBURST = 7'd64;",
      'C.bursts of at most 32'),
+    # The boundary register on the HPS read data (row 52's hold failures):
+    # taking the data a clock before its valid would read the previous beat.
+    ('FMV ddr: read data out of step with its valid', FMVV_TB, FMVV, 'rtl/fmv/fmv_ddr.v',
+     "\t\trd_q  <= avl_readdata;\n\t\trdv_q <= avl_readdatavalid;",
+     "\t\trd_q  <= avl_readdata;\n\t\trdv_q <= avl_readdatavalid & ~rdv_q;",
+     'A.window pixels'),
     ('FMV ddr: one word short on each line', FMVV_TB, FMVV, 'rtl/fmv/fmv_ddr.v',
      "f_left    <= fwords;",
      "f_left    <= fwords - 1'd1;",

@@ -93,6 +93,20 @@ module fmv_ddr (
 	reg  [6:0] f_left = 7'd0;     // words of the line still to request
 	reg  [5:0] f_beats = 6'd0;    // beats of the current burst still to come
 	reg  [7:0] f_wa = 8'd0;       // line buffer address of the next beat
+
+	// Read data from the HPS port, registered once at the boundary. Before,
+	// DDRAM_DOUT (through two arbiters, wires only) fed every capture
+	// register here, about 220 of them with the line buffer, and three
+	// seeds of seed-lottery row 52 failed hold from the f2sdram block into
+	// them (worst -0.145, lb_wdata[30]; also up_data[40]). One stage of
+	// 65 registers is all the HPS output reaches now. Costs a clock of
+	// read latency, which nothing here is short of.
+	reg [63:0] rd_q  = 64'd0;
+	reg        rdv_q = 1'b0;
+	always @(posedge clk) begin
+		rd_q  <= avl_readdata;
+		rdv_q <= avl_readdatavalid;
+	end
 	localparam [6:0] FBURST = 7'd32;
 
 	localparam S_IDLE = 4'd0, S_MRD = 4'd1, S_MRD_D = 4'd2, S_MWR = 4'd3,
@@ -176,8 +190,8 @@ module fmv_ddr (
 
 		// ---- ROM/RAM ----
 		S_MRD: if (!avl_waitrequest) begin avl_read <= 1'b0; st <= S_MRD_D; end
-		S_MRD_D: if (avl_readdatavalid) begin
-			mrdata <= {avl_readdata[{k, 4'd0} +: 8], avl_readdata[{k, 4'd8} +: 8]};
+		S_MRD_D: if (rdv_q) begin
+			mrdata <= {rd_q[{k, 4'd0} +: 8], rd_q[{k, 4'd8} +: 8]};
 			mack_t <= ~mack_t;      // mrdata is set first; the toggle follows
 			st     <= S_IDLE;
 		end
@@ -198,10 +212,10 @@ module fmv_ddr (
 			st             <= S_FRD;
 		end
 		S_FRD: if (!avl_waitrequest) begin avl_read <= 1'b0; st <= S_FRD_D; end
-		S_FRD_D: if (avl_readdatavalid) begin
+		S_FRD_D: if (rdv_q) begin
 			lb_we    <= 1'b1;
 			lb_waddr <= f_wa;
-			lb_wdata <= avl_readdata;
+			lb_wdata <= rd_q;
 			f_wa     <= f_wa + 1'd1;
 			f_beats  <= f_beats - 1'd1;
 			if (f_beats == 6'd1) begin
@@ -226,9 +240,9 @@ module fmv_ddr (
 
 		// ---- the update queue ----
 		S_QW: if (!avl_waitrequest) begin avl_read <= 1'b0; st <= S_QW_D; end
-		S_QW_D: if (avl_readdatavalid) begin
-			uq_w <= avl_readdata[31:0];
-			if (avl_readdata[31:0] != uq_rd) begin
+		S_QW_D: if (rdv_q) begin
+			uq_w <= rd_q[31:0];
+			if (rd_q[31:0] != uq_rd) begin
 				avl_address    <= UQ + {18'd0, uq_rd[9:0], 1'b0};
 				avl_burstcount <= 8'd2;
 				avl_read       <= 1'b1;
@@ -239,11 +253,11 @@ module fmv_ddr (
 			end
 		end
 		S_QE: if (!avl_waitrequest) begin avl_read <= 1'b0; st <= S_QE_D0; end
-		S_QE_D0: if (avl_readdatavalid) begin w0 <= avl_readdata; st <= S_QE_D1; end
-		S_QE_D1: if (avl_readdatavalid) begin
+		S_QE_D0: if (rdv_q) begin w0 <= rd_q; st <= S_QE_D1; end
+		S_QE_D1: if (rdv_q) begin
 			if (w0[63:48] == uq_rd[15:0]) begin
 				// {rdidx, mask, value, guard, maskfile, index}
-				up_data <= {1'b0, avl_readdata[63:32], avl_readdata[31:16], avl_readdata[15:0],
+				up_data <= {1'b0, rd_q[63:32], rd_q[31:16], rd_q[15:0],
 				            w0[9], w0[8], w0[7:0]};
 				up_wr   <= 1'b1;
 				uq_rd   <= uq_rd + 1'd1;
