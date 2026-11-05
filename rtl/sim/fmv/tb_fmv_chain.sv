@@ -118,6 +118,8 @@ module tb_fmv_chain;
 		.mem_readdata(f_readdata), .mem_readdatavalid(f_readdatavalid),
 		.mem_writedata(f_writedata), .mem_byteenable(f_byteenable),
 		.mem_write(f_write), .mem_waitrequest(f_waitrequest)
+	,
+		.hsync_n(1'b1), .vsync_n(1'b1)
 	);
 
 	// ---- DDR3 slave: the 2 MB window, pipelined bursts, fixed latency

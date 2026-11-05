@@ -2,6 +2,8 @@
 //
 // The DDR3 half of FringeCoder/AmigaCD docs/fmv-contract.md (v3). One Avalon
 // master, fixed priority:
+//   0. a frame-buffer line for fmv_video (v5): it has a deadline, a line
+//      time from now, and takes about a microsecond, so it goes first;
 //   1. ROM/RAM accesses from the 68k (it is waiting): a single beat in the
 //      board image;
 //   2. events from fmv_bus: the entry with SEQ at EV + (n & 4095), then
@@ -40,6 +42,15 @@ module fmv_ddr (
 	output reg         mack_t = 1'b0,
 	output reg  [15:0] mrdata = 16'h0000,
 
+	// line fetches for fmv_video (toggle; the fields are held until the next)
+	input  wire        freq_t,
+	input  wire [28:0] faddr,
+	input  wire  [6:0] fwords,
+	input  wire        fhalf,
+	output reg         lb_we = 1'b0,
+	output reg   [7:0] lb_waddr = 8'd0,
+	output reg  [63:0] lb_wdata = 64'd0,
+
 	// Avalon master
 	output reg  [28:0] avl_address,
 	output reg   [7:0] avl_burstcount,
@@ -77,10 +88,17 @@ module fmv_ddr (
 	reg        on_s1 = 1'b0, on_s2 = 1'b0;
 	reg [63:0] w0;
 	reg  [1:0] k;                // 16-bit lane of a ROM/RAM access
+	reg        freq_s1 = 1'b0, freq_s2 = 1'b0, freq_seen = 1'b0;
+	reg [28:0] f_addr = 29'd0;
+	reg  [6:0] f_left = 7'd0;     // words of the line still to request
+	reg  [5:0] f_beats = 6'd0;    // beats of the current burst still to come
+	reg  [7:0] f_wa = 8'd0;       // line buffer address of the next beat
+	localparam [6:0] FBURST = 7'd32;
 
 	localparam S_IDLE = 4'd0, S_MRD = 4'd1, S_MRD_D = 4'd2, S_MWR = 4'd3,
 	           S_EV = 4'd4, S_EVP = 4'd5, S_QW = 4'd6, S_QW_D = 4'd7,
-	           S_QE = 4'd8, S_QE_D0 = 4'd9, S_QE_D1 = 4'd10, S_QP = 4'd11;
+	           S_QE = 4'd8, S_QE_D0 = 4'd9, S_QE_D1 = 4'd10, S_QP = 4'd11,
+	           S_FRQ = 4'd12, S_FRD = 4'd13, S_FRD_D = 4'd14;
 	reg  [3:0] st = S_IDLE;
 	reg  [3:0] st_d = S_IDLE;
 
@@ -100,6 +118,9 @@ module fmv_ddr (
 	always @(posedge clk) begin
 		ev_rd <= 1'b0;
 		up_wr <= 1'b0;
+		lb_we <= 1'b0;
+		freq_s1 <= freq_t;
+		freq_s2 <= freq_s1;
 		mreq_s1 <= mreq_t;
 		mreq_s2 <= mreq_s1;
 		on_s1   <= on;
@@ -109,7 +130,15 @@ module fmv_ddr (
 
 		case (st)
 		S_IDLE: begin
-			if (mreq_s2 != mreq_seen) begin
+			if (on_s2 && freq_s2 != freq_seen) begin
+				freq_seen <= freq_s2;
+				f_addr    <= faddr;
+				f_left    <= fwords;
+				f_wa      <= {fhalf, 7'd0};
+				st        <= S_FRQ;
+			end else if (freq_s2 != freq_seen) begin
+				freq_seen <= freq_s2;              // off: dropped
+			end else if (mreq_s2 != mreq_seen) begin
 				mreq_seen      <= mreq_s2;
 				k              <= maddr[2:1];
 				avl_address    <= BASE + {10'd0, maddr[19:3]};
@@ -156,6 +185,30 @@ module fmv_ddr (
 			avl_write <= 1'b0;
 			mack_t    <= ~mack_t;
 			st        <= S_IDLE;
+		end
+
+		// ---- a frame-buffer line, in bursts of up to FBURST ----
+		S_FRQ: if (f_left == 7'd0) begin
+			st <= S_IDLE;
+		end else begin
+			avl_address    <= f_addr;
+			avl_burstcount <= {1'b0, (f_left > FBURST) ? FBURST : f_left};
+			f_beats        <= (f_left > FBURST) ? FBURST[5:0] : f_left[5:0];
+			avl_read       <= 1'b1;
+			st             <= S_FRD;
+		end
+		S_FRD: if (!avl_waitrequest) begin avl_read <= 1'b0; st <= S_FRD_D; end
+		S_FRD_D: if (avl_readdatavalid) begin
+			lb_we    <= 1'b1;
+			lb_waddr <= f_wa;
+			lb_wdata <= avl_readdata;
+			f_wa     <= f_wa + 1'd1;
+			f_beats  <= f_beats - 1'd1;
+			if (f_beats == 6'd1) begin
+				f_addr <= f_addr + avl_burstcount;
+				f_left <= f_left - avl_burstcount[6:0];
+				st     <= S_FRQ;
+			end
 		end
 
 		// ---- events ----

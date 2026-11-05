@@ -47,7 +47,16 @@ module fmv (
 	// when the DDR3 path is what has failed (gate 1 rerun, 2026-11-02). In
 	// clk_sys; the DDR3-side fields are sampled through two flops, so a
 	// read can catch a multi-bit field mid-change. Fine for a debug window.
-	output reg [127:0] diag
+	output reg [127:0] diag,
+
+	// The picture (contract v5): the cartridge's output for this pixel,
+	// to be selected over Denise's where ZD is asserted (or everywhere,
+	// key_all). Two clk_sys behind the beam; Main calibrates for it.
+	input  wire        hsync_n,
+	input  wire        vsync_n,
+	output wire        vid_show,
+	output wire        vid_key_all,
+	output wire [23:0] vid_rgb
 );
 	wire        ev_wr, ev_full, ev_empty, ev_rd;
 	wire [47:0] ev_wdata, ev_rdata;
@@ -59,6 +68,12 @@ module fmv (
 	wire [15:0] mwdata, mrdata;
 
 	wire  [6:0] bus_dbg;
+	wire [111:0] disp;
+	wire        freq_t, fhalf, lb_we;
+	wire [28:0] faddr;
+	wire  [6:0] fwords;
+	wire  [7:0] lb_waddr;
+	wire [63:0] lb_wdata;
 	wire [15:0] d_flags, d_polls, d_rvalid, d_dwell, d_uq_rd, d_uq_w, d_n;
 
 	fmv_bus bus (
@@ -70,7 +85,15 @@ module fmv (
 		.ev_wr(ev_wr), .ev_data(ev_wdata), .ev_full(ev_full),
 		.up_empty(up_empty), .up_data(up_rdata), .up_rd(up_rd),
 		.mreq_t(mreq_t), .maddr(maddr), .mrw(mrw), .mbe(mbe), .mwdata(mwdata),
-		.mack_t(mack_t), .mrdata(mrdata), .dbg(bus_dbg)
+		.mack_t(mack_t), .mrdata(mrdata), .dbg(bus_dbg), .disp(disp)
+	);
+
+	fmv_video video (
+		.clk(clk_sys), .on(fmv_on), .disp(disp),
+		.hsync_n(hsync_n), .vsync_n(vsync_n),
+		.freq_t(freq_t), .faddr(faddr), .fwords(fwords), .fhalf(fhalf),
+		.wclk(clk_ddr), .lb_we(lb_we), .lb_waddr(lb_waddr), .lb_wdata(lb_wdata),
+		.show(vid_show), .key_all(vid_key_all), .rgb(vid_rgb)
 	);
 
 	fmv_afifo #(.W(48), .AW(4)) ev_fifo (
@@ -89,6 +112,8 @@ module fmv (
 		.up_wr(up_wr), .up_data(up_wdata), .up_full(up_full),
 		.mreq_t(mreq_t), .maddr(maddr), .mrw(mrw), .mbe(mbe), .mwdata(mwdata),
 		.mack_t(mack_t), .mrdata(mrdata),
+		.freq_t(freq_t), .faddr(faddr), .fwords(fwords), .fhalf(fhalf),
+		.lb_we(lb_we), .lb_waddr(lb_waddr), .lb_wdata(lb_wdata),
 		.avl_address(mem_address), .avl_burstcount(mem_burstcount),
 		.avl_read(mem_read), .avl_write(mem_write), .avl_writedata(mem_writedata),
 		.avl_byteenable(mem_byteenable), .avl_readdata(mem_readdata),

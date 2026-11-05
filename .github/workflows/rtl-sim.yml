@@ -382,9 +382,28 @@ jobs:
         run: |
           set -euo pipefail
           cd rtl/sim/fmv
-          iverilog -g2012 -o tb ../../fmv/fmv_afifo.v ../../fmv/fmv_bus.v ../../fmv/fmv_ddr.v ../../fmv/fmv.v tb_fmv.sv
+          iverilog -g2012 -o tb ../../fmv/fmv_afifo.v ../../fmv/fmv_bus.v ../../fmv/fmv_ddr.v ../../fmv/fmv_video.v ../../fmv/fmv.v tb_fmv.sv
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
+
+      # The FMV cartridge's picture (contract v5): fmv_video's window,
+      # border, VSYNC-latched register set, BLANK and KEY_ALL, and fmv_ddr's
+      # line fetch (one per window line, DISP_W/4 words, bursts of 32), on a
+      # PAL-timed raster against a DDR3 model with random latency. It also
+      # pins the output's lag behind the beam (2 clk_sys), which Main's
+      # horizontal calibration assumes, so a pipeline change fails here
+      # rather than shifting the picture on hardware. Falsified 2026-11-05
+      # with 11 mutations, now in run-mutations.py; sampling one clock per
+      # pixel and checking the request toggle's level were both vacuous, and
+      # found that way. Not covered: Denise's ZD output (one registered
+      # compare in denise.v); no bench here drives the whole of Denise.
+      - name: FMV picture (tb_fmv_video.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/fmv
+          iverilog -g2012 -o tbv ../../fmv/fmv_ddr.v ../../fmv/fmv_video.v tb_fmv_video.sv
+          vvp -n tbv | tee outv.log
+          grep -q "RUN: PASS" outv.log
 
       # tb_fmv.sv drives the front end straight from a DDR3 model. This one
       # puts it behind the real path in AmigaCD.sv: fmv_arb, ddram_ctrl's mem2
@@ -403,7 +422,7 @@ jobs:
           cd rtl/sim/fmv
           iverilog -g2012 -o tbc ../../ddram_ctrl.v ../../ddr_cmd_pipe.v ../../cpu_cache_new.v \
             ../../A2065/a2065_ddram_arbiter.v ../cache/dpram_sim.v \
-            ../../fmv/fmv_afifo.v ../../fmv/fmv_bus.v ../../fmv/fmv_ddr.v ../../fmv/fmv.v \
+            ../../fmv/fmv_afifo.v ../../fmv/fmv_bus.v ../../fmv/fmv_ddr.v ../../fmv/fmv_video.v ../../fmv/fmv.v \
             tb_fmv_chain.sv
           vvp -n tbc | tee outc.log
           grep -q "RUN: PASS" outc.log

@@ -63,7 +63,8 @@ module fmv_bus (
 	input  wire        mack_t,          // toggles when the access is done
 	input  wire [15:0] mrdata,
 
-	output wire  [6:0] dbg             // {int2, l64_int, cl_int, st, alive}, for the diag window
+	output wire  [6:0] dbg,            // {int2, l64_int, cl_int, st, alive}, for the diag window
+	output wire [111:0] disp           // 0xE0-0xE6, the display registers (contract v5), 0xE0 lowest
 );
 
 	// ---------------------------------------------------------------- state
@@ -89,6 +90,9 @@ module fmv_bus (
 	// fails to map the random reads below to a read port (an internal error in
 	// its Verilog frontend), so this stays plain flops.
 	reg [255:0] autocfg = 256'd0;
+	// 0xE0-0xE6, written by Main only; fmv_video latches them at VSYNC.
+	reg [111:0] disp_r = 112'd0;
+	assign disp = disp_r;
 
 	reg [31:0] ev_count    = 32'd0;   // events posted, ever
 	reg [31:0] l64_ack_idx = 32'd0;
@@ -342,7 +346,10 @@ module fmv_bus (
 				8'hC5: io_map_l64 <= (io_map_l64 & ~u_mask) | (u_value & u_mask);
 				8'hC6: io_pol     <= (io_pol     & ~u_mask) | (u_value & u_mask);
 				default:
-					if (u_index[7:4] == 4'hD)
+					if (u_index[7:4] == 4'hE && u_index[3:0] < 4'd7)
+						disp_r[{u_index[2:0], 4'd0} +: 16] <=
+							(disp_r[{u_index[2:0], 4'd0} +: 16] & ~u_mask) | (u_value & u_mask);
+					else if (u_index[7:4] == 4'hD)
 						autocfg[{u_index[3:0], 4'd0} +: 16] <=
 							(autocfg[{u_index[3:0], 4'd0} +: 16] & ~u_mask) | (u_value & u_mask);
 					else if (u_index < 8'hC0) begin

@@ -48,6 +48,7 @@ module denise (
   output wire [  8-1:0] red,            // red componenent video out
   output wire [  8-1:0] green,          // green component video out
   output wire [  8-1:0] blue,           // blue component video out
+  output reg            zd = 1'b0,      // Lisa's ZD, default mode: a background pixel (FMV genlock key)
   input  wire           a1k,            // control EHB chipset feature
   input  wire           ecs,            // enables ECS chipset features
   input  wire           aga,            // enables AGA features
@@ -208,7 +209,7 @@ wire [ 3-1:0] pf2of;      // bitplane color table offset when playfield 2 has pr
 wire          loct;       // 12-bit color palette select
 wire [ 2-1:0] spres;      // sprite resolution select
 wire          brdrblnk;   // border blank enable; disabled when ECSENA is low
-//wire          brdntran;   // border area is non-transparent; disabled when ECSENA is low
+wire          brdntran;   // border area is non-transparent; disabled when ECSENA is low
 //wire          zdclken;    // zd pin ??
 wire          brdsprt;    // enable srpites outside the display window; disabled when ECSENA is low
 //wire          extblken;   // causes blank output to be programmable; disabled when ECSENA is low
@@ -227,7 +228,7 @@ assign pf2of    = bplcon3[12:10];
 assign loct     = bplcon3[9] & aga;
 assign spres    = bplcon3[7:6] & {2{aga}};
 assign brdrblnk = bplcon3[5] & ecsena;
-//assign brdntran = bplcon3[4] & ecsena;
+assign brdntran = bplcon3[4] & ecsena;
 //assign zdclken  = bplcon3[2] & ecsena;
 assign brdsprt  = bplcon3[1] & ecsena;
 //assign extblken = bplcon3[0] & ecsena;
@@ -507,6 +508,15 @@ always @(*) begin
   else // select playfield
     clut_data = plfdata ^ bplxor;
 end
+
+// ZD, as Lisa drives it with ZDBPEN, ZDCTEN and ZDCLKEN clear: asserted for a
+// pixel that selects colour 0 (no playfield bit set, no sprite), and in the
+// border unless BRDNTRAN. Registered with the colour table read, so it lines
+// up with red/green/blue. Only the CD32 FMV cartridge's genlock reads it
+// (FringeCoder/AmigaCD docs/fmv-plan.md phase 0 item 5, an inference). The
+// other ZD modes are not modelled.
+always @(posedge clk)
+  zd <= (clut_data == 8'd0) && !(brdntran && !window_ena);
 
 reg window_del;
 reg sprsel_del;

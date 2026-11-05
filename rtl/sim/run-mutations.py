@@ -33,8 +33,10 @@ AKIKO = 'rtl/akiko.v rtl/akiko_nvram.v rtl/sim/cache/dpram_sim.v'
 REGSHADOW = 'rtl/ss_regshadow.v rtl/sim/regshadow/ss_regshadow_ref.v'
 AKIKO_BR = ('rtl/akiko.v rtl/akiko_nvram.v rtl/akiko_hps_bridge.v '
             'rtl/sim/cache/dpram_sim.v')
-FMV = 'rtl/fmv/fmv_afifo.v rtl/fmv/fmv_bus.v rtl/fmv/fmv_ddr.v rtl/fmv/fmv.v'
+FMV = 'rtl/fmv/fmv_afifo.v rtl/fmv/fmv_bus.v rtl/fmv/fmv_ddr.v rtl/fmv/fmv_video.v rtl/fmv/fmv.v'
 FMV_TB = 'rtl/sim/fmv/tb_fmv.sv'
+FMVV = 'rtl/fmv/fmv_ddr.v rtl/fmv/fmv_video.v'
+FMVV_TB = 'rtl/sim/fmv/tb_fmv_video.sv'
 
 # (label, bench, sources, file to mutate, find, replace, expected failing tests)
 #
@@ -177,6 +179,59 @@ MUTATIONS = [
      "\t\t\tend else if (!up_empty) begin\n\t\t\t\t// (also while an access is held: see above)",
      "\t\t\tend else if (!up_empty && !access) begin\n\t\t\t\t// (also while an access is held: see above)",
      'I.released by the HOST_RDIDX update'),
+    # The picture, contract v5 (tb_fmv_video.sv, and tb_fmv.sv's N).
+    ('FMV: display registers not written by the queue', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "if (u_index[7:4] == 4'hE && u_index[3:0] < 4'd7)",
+     "if (1'b0)",
+     'N.display registers'),
+    ('FMV: display register update ignores the mask', FMV_TB, FMV, 'rtl/fmv/fmv_bus.v',
+     "(disp_r[{u_index[2:0], 4'd0} +: 16] & ~u_mask) | (u_value & u_mask);",
+     "u_value;",
+     'N.display registers'),
+    ('FMV video: the set is taken at HSYNC, not VSYNC (tearing)', FMVV_TB, FMVV, 'rtl/fmv/fmv_video.v',
+     "\t\tif (vs_fall) begin\n\t\t\ta_ctrl",
+     "\t\tif (hs_fall) begin\n\t\t\ta_ctrl",
+     'D.a BUF change waits for VSYNC'),
+    ('FMV video: pixel lanes reversed', FMVV_TB, FMVV, 'rtl/fmv/fmv_video.v',
+     "wire [15:0] p = q[{lane, 4'd0} +: 16];",
+     "wire [15:0] p = q[{~lane, 4'd0} +: 16];",
+     'A.window pixels'),
+    ('FMV video: a line fetched into the half it is shown from', FMVV_TB, FMVV, 'rtl/fmv/fmv_video.v',
+     "fhalf  <= line_nxt[0];",
+     "fhalf  <= line_now[0];",
+     'A.window pixels'),
+    ('FMV video: BLANK ignored', FMVV_TB, FMVV, 'rtl/fmv/fmv_video.v',
+     "(inwin & ~a_blank)",
+     "(inwin)",
+     'E.BLANK'),
+    ('FMV video: border colour bytes swapped', FMVV_TB, FMVV, 'rtl/fmv/fmv_video.v',
+     "a_border <= {disp[95:80], disp[103:96]};",
+     "a_border <= {disp[103:96], disp[95:80]};",
+     'A.outside the window'),
+    ('FMV video: green widened from the wrong bits', FMVV_TB, FMVV, 'rtl/fmv/fmv_video.v',
+     "p[10:5], p[10:9]",
+     "p[10:5], p[6:5]",
+     'A.window pixels'),
+    ('FMV video: KEY_ALL never set', FMVV_TB, FMVV, 'rtl/fmv/fmv_video.v',
+     "key_all <= on & a_on & a_ctrl[4];",
+     "key_all <= 1'b0;",
+     'F.KEY_ALL'),
+    ('FMV video: status[64] does not stop the fetches', FMVV_TB, FMVV, 'rtl/fmv/fmv_video.v',
+     "wire        fetch    = on & a_on &",
+     "wire        fetch    = a_on &",
+     'H.off: no fetch requested'),
+    ('FMV video: one clock more of latency', FMVV_TB, FMVV, 'rtl/fmv/fmv_video.v',
+     "wire [11:0] rel  = hcnt - x2;",
+     "wire [11:0] rel  = hcnt - x2 - 12'd1;",
+     'A.window pixels'),
+    ('FMV ddr: bursts not split at 32 words', FMVV_TB, FMVV, 'rtl/fmv/fmv_ddr.v',
+     "localparam [6:0] FBURST = 7'd32;",
+     "localparam [6:0] FBURST = 7'd64;",
+     'C.bursts of at most 32'),
+    ('FMV ddr: one word short on each line', FMVV_TB, FMVV, 'rtl/fmv/fmv_ddr.v',
+     "f_left    <= fwords;",
+     "f_left    <= fwords - 1'd1;",
+     'B.each window line fetched once'),
 ]
 def build_and_run(bench, sources, out):
     argv = (['iverilog', '-g2012', '-I.', '-o', out] +

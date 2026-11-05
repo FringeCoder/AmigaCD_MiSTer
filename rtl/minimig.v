@@ -892,6 +892,16 @@ wire shres;
 assign ce_pix = (shres & |chipset_config[4:3]) | (hires & clk7n_en) | clk7_en;
 assign res = {shres & |chipset_config[4:3], hires};
 
+// Denise's picture, and the CD32 FMV cartridge's over it where ZD keys it
+// (FringeCoder/AmigaCD docs/fmv-contract.md v5). With the board off, or its
+// output off, fmv_show is 0 and Denise's pixels go through as they are.
+wire [7:0] den_red, den_green, den_blue;
+wire       den_zd;
+wire       fmv_show, fmv_key_all;
+wire [23:0] fmv_rgb;
+wire       fmv_sel = fmv_show & (den_zd | fmv_key_all);
+assign {red, green, blue} = fmv_sel ? fmv_rgb : {den_red, den_green, den_blue};
+
 //instantiate Denise
 denise DENISE1
 (		
@@ -911,9 +921,10 @@ denise DENISE1
 	.chip48(chip48),
 	.data_out(denise_data_out),
 	.blank(~_hsync|vblank),
-	.red(red),
-	.green(green),
-	.blue(blue),
+	.red(den_red),
+	.green(den_green),
+	.blue(den_blue),
+	.zd(den_zd),
 	.a1k(chipset_config[2]),
 	.ecs(|chipset_config[4:3]),
 	.aga(chipset_config[4]),
@@ -1302,7 +1313,12 @@ fmv fmv_inst (
 	.mem_byteenable   (fmv_mem_byteenable),
 	.mem_write        (fmv_mem_write),
 	.mem_waitrequest  (fmv_mem_waitrequest),
-	.diag             (fmv_diag)
+	.diag             (fmv_diag),
+	.hsync_n          (_hsync),
+	.vsync_n          (_vsync),
+	.vid_show         (fmv_show),
+	.vid_key_all      (fmv_key_all),
+	.vid_rgb          (fmv_rgb)
 );
 
 wire [15:0] a2065_dout;

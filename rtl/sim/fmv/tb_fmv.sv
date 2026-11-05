@@ -9,7 +9,7 @@
 // word 0 with SEQ, then UQ_WPTR) and reads the event ring.
 //
 // Run: iverilog -g2012 -o tb ../../fmv/fmv_afifo.v ../../fmv/fmv_bus.v
-//      ../../fmv/fmv_ddr.v ../../fmv/fmv.v tb_fmv.sv && vvp -n tb
+//      ../../fmv/fmv_ddr.v ../../fmv/fmv_video.v ../../fmv/fmv.v tb_fmv.sv && vvp -n tb
 `timescale 1ns/1ps
 
 module tb_fmv;
@@ -52,6 +52,8 @@ module tb_fmv;
 		.mem_readdata(m_readdata), .mem_readdatavalid(m_readdatavalid),
 		.mem_writedata(m_writedata), .mem_byteenable(m_byteenable),
 		.mem_write(m_write), .mem_waitrequest(m_waitrequest)
+	,
+		.hsync_n(1'b1), .vsync_n(1'b1)
 	);
 
 	// ------------------------------------------------------- DDR3 model
@@ -393,6 +395,21 @@ module tb_fmv;
 		ev_next(e);
 		check(e[63:48] == 16'd0 && e[23:4] == 20'h70022, "M.on: the first event is entry 0, SEQ 0");
 		check(mem[EV_WPTR >> 3][31:0] == 1, "M.on: EV_WPTR counts from 0");
+
+		// --- N: the display registers (contract v5) through the queue, with
+		// the mask, and nothing past 0xE6
+		upd(8'hE0, 16'h0015, 16'hFFFF);
+		upd(8'hE1, 16'h00AA, 16'hFFFF);
+		upd(8'hE2, 16'h0033, 16'hFFFF);
+		upd(8'hE3, 16'h0160, 16'hFFFF);
+		upd(8'hE4, 16'h0120, 16'hFFFF);
+		upd(8'hE5, 16'h1234, 16'hFFFF);
+		upd(8'hE6, 16'h0056, 16'hFFFF);
+		upd(8'hE5, 16'hFF00, 16'h0F00);          // masked: only bits 11:8
+		upd(8'hE7, 16'hFFFF, 16'hFFFF);          // reserved: lands nowhere
+		uq_sync;
+		check(dut.disp == {16'h0056, 16'h1F34, 16'h0120, 16'h0160, 16'h0033, 16'h00AA, 16'h0015},
+		      "N.display registers 0xE0-0xE6 through the queue, masked");
 
 		$display("%0d checks, %0d failed", checks, fails);
 		if (fails == 0) $display("RUN: PASS"); else $display("RUN: FAIL");
