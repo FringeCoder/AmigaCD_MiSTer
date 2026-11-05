@@ -308,7 +308,16 @@ end
 wire ss_peek_req_114 = ss_peek_tgl_sync ^ ss_peek_tgl_d;
 
 hps_ext hps_ext(.*, .ide_req(ide_fast ? ide_f_req : ide_c_req),  .ide_din(ide_fast ? ide_f_readdata : ide_c_readdata), .ss_diag(ss_diag),
+`ifdef FMV_DIAG
 	.fmv_diag(fmv_diag), .fmv_diag_x(fmv_diag_x), .fmv_diag_y(fmv_diag_y), .fmv_diag_z(fmv_diag_z),
+`else
+	// The FMV diag window (gate 1, fmv-plan.md) is off: constants in, so the
+	// taps behind it -- the arbiters' and ddram_ctrl's debug counters, the
+	// HPS port counters, the 68k PC ring, fmv.v's diag word -- have no load
+	// and are pruned. Seed-lottery rows 44-50 carried them; a FMV_DIAG=1
+	// fit (fit.yml input fmv_diag) brings them back.
+	.fmv_diag(128'd0), .fmv_diag_x(128'd0), .fmv_diag_y(128'd0), .fmv_diag_z(208'd0),
+`endif
 	.ss_peek_addr(ss_peek_addr), .ss_peek_req(ss_peek_req_sys),
 	.ss_peek_data(ss_peek_data), .ss_peek_valid(ss_peek_valid),
 	.ss_pc_snapshot(ss_pc_snapshot), .ss_kick_pair(ss_kick_pair),

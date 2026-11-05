@@ -36,6 +36,13 @@ on:
         description: 'Pin the build date (yymmdd) so panels on different days compare. Empty: today.'
         required: false
         default: ''
+      # The FMV diag window costs timing (docs/seed-lottery.md rows 44-50),
+      # so it is off in normal builds and on only for a diagnosis run.
+      fmv_diag:
+        description: 'Build the FMV diag window in (FMV_DIAG=1): for hardware diagnosis only.'
+        type: boolean
+        required: false
+        default: false
   workflow_call:
     inputs:
       seeds:
@@ -104,6 +111,7 @@ jobs:
       - name: Fit seed ${{ matrix.seed }}
         env:
           BUILD_DATE: ${{ inputs.build_date }}
+          FMV_DIAG: ${{ inputs.fmv_diag && '1' || '' }}
         run: ./scripts/ci-fit.sh AmigaCD "${{ matrix.seed }}"
 
       # The reports are what a timing failure is read from, so they travel

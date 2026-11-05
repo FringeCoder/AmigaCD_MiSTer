@@ -49,6 +49,13 @@ if [ -n "${BUILD_DATE:-}" ]; then
 		{ echo "could not pin BUILD_DATE in sys/build_id.tcl" >&2; exit 2; }
 fi
 
+# FMV_DIAG=1 builds the FMV diag window in (AmigaCD.sv): debug taps on the
+# DDR3 arbiters, the HPS port, Paula and the 68k PC that cost timing (seed
+# lottery rows 44-50). Off unless asked for, in this checkout's .qsf only.
+if [ "${FMV_DIAG:-}" = "1" ]; then
+	echo 'set_global_assignment -name VERILOG_MACRO "FMV_DIAG=1"' >> "$proj.qsf"
+fi
+
 status=0
 docker run --rm -v "$PWD":/project -w /project "$IMAGE" \
 	quartus_sh --flow compile "$proj" -c "$proj" > "fit_$seed.log" 2>&1 || status=$?
