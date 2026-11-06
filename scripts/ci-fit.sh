@@ -75,7 +75,13 @@ echo "== SDRAM address/bank pins: name ; pin ; bank ; X ; Y =="
 grep -E '^; SDRAM_(A|BA)\[' "output_files/$proj.fit.rpt" 2>/dev/null | awk -F';' '!seen[$2]++ {print $2";"$3";"$4";"$5";"$6}' || true
 
 rpt="output_files/$proj.sta.rpt"
-slack() {   # the worst of every corner's figure, so no corner hides a failure
+# The worst figure the flow's STA printed. AmigaCD.qsf has
+# TIMEQUEST_MULTICORNER_ANALYSIS OFF, so that is ONE corner (the MiSTer
+# template's default), not every corner: ok and the pick go by it. The
+# family table below is over every corner, and its all_setup can be worse
+# (seed-lottery row 54, seed 4: +0.029 here, -0.040 there). Both are kept;
+# the corner column in the family table says which corner that was.
+slack() {
 	grep -hoE "Worst-case $1 slack is [-0-9.]+" "$rpt" 2>/dev/null \
 		| grep -oE "[-0-9.]+$" | sort -g | head -1
 }

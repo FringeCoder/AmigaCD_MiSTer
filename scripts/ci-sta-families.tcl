@@ -16,8 +16,8 @@
 # what-if the plan needs: it shows how far each block's cone is from closing on
 # its own, so cutting one source shows what is left behind it.
 #
-# Output lines are "<family> <slack|none>", slack the minimum over every
-# operating corner. "none" means the collection was empty -- a pattern that no
+# Output lines are "<family> <slack> <corner>" or "<family> none", slack the
+# minimum over every operating corner and corner the one it came from. "none" means the collection was empty -- a pattern that no
 # longer matches anything, which is itself worth seeing.
 set proj [lindex $quartus(args) 0]
 set out  [lindex $quartus(args) 1]
@@ -75,16 +75,21 @@ proc spec_args {kind spec} {
 }
 
 array set worst {}
+array set worst_oc {}
 foreach_in_collection oc [get_available_operating_conditions] {
 	set_operating_conditions $oc
 	update_timing_netlist
+	set oc_name [string map {" " "_"} [get_operating_conditions_info -display_name $oc]]
 	foreach f $families {
 		lassign $f name from to
 		set args [concat [spec_args from $from] [spec_args to $to]]
 		set paths [eval get_timing_paths -setup -npaths 1 $args]
 		foreach_in_collection p $paths {
 			set s [get_path_info $p -slack]
-			if {![info exists worst($name)] || $s < $worst($name)} { set worst($name) $s }
+			if {![info exists worst($name)] || $s < $worst($name)} {
+				set worst($name) $s
+				set worst_oc($name) $oc_name
+			}
 		}
 	}
 }
@@ -118,7 +123,11 @@ set fh [open $out w]
 foreach f $families {
 	set name [lindex $f 0]
 	if {[info exists worst($name)]} {
-		puts $fh [format "%s %.3f" $name $worst($name)]
+		# The corner third: AmigaCD.qsf has TIMEQUEST_MULTICORNER_ANALYSIS
+		# OFF, so the flow's own figure (fit.json "setup", what ok and the
+		# pick go by) is one corner only, and a family here can be worse
+		# than it at another (row 54, seed 4: +0.029 there, -0.040 here).
+		puts $fh [format "%s %.3f %s" $name $worst($name) $worst_oc($name)]
 	} else {
 		puts $fh "$name none"
 	}
