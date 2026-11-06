@@ -23,9 +23,10 @@
 // Main pushes the chips' reset values again.
 
 module fmv_bus #(
-	// The perf window, in clk_sys cycles: one second at the PAL clock. A
-	// bench sets it short.
-	parameter integer PERF_WINDOW = 28375160,
+	// The perf window, in clk_sys cycles: a quarter second at the PAL clock,
+	// short enough that the access count cannot saturate (v28: 17 bits over
+	// a second read 131071 on every line). A bench sets it shorter.
+	parameter integer PERF_WINDOW = 7093790,     // a quarter of a second
 	// The hold counts' unit: 2^PERF_SHIFT clk_sys. A bench sets it to 0.
 	parameter integer PERF_SHIFT = 8
 ) (
@@ -68,15 +69,18 @@ module fmv_bus #(
 	output reg  [15:0] mwdata,
 	input  wire        mack_t,          // toggles when the access is done
 	input  wire [15:0] mrdata,
+	output reg         mfill = 1'b0,    // this read is a ROM line fill (fmv_ddr)
+	input  wire [255:0] mline,          // the line, beat 0 in 63:0
 
 	output wire  [6:0] dbg,            // {int2, l64_int, cl_int, st, alive}, for the diag window
 	output wire [111:0] disp,          // 0xE0-0xE6, the display registers (contract v5), 0xE0 lowest
 	// Where the 68k's time on the board goes, per PERF_WINDOW, latched at the
-	// end of each: {mem, ring, fifo, held, accesses}, 17 bits each, the four
-	// hold counts in units of 256 clk_sys (9 us). For the diag window only
-	// (fmv.v; FMV_DIAG). Run v27: 72000 board accesses a second with the
-	// stream at 2/3 speed, about 14 us each if the 68k is flat out.
-	output reg  [84:0] perf = 85'd0
+	// end of each: {ram, rom, ring, fifo, held, accesses}, accesses 17 bits,
+	// the five hold counts 15 bits each in units of 256 clk_sys (9 us). For
+	// the diag window only (fmv.v; FMV_DIAG). Run v28: 35 % of the 68k's
+	// second held on ROM/RAM, the driver running from the FMV ROM in DDR3;
+	// rom and ram are split since, and rom includes the cache's own cycles.
+	output reg  [91:0] perf = 92'd0
 );
 
 	// ---------------------------------------------------------------- state
@@ -111,7 +115,7 @@ module fmv_bus #(
 	// ---- the perf window (see the perf port) ----
 	reg [24:0] pw_t = 25'd0;
 	reg [16:0] pw_acc = 17'd0;
-	reg [31:0] pw_held = 32'd0, pw_fifo = 32'd0, pw_ring = 32'd0, pw_mem = 32'd0;
+	reg [31:0] pw_held = 32'd0, pw_fifo = 32'd0, pw_ring = 32'd0, pw_rom = 32'd0, pw_ram = 32'd0;
 	reg [31:0] l64_ack_idx = 32'd0;
 	reg        l64_acked   = 1'b0;
 
@@ -137,10 +141,35 @@ module fmv_bus #(
 	wire [15:0] backlog    = ev_count[15:0] - rdidx_lo;
 	wire        ring_full  = (backlog >= 16'd4095);   // contract: low half, mod 2^16
 
-	localparam S_IDLE = 3'd0, S_RD1 = 3'd1, S_RD2 = 3'd2, S_MEM = 3'd3,
-	           S_POST = 3'd4, S_DONE = 3'd5, S_UP1 = 3'd6, S_UP2 = 3'd7;
-	reg  [2:0] st = S_IDLE;
-	assign dbg = {int2, l64_int, cl_int, st, alive};
+	localparam S_IDLE = 4'd0, S_RD1 = 4'd1, S_RD2 = 4'd2, S_MEM = 4'd3,
+	           S_POST = 4'd4, S_DONE = 4'd5, S_UP1 = 4'd6, S_UP2 = 4'd7,
+	           S_CL1 = 4'd8, S_CL2 = 4'd9, S_FILL = 4'd10;
+	reg  [3:0] st = S_IDLE;
+	assign dbg = {int2, l64_int, cl_int, st[2:0], alive};
+
+	// ---- the ROM cache ----
+	// The FMV driver runs from the board ROM, which lives in DDR3, and in
+	// run v28 the 68k spent 35 % of its time held on ROM/RAM: every fetch
+	// the 68020's own cache missed was a DDR3 round trip. 4 KB here, direct
+	// mapped, 128 lines of 32 bytes, filled by one 4-beat burst. ROM only:
+	// Main writes the ROM once, before ALIVE, and never during a session,
+	// while the board RAM holds the CL450's DRAM variables, which Main writes
+	// into DDR3 at any time (fmv-contract.md), so a cached copy of RAM could
+	// be stale. Emptied whenever status[64] is clear, so a session starts
+	// with nothing from the last one's ROM.
+	reg  [63:0] c_data [0:511];       // {line, word}
+	reg   [5:0] c_tag  [0:127];       // board offset 17:12
+	reg [127:0] c_valid = 128'd0;
+	reg  [63:0] c_q;
+	reg   [5:0] c_tq;
+	reg   [1:0] c_k = 2'd0;           // fill: the word being written
+	// Written through these, from a block of their own, as the register
+	// file is: inside the state machine Quartus would not infer the M10Ks.
+	reg         c_we = 1'b0, c_twe = 1'b0;
+	reg   [8:0] c_wa;
+	reg   [6:0] c_twa;
+	reg  [63:0] c_wd;
+	reg   [5:0] c_twd;
 
 	reg  [7:0] idx;           // register-file index of the access or update
 	reg        use_ff;        // the index lives in a flop, not the RAM
@@ -155,6 +184,15 @@ module fmv_bus #(
 	// access that arrives while an update is being applied cannot slip by.
 	assign nrdy = access & (st != S_DONE);
 	assign cpu_data_out = (sel & fmv_on & cpu_rw & (st == S_DONE)) ? rd_val : 16'h0000;
+
+	always @(posedge clk) begin
+		c_q  <= c_data[cpu_addr[11:3]];
+		c_tq <= c_tag[cpu_addr[11:5]];
+		if (c_we)  c_data[c_wa] <= c_wd;
+		if (c_twe) c_tag[c_twa] <= c_twd;
+	end
+	wire       c_hit = c_valid[cpu_addr[11:5]] && c_tq == cpu_addr[17:12];
+	wire [1:0] c_lane = cpu_addr[2:1];
 
 	wire [7:0] acc_idx = is_cl  ? {1'b0, cl_r} :
 	                     is_l64 ? {3'b100, l64_r} :
@@ -204,6 +242,8 @@ module fmv_bus #(
 		ev_wr <= 1'b0;
 		up_rd <= 1'b0;
 		rf_we <= 1'b0;
+		c_we  <= 1'b0;
+		c_twe <= 1'b0;
 
 		mack_s1 <= mack_t;
 		mack_s2 <= mack_s1;
@@ -227,6 +267,7 @@ module fmv_bus #(
 			l64_int     <= 1'b0;
 			alive       <= 1'b0;
 			rst_pend    <= 1'b0;
+			c_valid     <= 128'd0;
 		end
 
 		case (st)
@@ -241,12 +282,21 @@ module fmv_bus #(
 			// the read of HOST_newcmd, this state machine IDLE, up_full 1).
 			if (access && (is_rom & cpu_rw | is_ram | (!ev_full && !ring_full))) begin
 				ev_haddr <= 4'd0;
-				if (is_rom & cpu_rw | is_ram) begin
-					// ROM and RAM: a DDR3 access, not an event
+				if (is_rom & cpu_rw) begin
+					// ROM read: the cache first (above). The DDR3 request
+					// fields are set now for a miss.
+					maddr  <= cpu_addr[19:1];
+					mrw    <= 1'b1;
+					mbe    <= 2'b11;
+					mfill  <= 1'b1;
+					st     <= S_CL1;
+				end else if (is_ram) begin
+					// RAM: a DDR3 access, not an event, and never cached
 					maddr  <= cpu_addr[19:1];
 					mrw    <= cpu_rw;
 					mbe    <= {~cpu_uds_n, ~cpu_lds_n};
 					mwdata <= cpu_data_in;
+					mfill  <= 1'b0;
 					mreq_t <= ~mreq_t;
 					st     <= S_MEM;
 				end else begin                    // room in the ring (above)
@@ -328,9 +378,38 @@ module fmv_bus #(
 			st       <= S_DONE;
 		end
 
+		S_CL1: st <= S_CL2;                // the cache RAM read is in flight
+
+		S_CL2: begin
+			if (c_hit) begin
+				rd_val <= {c_q[{c_lane, 4'd0} +: 8], c_q[{c_lane, 4'd8} +: 8]};
+				st     <= S_DONE;
+			end else begin
+				mreq_t <= ~mreq_t;            // a line fill (mfill is set)
+				st     <= S_MEM;
+			end
+		end
+
 		S_MEM: begin
-			if (mack_s2 != mack_s3)
+			if (mack_s2 != mack_s3) begin
+				c_k <= 2'd0;
+				st  <= mfill ? S_FILL : S_DONE;
+			end
+		end
+
+		S_FILL: begin
+			// mline has been stable since before mack_t toggled
+			c_we  <= 1'b1;
+			c_wa  <= {cpu_addr[11:5], c_k};
+			c_wd  <= mline[{c_k, 6'd0} +: 64];
+			c_k   <= c_k + 1'd1;
+			if (c_k == 2'd3) begin
+				c_twe <= 1'b1;
+				c_twa <= cpu_addr[11:5];
+				c_twd <= cpu_addr[17:12];
+				c_valid[cpu_addr[11:5]] <= 1'b1;
 				st <= S_DONE;
+			end
 		end
 
 		S_DONE: begin
@@ -389,18 +468,20 @@ module fmv_bus #(
 
 	// Counted from the outside of the state machine, so it cannot change
 	// what the 68k sees: held is nrdy; fifo and ring are the two reasons
-	// S_IDLE holds a ring-bound access; mem is a ROM/RAM access's DDR3 trip.
+	// S_IDLE holds a ring-bound access; rom is a ROM read's time, cache and
+	// fills; ram is a RAM access's DDR3 trip.
 	wire ringbound = ~(is_rom & cpu_rw | is_ram);
 	always @(posedge clk) begin
 		if (pw_t == PERF_WINDOW - 1) begin
 			pw_t    <= 25'd0;
-			perf    <= {pw_mem[PERF_SHIFT +: 17], pw_ring[PERF_SHIFT +: 17], pw_fifo[PERF_SHIFT +: 17],
-			            pw_held[PERF_SHIFT +: 17], pw_acc};
+			perf    <= {pw_ram[PERF_SHIFT +: 15], pw_rom[PERF_SHIFT +: 15], pw_ring[PERF_SHIFT +: 15],
+			            pw_fifo[PERF_SHIFT +: 15], pw_held[PERF_SHIFT +: 15], pw_acc};
 			pw_acc  <= 17'd0;
 			pw_held <= 32'd0;
 			pw_fifo <= 32'd0;
 			pw_ring <= 32'd0;
-			pw_mem  <= 32'd0;
+			pw_rom  <= 32'd0;
+			pw_ram  <= 32'd0;
 		end else begin
 			pw_t <= pw_t + 1'd1;
 			if (access && st == S_IDLE && (is_rom & cpu_rw | is_ram | (!ev_full && !ring_full)) &&
@@ -412,8 +493,10 @@ module fmv_bus #(
 				pw_fifo <= pw_fifo + 1'd1;
 			if (access && st == S_IDLE && ringbound && !ev_full && ring_full)
 				pw_ring <= pw_ring + 1'd1;
-			if (st == S_MEM)
-				pw_mem <= pw_mem + 1'd1;
+			if (st == S_CL1 || st == S_CL2 || st == S_FILL || (st == S_MEM && mfill))
+				pw_rom <= pw_rom + 1'd1;
+			if (st == S_MEM && !mfill)
+				pw_ram <= pw_ram + 1'd1;
 		end
 	end
 endmodule

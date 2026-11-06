@@ -66,7 +66,7 @@ module tb_fmv_video;
 		.ev_empty(1'b1), .ev_data(48'd0), .ev_rd(),
 		.up_wr(), .up_data(), .up_full(1'b0),
 		.mreq_t(1'b0), .maddr(19'd0), .mrw(1'b1), .mbe(2'b11), .mwdata(16'd0),
-		.mack_t(), .mrdata(),
+		.mack_t(), .mrdata(), .mfill(1'b0), .mline(),
 		.freq_t(freq_t), .faddr(faddr), .fwords(fwords), .fhalf(fhalf),
 		.lb_we(lb_we), .lb_waddr(lb_waddr), .lb_wdata(lb_wdata),
 		.avl_address(m_address), .avl_burstcount(m_burstcount),

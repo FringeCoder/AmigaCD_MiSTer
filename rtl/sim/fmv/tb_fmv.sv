@@ -39,6 +39,7 @@ module tb_fmv;
 	reg         m_readdatavalid = 0;
 	reg         m_waitrequest = 1;
 	integer     off_xfers = 0;          // DDR3 transfers accepted while off (M)
+	integer     board_reads = 0;        // DDR3 reads of the board image (Q)
 	reg         count_off = 0;
 
 	fmv #(.PERF_WINDOW(6000), .PERF_SHIFT(0)) dut (
@@ -78,6 +79,8 @@ module tb_fmv;
 		m_readdatavalid <= 0;
 		if (count_off && !m_waitrequest && (m_read || m_write))
 			off_xfers = off_xfers + 1;
+		if (!m_waitrequest && m_read && m_address < BASE + 29'h20000)
+			board_reads = board_reads + 1;     // ROM/RAM, not the queue
 		if (!m_waitrequest && m_write)
 			for (ii = 0; ii < 8; ii = ii + 1)
 				if (m_byteenable[ii]) mem[m_address - BASE][8 * ii +: 8] <= m_writedata[8 * ii +: 8];
@@ -413,10 +416,12 @@ module tb_fmv;
 
 		// --- P: the perf window (fmv_bus perf, the diag word from 0xF403):
 		// accesses counted exactly, and each hold in its own counter
+		rd(B(20'h00010), v);                     // warm the line, outside the window
 		while (dut.bus.pw_t != 0) @(posedge clk_sys);
 		repeat (5) @(posedge clk_sys);
 		for (k = 0; k < 6; k = k + 1) wr(B(20'h70022), 16'h1111);
-		rd(B(20'h00010), v);                     // ROM: a DDR3 trip
+		rd(B(20'h00010), v);                     // ROM: a cache hit
+		rd(B(20'h80100), v);                     // RAM: a DDR3 trip
 		fork
 			wr(B(20'h70022), 16'h2222);          // held for the ring ...
 			begin
@@ -436,14 +441,48 @@ module tb_fmv;
 			end
 		join
 		while (dut.bus.pw_t != 2) @(posedge clk_sys);
-		check(dut.bus.perf[16:0] == 9, "P.accesses in the window, exactly");
-		// {mem, ring, fifo, held, accesses} from bit 0 up, 17 bits each
-		check(dut.bus.perf[67:51] >= 290 && dut.bus.perf[67:51] <= 300, "P.held for the ring: its own counter");
-		check(dut.bus.perf[50:34] >= 190 && dut.bus.perf[50:34] <= 200, "P.held for the event FIFO: its own counter");
-		check(dut.bus.perf[84:68] > 0, "P.a ROM read's DDR3 trip counted");
-		check(dut.bus.perf[33:17] >= dut.bus.perf[50:34] + dut.bus.perf[67:51] + dut.bus.perf[84:68],
+		check(dut.bus.perf[16:0] == 10, "P.accesses in the window, exactly");
+		// {ram, rom, ring, fifo, held, accesses} from bit 0 up: accesses
+		// 17 bits, the holds 15 each
+		check(dut.bus.perf[61:47] >= 290 && dut.bus.perf[61:47] <= 300, "P.held for the ring: its own counter");
+		check(dut.bus.perf[46:32] >= 190 && dut.bus.perf[46:32] <= 200, "P.held for the event FIFO: its own counter");
+		check(dut.bus.perf[76:62] > 0, "P.a ROM read's time counted as ROM");
+		check(dut.bus.perf[91:77] > 0, "P.a RAM access's DDR3 trip counted as RAM");
+		check(dut.bus.perf[76:62] < dut.bus.perf[91:77], "P.a ROM hit costs less than a RAM trip");
+		check(dut.bus.perf[31:17] >= dut.bus.perf[46:32] + dut.bus.perf[61:47] + dut.bus.perf[76:62] +
+		                             dut.bus.perf[91:77],
 		      "P.held covers every hold");
 		ev_drain;
+
+		// --- Q: the ROM cache (run v28: the driver runs from the ROM in DDR3)
+		for (k = 0; k < 32; k = k + 1) set_mbyte(21'h00200 + k, 8'h40 + k);
+		for (k = 0; k < 32; k = k + 1) set_mbyte(21'h01200 + k, 8'hA0 + k);
+		n0 = board_reads;
+		rd(B(20'h00200), v);
+		check(v == 16'h4041, "Q.a miss reads the word through a line fill");
+		check(board_reads == n0 + 1, "Q.a line fill is one DDR3 read (a 4-beat burst)");
+		n0 = board_reads;
+		rd(B(20'h00202), v); check(v == 16'h4243, "Q.the next word: from the cache");
+		rd(B(20'h0021E), v); check(v == 16'h5E5F, "Q.the line's last word: from the cache");
+		rd(B(20'h0020E), v); check(v == 16'h4E4F, "Q.its second beat: from the cache");
+		check(board_reads == n0, "Q.hits make no DDR3 read");
+		check(bus_cycles < 20, "Q.a hit answers in a few clocks");
+		rd(B(20'h01200), v);
+		check(v == 16'hA0A1, "Q.the same index, another tag: a miss with the right data");
+		check(board_reads == n0 + 1, "Q.that miss is a fill");
+		rd(B(20'h00204), v);
+		check(v == 16'h4445 && board_reads == n0 + 2, "Q.direct mapped: the first line was replaced");
+		// RAM is never cached: Main writes the CL450's DRAM variables into
+		// DDR3 at any time (fmv-contract.md)
+		set_mbyte(21'h80200, 8'h11); set_mbyte(21'h80201, 8'h22);
+		rd(B(20'h80200), v); check(v == 16'h1122, "Q.RAM read");
+		set_mbyte(21'h80200, 8'h33); set_mbyte(21'h80201, 8'h44);
+		rd(B(20'h80200), v); check(v == 16'h3344, "Q.RAM is not cached: Main's write is seen at once");
+		// Off empties it
+		check(dut.bus.c_valid != 0, "Q.lines are valid while on");
+		fmv_on = 0;
+		repeat (4) @(posedge clk_sys);
+		check(dut.bus.c_valid == 0, "Q.off: the cache is empty");
 
 		$display("%0d checks, %0d failed", checks, fails);
 		if (fails == 0) $display("RUN: PASS"); else $display("RUN: FAIL");

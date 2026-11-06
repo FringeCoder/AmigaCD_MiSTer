@@ -191,10 +191,10 @@ module tb_fmv_chain;
 		check(ac_present, "chain: ALIVE lands");
 		check(out_of_window == 0, "chain: every access stays in the window");
 		// The diag window Main reads over SPI (fmv.v's layout)
-		check(dut.diag[15:0] == 16'hF403, "diag: version word");
+		check(dut.diag[15:0] == 16'hF404, "diag: version word");
 		check(dut.diag[16] && dut.diag[17] && dut.diag[27], "diag: status[64], ALIVE and the synchronised on");
 		check(dut.diag[31:28] == 4'd0, "diag: fmv_ddr back in S_IDLE");
-		check(dut.diag[116:32] == dut.bus.perf, "diag: the perf window, from bit 32");
+		check(dut.diag[123:32] == dut.bus.perf, "diag: the perf window, from bit 32");
 		check(dut.diag[127:125] == 3'b000, "diag: no interrupt line up yet");
 		// Raise the CL450 INT (HOST_control Int = 0) through the queue
 		upd(8'h48, 16'h0000, 16'h0080);

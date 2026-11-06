@@ -41,6 +41,11 @@ module fmv_ddr (
 	input  wire [15:0] mwdata,
 	output reg         mack_t = 1'b0,
 	output reg  [15:0] mrdata = 16'h0000,
+	// A ROM line fill for fmv_bus's cache: mfill with a read asks for the
+	// whole 32-byte line around maddr, one 4-beat burst, into mline (beat 0
+	// in bits 63:0). mrdata is the word asked for, as on any read.
+	input  wire        mfill,
+	output reg [255:0] mline = 256'd0,
 
 	// line fetches for fmv_video (toggle; the fields are held until the next)
 	input  wire        freq_t,
@@ -88,6 +93,9 @@ module fmv_ddr (
 	reg        on_s1 = 1'b0, on_s2 = 1'b0;
 	reg [63:0] w0;
 	reg  [1:0] k;                // 16-bit lane of a ROM/RAM access
+	reg  [1:0] kw;               // the 64-bit word of a line fill asked for
+	reg  [1:0] mb;               // beats of a line fill taken
+	reg        mfill_r = 1'b0;
 	reg        freq_s1 = 1'b0, freq_s2 = 1'b0, freq_seen = 1'b0;
 	reg [28:0] f_addr = 29'd0;
 	reg  [6:0] f_left = 7'd0;     // words of the line still to request
@@ -155,8 +163,12 @@ module fmv_ddr (
 			end else if (mreq_s2 != mreq_seen) begin
 				mreq_seen      <= mreq_s2;
 				k              <= maddr[2:1];
-				avl_address    <= BASE + {10'd0, maddr[19:3]};
-				avl_burstcount <= 8'd1;
+				kw             <= maddr[4:3];
+				mb             <= 2'd0;
+				mfill_r        <= mfill & mrw;
+				avl_address    <= (mfill & mrw) ? BASE + {10'd0, maddr[19:5], 2'b00}
+				                                : BASE + {10'd0, maddr[19:3]};
+				avl_burstcount <= (mfill & mrw) ? 8'd4 : 8'd1;
 				if (mrw) begin
 					avl_read <= 1'b1;
 					st       <= S_MRD;
@@ -191,9 +203,17 @@ module fmv_ddr (
 		// ---- ROM/RAM ----
 		S_MRD: if (!avl_waitrequest) begin avl_read <= 1'b0; st <= S_MRD_D; end
 		S_MRD_D: if (rdv_q) begin
-			mrdata <= {rd_q[{k, 4'd0} +: 8], rd_q[{k, 4'd8} +: 8]};
-			mack_t <= ~mack_t;      // mrdata is set first; the toggle follows
-			st     <= S_IDLE;
+			// A line fill takes four beats; any other read, one. The word
+			// asked for is beat kw of a fill, the only beat otherwise.
+			if (!mfill_r || mb == kw)
+				mrdata <= {rd_q[{k, 4'd0} +: 8], rd_q[{k, 4'd8} +: 8]};
+			if (mfill_r)
+				mline[{mb, 6'd0} +: 64] <= rd_q;
+			mb <= mb + 1'd1;
+			if (!mfill_r || mb == 2'd3) begin
+				mack_t <= ~mack_t;  // mrdata and mline are set first; the toggle follows
+				st     <= S_IDLE;
+			end
 		end
 		S_MWR: if (!avl_waitrequest) begin
 			avl_write <= 1'b0;
