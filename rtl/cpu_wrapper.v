@@ -624,11 +624,13 @@ wire ckick = turbokick_d & !cpustate;
 reg turbochip_d;
 reg turbokick_d;
 reg ic_ena;
+reg ic_fmv;
 always @(posedge clk) begin
 	if (~reset | ~reset_out) begin
 		turbochip_d <= 0;
 		turbokick_d <= 0;
 		ic_ena <= 0;
+		ic_fmv <= 0;
 	end
 	else if (~cpu_req) begin	// No mem access, so safe to switch chipram access mode
 		// the proxy's FAST reads (proxy68k.v) take the same route. Not the
@@ -638,6 +640,8 @@ always @(posedge clk) begin
 		turbochip_d <= (cachecfg[0] & cpucfg[1] & ~ec020) | (px_own_s & px_fast_s);
 		turbokick_d <= (cachecfg[1] & cpucfg[1]) | (px_own_s & px_fast_s);
 		ic_ena <= cachecfg[0] & ec020;
+		// The CD32 FMV board's ROM, on either 68020: see fmv_rom_a below.
+		ic_fmv <= (cpucfg[1:0] == 2'b11);
 	end
 end
 
@@ -791,7 +795,22 @@ reg [15:0] r32_lo;
 reg [15:0] chip_dout2_p;
 always @(posedge clk) chip_dout2_p <= chip_dout2;
 
-wire        ifch = ic_ena & ~|cpustate_p & ~|cpu_addr_m[23:21];
+// The CD32 FMV board's ROM (rtl/fmv): the first 256 KB of its 1 MB, once
+// autoconfig has placed it. Code runs from it over the chip bus bridge, and
+// upstream's cache takes only chip RAM fetches, since everything else that
+// holds code is on the fast path: so every fetch of the FMV driver was a
+// chip bus cycle. Its copy loop (move.w (a1)+,(a3) / dbf at 0x203b5a) then
+// took about 5 us a word, 32 % of the 68k's time, and the stream played at
+// 0.865 of real time (FringeCoder/AmigaCD docs/fmv-plan.md, run v31). A real
+// 68EC020 runs it from its cache. The ROM is read only (fmv_bus drops
+// writes), so a line can only go stale if the ROM itself changes, which
+// happens with the board off and the CPU reset. Its fills are two 16-bit
+// reads, as without AGA: fmv_bus answers 16 bits, never a long chip read.
+// The registers and RAM above the ROM are not cached.
+reg         fmv_cfgd;      // the board is configured (autoconfig, below)
+wire        fmv_rom_a = fmv_cfgd & ~|cpu_addr_m[31:24] & (cpu_addr_m[23:20] == fmv_base[7:4]) &
+                        (cpu_addr_m[19:18] == 2'b00);
+wire        ifch = ~|cpustate_p & ((ic_ena & ~|cpu_addr_m[23:21]) | (ic_fmv & fmv_rom_a));
 reg  [16:0] ic_tag[64];
 reg  [31:0] ic_dat[64];
 reg  [63:0] ic_val;
@@ -833,7 +852,7 @@ always @(posedge clk) begin
 	ic_vq <= ic_val[cpu_addr_m[7:2]];
 	ic_qa <= cpu_addr_m[23:2];
 	ic_qv <= ~clkena_p_throttled & ~ic_we & ~ic_clr & ~ic_clre;
-	nf_v  <= ec020 & clkena_p_throttled & ~|cpustate_p & |cpu_addr_m[23:21];
+	nf_v  <= ec020 & clkena_p_throttled & ~|cpustate_p & |cpu_addr_m[23:21] & ~(ic_fmv & fmv_rom_a);
 	nf_a  <= cpu_addr_m[23:2];
 	nf_s  <= fc_p[2];
 	if (~reset) ic_val <= 0;
@@ -941,10 +960,10 @@ always @(negedge clk, negedge reset) begin
 							c_rw <= 1;
 							c_uds <= 0;
 							c_lds <= 0;
-							c_long <= chip32_en & ~if_go;
+							c_long <= chip32_en & ~if_go & ~fmv_rom_a;
 							if (~if_go) begin
 								if_go <= 1;
-								if_l  <= chip32_en;
+								if_l  <= chip32_en & ~fmv_rom_a;
 								if_a  <= cpu_addr_m[23:2];
 								if_a1 <= cpu_addr_m[1];
 								if_s  <= fc_p[2];
@@ -1022,7 +1041,6 @@ reg       ac_toccata;
 reg       ac_a2065;
 reg       ac_cdtv;
 reg       ac_fmv;
-reg       fmv_cfgd;
 reg [2:0] ac_memcard;
 reg [3:0] autocfg_data;
 

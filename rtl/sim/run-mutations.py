@@ -37,6 +37,11 @@ FMV = 'rtl/fmv/fmv_afifo.v rtl/fmv/fmv_bus.v rtl/fmv/fmv_ddr.v rtl/fmv/fmv_video
 FMV_TB = 'rtl/sim/fmv/tb_fmv.sv'
 FMVV = 'rtl/fmv/fmv_ddr.v rtl/fmv/fmv_video.v'
 FMVV_TB = 'rtl/sim/fmv/tb_fmv_video.sv'
+# cpu_wrapper's 68020 instruction cache on the FMV ROM (run v31); -Irtl for
+# its includes, as rtl-sim.yml's -I ../.. from the bench directory
+CPUW = ('-Irtl rtl/cpu_wrapper.v rtl/proxy68k.v rtl/memory_router.v rtl/cpu_cycles.v '
+        'rtl/sim/cpuwrap/cpu_core_stubs.v')
+CPUW_IC_TB = 'rtl/sim/cpuwrap/tb_cpu_wrapper_icache.sv'
 
 # (label, bench, sources, file to mutate, find, replace, expected failing tests)
 #
@@ -288,6 +293,39 @@ MUTATIONS = [
      "f_left    <= fwords;",
      "f_left    <= fwords - 1'd1;",
      'B.each window line fetched once'),
+
+    # The 68020 instruction cache on the FMV board's ROM (run v31: the
+    # driver's copy loop at a chip bus cycle per fetch).
+    ('cpu_wrapper: FMV ROM fetches not cached (before run v31)', CPUW_IC_TB, CPUW,
+     'rtl/cpu_wrapper.v',
+     "((ic_ena & ~|cpu_addr_m[23:21]) | (ic_fmv & fmv_rom_a))",
+     "((ic_ena & ~|cpu_addr_m[23:21]))",
+     'A.'),
+    ('cpu_wrapper: an FMV ROM fill as a long chip read', CPUW_IC_TB, CPUW,
+     'rtl/cpu_wrapper.v',
+     "c_long <= chip32_en & ~if_go & ~fmv_rom_a;",
+     "c_long <= chip32_en & ~if_go;",
+     'A. ROM fetch miss: no long cycle'),
+    ('cpu_wrapper: the board registers cached as ROM', CPUW_IC_TB, CPUW,
+     'rtl/cpu_wrapper.v',
+     "(cpu_addr_m[19:18] == 2'b00);",
+     "1'b1;",
+     'D.'),
+    ('cpu_wrapper: an unconfigured board range cached', CPUW_IC_TB, CPUW,
+     'rtl/cpu_wrapper.v',
+     "wire        fmv_rom_a = fmv_cfgd & ",
+     "wire        fmv_rom_a = 1'b1 & ",
+     'H.'),
+    ('cpu_wrapper: the FMV ROM cached on the 68EC020 only', CPUW_IC_TB, CPUW,
+     'rtl/cpu_wrapper.v',
+     "ic_fmv <= (cpucfg[1:0] == 2'b11);",
+     "ic_fmv <= ec020;",
+     'G.'),
+    ('cpu_wrapper: an FMV ROM fetch evicts its own line (nf_v)', CPUW_IC_TB, CPUW,
+     'rtl/cpu_wrapper.v',
+     " & ~(ic_fmv & fmv_rom_a);",
+     ";",
+     'A2.'),
 ]
 def build_and_run(bench, sources, out):
     argv = (['iverilog', '-g2012', '-I.', '-o', out] +

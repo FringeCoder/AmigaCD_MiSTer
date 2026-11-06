@@ -55,7 +55,7 @@ module TG68KdotC_Kernel
 	output            opc_cond,
 	output     [15:0] opc_snd,
 	output            opc_dbx,
-	output      [1:0] opc_cacr,
+	output     [13:0] opc_cacr,   // CACR, 14 bits as the kernel's port
 	output            mmu_busy,
 	output            skipfetch,
 	output            opc_cacr_wr,
@@ -103,6 +103,16 @@ module TG68KdotC_Kernel
 	reg  [1:0]  r_busstate     = 2'd1;   // 1 = no memory access
 	reg         r_at_boundary  = 1'b0;
 	reg  [31:0] r_addr         = 32'h00BF0000;
+	reg  [13:0] r_cacr         = 14'd0;  // bit 0: the instruction cache enabled
+	reg   [2:0] r_fc           = 3'd5;   // supervisor data
+	// What the wrapper handed back: the word on data_in at each tick that
+	// completed an access, and how many accesses have completed.
+	reg  [15:0] r_rdata        = 16'd0;
+	integer     done           = 0;
+	always @(posedge clk) if (clkena_in && r_busstate != 2'd1) begin
+		r_rdata = data_in;
+		done    = done + 1;
+	end
 
 	// Every clkena_in tick the wrapper lets through, counted here so the bench
 	// can measure the stock-speed throttle without reaching into the wrapper.
@@ -127,12 +137,12 @@ module TG68KdotC_Kernel
 	assign opc_cond       = 1'b0;
 	assign opc_snd        = 16'd0;
 	assign opc_dbx        = 1'b0;
-	assign opc_cacr       = 2'd0;
+	assign opc_cacr       = r_cacr;
 	assign mmu_busy       = 1'b0;
 	assign skipfetch      = 1'b0;   // no CLR/Scc here: every read goes out
 	assign opc_cacr_wr    = 1'b0;   // no MOVEC to CACR: the instruction cache is never told to clear
 	assign opc_caar       = 6'd0;
-	assign fc             = 3'd5;   // supervisor data
+	assign fc             = r_fc;
 	assign cacr_out       = 4'd0;
 	assign d_cache_out    = 1'b1;
 	assign vbr_out        = 32'd0;

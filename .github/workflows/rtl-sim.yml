@@ -1036,6 +1036,20 @@ jobs:
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # The 68020 instruction cache on the CD32 FMV board's ROM (run v31): the
+      # driver's copy loop paid a chip bus cycle per fetch, 32 % of the 68k's
+      # time, because the cache took chip RAM fetches only. Catches a ROM fetch
+      # going back to the bus, a fill as a long chip read (fmv_bus is 16-bit),
+      # the board's registers or an unconfigured range cached, the 68020
+      # (Turbo On) left out, and an FMV hit rewriting its line (nf_v).
+      - name: CPU wrapper instruction cache, FMV ROM
+        run: |
+          set -euo pipefail
+          cd rtl/sim/cpuwrap
+          iverilog -g2012 -I ../.. -o tbi             ../../cpu_wrapper.v ../../proxy68k.v ../../memory_router.v ../../cpu_cycles.v             cpu_core_stubs.v tb_cpu_wrapper_icache.sv
+          vvp tbi | tee outi.log
+          grep -q "RUN: PASS" outi.log
+
       # ECS super hires colour: register 5 * v and the sub-pixel average
       # (vAmigaTS Denise/Modes/shres, A500+ photographs).
       - name: Denise ECS super hires colour
