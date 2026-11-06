@@ -22,7 +22,13 @@
 // autoconfig nibbles must outlive it. An Amiga reset posts a RESET event and
 // Main pushes the chips' reset values again.
 
-module fmv_bus (
+module fmv_bus #(
+	// The perf window, in clk_sys cycles: one second at the PAL clock. A
+	// bench sets it short.
+	parameter integer PERF_WINDOW = 28375160,
+	// The hold counts' unit: 2^PERF_SHIFT clk_sys. A bench sets it to 0.
+	parameter integer PERF_SHIFT = 8
+) (
 	input  wire        clk,
 	input  wire        amiga_reset,     // active high
 	input  wire        fmv_on,          // status[64]
@@ -64,7 +70,13 @@ module fmv_bus (
 	input  wire [15:0] mrdata,
 
 	output wire  [6:0] dbg,            // {int2, l64_int, cl_int, st, alive}, for the diag window
-	output wire [111:0] disp           // 0xE0-0xE6, the display registers (contract v5), 0xE0 lowest
+	output wire [111:0] disp,          // 0xE0-0xE6, the display registers (contract v5), 0xE0 lowest
+	// Where the 68k's time on the board goes, per PERF_WINDOW, latched at the
+	// end of each: {mem, ring, fifo, held, accesses}, 17 bits each, the four
+	// hold counts in units of 256 clk_sys (9 us). For the diag window only
+	// (fmv.v; FMV_DIAG). Run v27: 72000 board accesses a second with the
+	// stream at 2/3 speed, about 14 us each if the 68k is flat out.
+	output reg  [84:0] perf = 85'd0
 );
 
 	// ---------------------------------------------------------------- state
@@ -95,6 +107,11 @@ module fmv_bus (
 	assign disp = disp_r;
 
 	reg [31:0] ev_count    = 32'd0;   // events posted, ever
+
+	// ---- the perf window (see the perf port) ----
+	reg [24:0] pw_t = 25'd0;
+	reg [16:0] pw_acc = 17'd0;
+	reg [31:0] pw_held = 32'd0, pw_fifo = 32'd0, pw_ring = 32'd0, pw_mem = 32'd0;
 	reg [31:0] l64_ack_idx = 32'd0;
 	reg        l64_acked   = 1'b0;
 
@@ -370,4 +387,33 @@ module fmv_bus (
 			rd_val <= mrdata;
 	end
 
+	// Counted from the outside of the state machine, so it cannot change
+	// what the 68k sees: held is nrdy; fifo and ring are the two reasons
+	// S_IDLE holds a ring-bound access; mem is a ROM/RAM access's DDR3 trip.
+	wire ringbound = ~(is_rom & cpu_rw | is_ram);
+	always @(posedge clk) begin
+		if (pw_t == PERF_WINDOW - 1) begin
+			pw_t    <= 25'd0;
+			perf    <= {pw_mem[PERF_SHIFT +: 17], pw_ring[PERF_SHIFT +: 17], pw_fifo[PERF_SHIFT +: 17],
+			            pw_held[PERF_SHIFT +: 17], pw_acc};
+			pw_acc  <= 17'd0;
+			pw_held <= 32'd0;
+			pw_fifo <= 32'd0;
+			pw_ring <= 32'd0;
+			pw_mem  <= 32'd0;
+		end else begin
+			pw_t <= pw_t + 1'd1;
+			if (access && st == S_IDLE && (is_rom & cpu_rw | is_ram | (!ev_full && !ring_full)) &&
+			    ~&pw_acc)
+				pw_acc <= pw_acc + 1'd1;
+			if (nrdy)
+				pw_held <= pw_held + 1'd1;
+			if (access && st == S_IDLE && ringbound && ev_full)
+				pw_fifo <= pw_fifo + 1'd1;
+			if (access && st == S_IDLE && ringbound && !ev_full && ring_full)
+				pw_ring <= pw_ring + 1'd1;
+			if (st == S_MEM)
+				pw_mem <= pw_mem + 1'd1;
+		end
+	end
 endmodule

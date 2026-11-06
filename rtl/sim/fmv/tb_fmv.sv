@@ -41,7 +41,7 @@ module tb_fmv;
 	integer     off_xfers = 0;          // DDR3 transfers accepted while off (M)
 	reg         count_off = 0;
 
-	fmv dut (
+	fmv #(.PERF_WINDOW(6000), .PERF_SHIFT(0)) dut (
 		.clk_sys(clk_sys), .amiga_reset(amiga_reset), .fmv_on(fmv_on),
 		.cpu_addr(cpu_addr), .cpu_data_in(cpu_dout), .cpu_data_out(cpu_din),
 		.cpu_rw(cpu_rw), .cpu_as_n(as_n), .cpu_uds_n(uds_n), .cpu_lds_n(lds_n),
@@ -410,6 +410,40 @@ module tb_fmv;
 		uq_sync;
 		check(dut.disp == {16'h0056, 16'h1F34, 16'h0120, 16'h0160, 16'h0033, 16'h00AA, 16'h0015},
 		      "N.display registers 0xE0-0xE6 through the queue, masked");
+
+		// --- P: the perf window (fmv_bus perf, the diag word from 0xF403):
+		// accesses counted exactly, and each hold in its own counter
+		while (dut.bus.pw_t != 0) @(posedge clk_sys);
+		repeat (5) @(posedge clk_sys);
+		for (k = 0; k < 6; k = k + 1) wr(B(20'h70022), 16'h1111);
+		rd(B(20'h00010), v);                     // ROM: a DDR3 trip
+		fork
+			wr(B(20'h70022), 16'h2222);          // held for the ring ...
+			begin
+				@(posedge clk_sys); @(posedge clk_sys);
+				force dut.bus.ring_full = 1'b1;
+				repeat (300) @(posedge clk_sys);
+				release dut.bus.ring_full;
+			end
+		join
+		fork
+			wr(B(20'h70022), 16'h3333);          // ... and for the FIFO
+			begin
+				@(posedge clk_sys); @(posedge clk_sys);
+				force dut.bus.ev_full = 1'b1;
+				repeat (200) @(posedge clk_sys);
+				release dut.bus.ev_full;
+			end
+		join
+		while (dut.bus.pw_t != 2) @(posedge clk_sys);
+		check(dut.bus.perf[16:0] == 9, "P.accesses in the window, exactly");
+		// {mem, ring, fifo, held, accesses} from bit 0 up, 17 bits each
+		check(dut.bus.perf[67:51] >= 290 && dut.bus.perf[67:51] <= 300, "P.held for the ring: its own counter");
+		check(dut.bus.perf[50:34] >= 190 && dut.bus.perf[50:34] <= 200, "P.held for the event FIFO: its own counter");
+		check(dut.bus.perf[84:68] > 0, "P.a ROM read's DDR3 trip counted");
+		check(dut.bus.perf[33:17] >= dut.bus.perf[50:34] + dut.bus.perf[67:51] + dut.bus.perf[84:68],
+		      "P.held covers every hold");
+		ev_drain;
 
 		$display("%0d checks, %0d failed", checks, fails);
 		if (fails == 0) $display("RUN: PASS"); else $display("RUN: FAIL");

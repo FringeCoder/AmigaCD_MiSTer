@@ -12,7 +12,10 @@
 // (status[64] clear) the board never joins the autoconfig chain, its DDR3
 // master stays idle, and its ring and queue counters stand at zero.
 
-module fmv (
+module fmv #(
+	parameter integer PERF_WINDOW = 28375160,   // fmv_bus's perf window, clk_sys
+	parameter integer PERF_SHIFT  = 8
+) (
 	input  wire        clk_sys,
 	input  wire        amiga_reset,
 	input  wire        fmv_on,
@@ -68,6 +71,7 @@ module fmv (
 	wire [15:0] mwdata, mrdata;
 
 	wire  [6:0] bus_dbg;
+	wire [84:0] perf;
 	wire [111:0] disp;
 	wire        freq_t, fhalf, lb_we;
 	wire [28:0] faddr;
@@ -76,7 +80,7 @@ module fmv (
 	wire [63:0] lb_wdata;
 	wire [15:0] d_flags, d_polls, d_rvalid, d_dwell, d_uq_rd, d_uq_w, d_n;
 
-	fmv_bus bus (
+	fmv_bus #(.PERF_WINDOW(PERF_WINDOW), .PERF_SHIFT(PERF_SHIFT)) bus (
 		.clk(clk_sys), .amiga_reset(amiga_reset), .fmv_on(fmv_on),
 		.cpu_addr(cpu_addr), .cpu_data_in(cpu_data_in), .cpu_data_out(cpu_data_out),
 		.cpu_rw(cpu_rw), .cpu_as_n(cpu_as_n), .cpu_uds_n(cpu_uds_n), .cpu_lds_n(cpu_lds_n),
@@ -85,7 +89,7 @@ module fmv (
 		.ev_wr(ev_wr), .ev_data(ev_wdata), .ev_full(ev_full),
 		.up_empty(up_empty), .up_data(up_rdata), .up_rd(up_rd),
 		.mreq_t(mreq_t), .maddr(maddr), .mrw(mrw), .mbe(mbe), .mwdata(mwdata),
-		.mack_t(mack_t), .mrdata(mrdata), .dbg(bus_dbg), .disp(disp)
+		.mack_t(mack_t), .mrdata(mrdata), .dbg(bus_dbg), .disp(disp), .perf(perf)
 	);
 
 	fmv_video video (
@@ -122,23 +126,26 @@ module fmv (
 		.dbg_dwell(d_dwell), .dbg_uq_rd(d_uq_rd), .dbg_uq_w(d_uq_w), .dbg_n(d_n)
 	);
 
-	// Layout, word 0 first (FringeCoder/AmigaCD support/minimig/fmv.cpp
+	// Layout, word 0 first (FringeCoder/AmigaCD support/minimig/fmv_transport.cpp
 	// decodes it; bump the version word if it changes):
-	//   w0 0xF401   w1 flags: [15:12] fmv_ddr state, [11] on (synchronised),
+	//   w0 0xF403   w1 flags: [15:12] fmv_ddr state, [11] on (synchronised),
 	//   [10] up_full, [9] ev_empty, [8] poll timer at 0, [7] avl_read,
 	//   [6] avl_write, [5] waitrequest, [4:2] fmv_bus state, [1] ALIVE,
-	//   [0] status[64]   w2 UQ_WPTR polls accepted   w3 readdatavalid beats
-	//   w4 clocks in the fmv_ddr state   w5 uq_rd
-	//   w6 [15] INT2, [14] the L64111 latch, [13] the CL450 INT (~Int),
-	//      [11:0] UQ_WPTR as last read (from 0xF402; 0xF401 had all 16 bits)
-	//   w7 events written
+	//   [0] status[64]
+	//   w2-w7: the last second of the 68k's time on the board (fmv_bus perf),
+	//   from bit 32 of the word up: accesses [16:0], then the cycles held, held
+	//   for the event FIFO, held for the ring, and spent on ROM/RAM, 17 bits
+	//   each in units of 256 clk_sys (9.0 us). 0xF402's gate 1 counters (polls,
+	//   beats, dwell, uq_rd, events) made way for it (run v27, the intro at
+	//   2/3 speed).
+	//   bits 127:125: INT2, the L64111 latch, the CL450 INT (w6 15:13 in 0xF402)
 	reg [111:0] dd1, dd2;
 	always @(posedge clk_ddr)
 		dd1 <= {d_n, d_uq_w, d_uq_rd, d_dwell, d_rvalid, d_polls, d_flags};
 	always @(posedge clk_sys) begin
 		dd2  <= dd1;
-		diag <= {dd2[111:96], bus_dbg[6:4], 1'b0, dd2[91:80], dd2[79:16],
+		diag <= {bus_dbg[6:4], 8'd0, perf,
 		         dd2[11:4], dd2[3:1], bus_dbg[3:0], fmv_on,   // flags word, see above
-		         16'hF402};
+		         16'hF403};
 	end
 endmodule

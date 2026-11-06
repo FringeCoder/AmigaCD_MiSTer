@@ -191,21 +191,18 @@ module tb_fmv_chain;
 		check(ac_present, "chain: ALIVE lands");
 		check(out_of_window == 0, "chain: every access stays in the window");
 		// The diag window Main reads over SPI (fmv.v's layout)
-		check(dut.diag[15:0] == 16'hF402, "diag: version word");
+		check(dut.diag[15:0] == 16'hF403, "diag: version word");
 		check(dut.diag[16] && dut.diag[17] && dut.diag[27], "diag: status[64], ALIVE and the synchronised on");
 		check(dut.diag[31:28] == 4'd0, "diag: fmv_ddr back in S_IDLE");
-		check(dut.diag[47:32] != 0, "diag: UQ_WPTR polls counted");
-		check(dut.diag[63:48] >= 16'd520, "diag: every queue beat counted");
-		check(dut.diag[95:80] == uq_wr[15:0], "diag: uq_rd");
-		check(dut.diag[107:96] == uq_wr[11:0], "diag: UQ_WPTR as last read, 12 bits");
-		check(dut.diag[111:109] == 3'b000, "diag: no interrupt line up yet");
+		check(dut.diag[116:32] == dut.bus.perf, "diag: the perf window, from bit 32");
+		check(dut.diag[127:125] == 3'b000, "diag: no interrupt line up yet");
 		// Raise the CL450 INT (HOST_control Int = 0) through the queue
 		upd(8'h48, 16'h0000, 16'h0080);
 		t = 0;
 		while (mem[UQ_RDPTR >> 3][31:0] != uq_wr && t < 400000) begin @(posedge sysclk); t = t + 1; end
 		repeat (40) @(posedge clk_sys);
 		check(dut.int2 && dut.bus.cl_int && !dut.bus.l64_int, "the CL450 INT is up, the L64111 latch is not");
-		check(dut.diag[111:109] == 3'b101, "diag: INT2 and the CL450 INT, not the L64111 latch");
+		check(dut.diag[127:125] == 3'b101, "diag: INT2 and the CL450 INT, not the L64111 latch");
 		// The arbiters' debug words (AmigaCD.sv's fmv_diag_x)
 		check(arb_dbg[15] == 0 && arb_dbg[11] == 0, "arb dbg: fmv_arb idle, no m1 request");
 		check(arb_dbg[23:16] != 0 && arb_dbg[31:24] == 0, "arb dbg: m1 grants counted, m0 none");
