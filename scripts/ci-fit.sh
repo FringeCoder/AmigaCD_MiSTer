@@ -53,7 +53,10 @@ fi
 # DDR3 arbiters, the HPS port, Paula and the 68k PC that cost timing (seed
 # lottery rows 44-50). Off unless asked for, in this checkout's .qsf only.
 if [ "${FMV_DIAG:-}" = "1" ]; then
-	echo 'set_global_assignment -name VERILOG_MACRO "FMV_DIAG=1"' >> "$proj.qsf"
+	# A newline first: AmigaCD.qsf has none at its end, and without it this
+	# line was glued onto the last one and Quartus refused the file (the
+	# first fit with FMV_DIAG on, 2026-11-06, every seed at line 349).
+	printf '\nset_global_assignment -name VERILOG_MACRO "FMV_DIAG=1"\n' >> "$proj.qsf"
 fi
 
 status=0
