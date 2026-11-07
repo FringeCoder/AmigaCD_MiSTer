@@ -534,6 +534,15 @@ always @(posedge clk) begin
 		R_PLAIN: if (clk7_en) begin
 			replay_we <= 1'b0;
 			if (ridx == 9'd256) begin
+				// Restart the copper at the COP1LC just replayed. Its program
+				// counter is not state, so it would resume at the address it
+				// held before the restore, which now holds whatever chip RAM
+				// came back, and run that as a list until the next frame.
+				// Pierre le Chef's code cleared DMACON that way. copjmp1 and
+				// strobe1 latch, so this waits out the freeze and DMA off.
+				replay_addr <= 8'h44;
+				replay_data <= 16'h0000;
+				replay_we   <= 1'b1;
 				rstate <= R_ADKCON;
 				rphase <= 1'b0;
 			end
