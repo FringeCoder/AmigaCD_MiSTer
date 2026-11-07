@@ -267,6 +267,17 @@ endfunction
 // INTREQ is excluded from this and from the shadow entirely: Paula raises its
 // bits in hardware, not only by write, so an accumulator would drift from the
 // real register within a frame.
+// COLOR00-31, $180-$1BE. Recorded, but never replayed: ss_ctrl has already put
+// all 256 colours back through the colour table port. An entry here is the last
+// value written to that address in ANY bank, and a replay writes it into the bank
+// BPLCON3 selects. Pierre le Chef sets bank 7 last and shows bank 0, so its bank 0
+// came back holding bank 7's colours: purple where the menu is pink.
+function colour(input [7:0] idx);
+begin
+	colour = (idx >= 8'hC0) && (idx <= 8'hDF);
+end
+endfunction
+
 function setclear(input [7:0] idx);
 	reg [8:0] a;
 begin
@@ -526,7 +537,7 @@ always @(posedge clk) begin
 				rstate <= R_ADKCON;
 				rphase <= 1'b0;
 			end
-			else if (writable(ridx[7:0]) && !setclear(ridx[7:0]) && written[ridx[7:0]])
+			else if (writable(ridx[7:0]) && !setclear(ridx[7:0]) && !colour(ridx[7:0]) && written[ridx[7:0]])
 				rstate <= R_PLAIN_EMIT;
 			else
 				ridx <= ridx + 9'd1;    // excluded or never written: skipped, nothing driven
