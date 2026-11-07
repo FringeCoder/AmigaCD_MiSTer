@@ -335,14 +335,9 @@ always @* begin
 		chip_rw      = c_rw;
 		chip_uds     = c_uds;
 		chip_lds     = c_lds;
-		// An FMV ROM fetch shows its fill's first address, the long word's
-		// high half, from before AS falls: if_go only switches the address
-		// with AS, and fmv_bus takes the bridge's address register (a clock
-		// late) on the first clock it sees AS, so a fill started at an odd
-		// word read that word into the line's high half (run v32, a Line F
-		// alert as the driver started). Chip RAM's SRAM bridge samples later.
-		chip_addr    = ((c_long | w32_fl) & ~c_rw) ? {w32_adr, 1'b0} : if_go ? {if_a, if_lo} :
-		               (ifch & fmv_rom_a) ? {cpu_addr_m[23:2], 1'b0} : cpu_addr_m[23:1];
+		// if_x: an FMV ROM fill reads the word asked for first (below), so
+		// its first address is the CPU's own and nothing moves as AS falls.
+		chip_addr    = ((c_long | w32_fl) & ~c_rw) ? {w32_adr, 1'b0} : if_go ? {if_a, if_lo ^ if_x} : cpu_addr_m[23:1];
 		chip_din     = ((c_long | w32_fl) & ~c_rw) ? w32_hi : cpu_dout_p;
 		chip_long    = c_long;
 		chip_din2    = cpu_dout_p;
@@ -833,6 +828,16 @@ reg         ih_v;
 reg  [23:2] ih_a;
 reg  [31:0] ih_d;
 reg         if_go, if_lo, if_dn, if_l, if_a1, if_s;
+// An FMV ROM fill started by a fetch of a long word's low half reads that
+// half first, then the high one. A fill switching the address as AS falls
+// (if_go) is read wrongly by fmv_bus, which takes the bridge's address
+// register, a clock late, on the first clock of AS: run v32 crashed on
+// exactly that (a Line F alert), the line's high half holding the low
+// word. e3819f9 showed the aligned address early instead, a decode of the
+// CPU's address into chip_addr, and cost 0.24 ns on the CPU read path
+// (seed-lottery row 56); this costs one register. Chip RAM keeps upstream's
+// order: its SRAM bridge samples the address later.
+reg         if_x;
 reg  [23:2] if_a;
 reg  [15:0] if_hi, if_lw;
 reg         nf_v, nf_s;
@@ -973,6 +978,7 @@ always @(negedge clk, negedge reset) begin
 								if_l  <= chip32_en & ~fmv_rom_a;
 								if_a  <= cpu_addr_m[23:2];
 								if_a1 <= cpu_addr_m[1];
+								if_x  <= fmv_rom_a & cpu_addr_m[1];
 								if_s  <= fc_p[2];
 							end
 						end
@@ -1001,7 +1007,16 @@ always @(negedge clk, negedge reset) begin
 							end
 							ready <= ~w32_fl;
 							if (if_go) begin
-								if (~if_lo) if_hi <= chip_dout;
+								// if_x: the low half first, the high second, and
+								// the CPU's word (the low) is the first read's
+								if (~if_lo) begin
+									if (if_x) if_lw <= chip_dout;
+									else      if_hi <= chip_dout;
+								end
+								else if (if_x) begin
+									if_hi <= chip_dout;
+									chipdout_i <= if_lw;
+								end
 								else begin
 									if_lw <= chip_dout;
 									if (~if_a1) chipdout_i <= if_hi;
