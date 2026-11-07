@@ -1987,7 +1987,11 @@ assign UART_RTS = ~hps_mpu & uart_rts;
 assign UART_DTR = ~hps_mpu & uart_dtr;
 assign uart_cts = ~hps_mpu & UART_CTS;
 assign uart_dsr = ~hps_mpu & UART_DSR;
-assign uart_rx  = uart_mode ? UART_RXD : midi_rx;
+// With no UART mode and no MT32-pi the receive pin is an unconnected user-port
+// pin, and at SERPER 0 a single low glitch on it arrives as a whole byte of ones.
+// Kickstart's RawPutChar reads that as DEL and drops into its serial debugger,
+// where Theme Park's first kprintf sat for good on a black screen.
+assign uart_rx  = uart_mode ? UART_RXD : (midi_rx | ~mt32_available);
 assign UART_TXD = (hps_mpu & mt32_use) | uart_tx;
 
 ///////////////////////////////////////////////////////////////////////
