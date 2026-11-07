@@ -77,7 +77,7 @@ drive-side RTL is RobSmithDev's (see below). ✅ two drives working.
 | Per-game NVRAM | CD32 saves keyed to the disc — by ISO9660 volume label, or a TOC-geometry UUID for discs without one. ✅ both identity paths |
 | CDDA | Audio streamed from the host into the core's FIFO. ✅ an audio disc plays through the CD32 BIOS player |
 | Sector delivery floor | Paced to a declared minimum rather than as fast as the HPS can write. ⏳ |
-| CD32 FMV module | The cartridge's CL450/L64111, modelled in Main; the picture keyed over Denise by ZD, the sound into the CDDA FIFO (`rtl/fmv/`). ✅ Cannon Fodder's intro streams and its picture shows (HDMI PAL); sound reaches the FIFO, not yet heard; a Video CD ⏳ |
+| CD32 FMV module | The cartridge's CL450/L64111, modelled in Main; the picture keyed over Denise by ZD, the sound into the CDDA FIFO (`rtl/fmv/`). ✅ Cannon Fodder's intro plays at full rate on HDMI PAL: 25.0 pictures/s, 38.3 audio frames/s, no underruns during play; sound not yet judged by ear; a Video CD ⏳ |
 
 Not yet exercised: either Real CD reset path, and everything CDTV on a real disc.
 
