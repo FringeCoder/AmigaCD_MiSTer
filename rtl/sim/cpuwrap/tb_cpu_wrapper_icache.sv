@@ -54,12 +54,31 @@ module tb_cpu_wrapper_icache;
 		ph2 <= (ph == 1);
 	end
 
-	// The bus: DTACK while AS is low, and a word per address
+	// The bus: DTACK while AS is low, and a word per address.
+	//
+	// The FMV board's range answers as the real path does (run v32): the
+	// bridge registers the address a clock (minimig_m68k_bridge address_r)
+	// but passes AS through, and fmv_bus takes its address on the first
+	// clock it sees AS low (maddr <= cpu_addr). So it answers for the
+	// address of the clock before AS fell. An address that changes with AS
+	// is read wrongly there; f22e156 did exactly that on a fill's first
+	// read, and the bench, answering from chip_addr, passed it. Chip RAM is
+	// answered from the live address, as the SRAM bridge samples later.
 	function [15:0] word_at(input [23:1] a);
 		word_at = {a[8:1], ~a[16:9]};
 	endfunction
-	assign chip_dout  = word_at(chip_addr);
-	assign chip_dout2 = word_at(chip_addr + 23'd1);
+	reg  [23:1] addr_r = 23'd0, fmv_lat = 23'd0;
+	reg         as_p = 1'b1;
+	always @(posedge clk) begin
+		if (as_p && !chip_as)
+			fmv_lat <= addr_r;          // the address register before this edge
+		as_p   <= chip_as;
+		addr_r <= chip_addr;
+	end
+	wire        in_fmv  = chip_addr[23:20] == 4'h2;
+	wire [23:1] ans_a   = (in_fmv && !(as_p && !chip_as)) ? fmv_lat : chip_addr;
+	assign chip_dout  = word_at(ans_a);
+	assign chip_dout2 = word_at(ans_a + 23'd1);
 	always @(posedge clk) chip_dtack <= chip_as;
 
 	integer cycles = 0, long_cycles = 0;

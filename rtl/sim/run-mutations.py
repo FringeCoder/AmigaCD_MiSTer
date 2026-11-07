@@ -321,6 +321,13 @@ MUTATIONS = [
      "ic_fmv <= (cpucfg[1:0] == 2'b11);",
      "ic_fmv <= ec020;",
      'G.'),
+    # Run v32: the fill's address changed with AS, and fmv_bus (behind the
+    # bridge's address register) read the CPU's own word for the high half.
+    ('cpu_wrapper: an FMV fill address that changes with AS (run v32)', CPUW_IC_TB, CPUW,
+     'rtl/cpu_wrapper.v',
+     "(ifch & fmv_rom_a) ? {cpu_addr_m[23:2], 1'b0} : cpu_addr_m[23:1];",
+     "cpu_addr_m[23:1];",
+     'B. the other word: right'),
     ('cpu_wrapper: an FMV ROM fetch evicts its own line (nf_v)', CPUW_IC_TB, CPUW,
      'rtl/cpu_wrapper.v',
      " & ~(ic_fmv & fmv_rom_a);",

@@ -335,7 +335,14 @@ always @* begin
 		chip_rw      = c_rw;
 		chip_uds     = c_uds;
 		chip_lds     = c_lds;
-		chip_addr    = ((c_long | w32_fl) & ~c_rw) ? {w32_adr, 1'b0} : if_go ? {if_a, if_lo} : cpu_addr_m[23:1];
+		// An FMV ROM fetch shows its fill's first address, the long word's
+		// high half, from before AS falls: if_go only switches the address
+		// with AS, and fmv_bus takes the bridge's address register (a clock
+		// late) on the first clock it sees AS, so a fill started at an odd
+		// word read that word into the line's high half (run v32, a Line F
+		// alert as the driver started). Chip RAM's SRAM bridge samples later.
+		chip_addr    = ((c_long | w32_fl) & ~c_rw) ? {w32_adr, 1'b0} : if_go ? {if_a, if_lo} :
+		               (ifch & fmv_rom_a) ? {cpu_addr_m[23:2], 1'b0} : cpu_addr_m[23:1];
 		chip_din     = ((c_long | w32_fl) & ~c_rw) ? w32_hi : cpu_dout_p;
 		chip_long    = c_long;
 		chip_din2    = cpu_dout_p;
