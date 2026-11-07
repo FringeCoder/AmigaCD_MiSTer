@@ -50,9 +50,14 @@
 
 module akiko #(
 	parameter NATIVE_CD32 = 0,
-	// clk cycles per sector at 1x (75 sectors a second). 28.6875 MHz / 75.
-	// Benches shrink it; nothing else should.
-	parameter CD_TICK_1X  = 382500
+	// clk cycles per sector at 1x (75 sectors a second). clk_sys follows the
+	// video standard: 28.375 MHz on PAL, 28.636 MHz on NTSC (AmigaCD.sv's PLL
+	// reconfiguration). The constant was 382500, 28.6875 MHz / 75, a clock
+	// the core never runs at: PAL read 74.2 sectors a second, and a stream
+	// paced by the disc ran 1 % slow (FringeCoder/AmigaCD docs/fmv-plan.md,
+	// run v37). Benches shrink them; nothing else should.
+	parameter CD_TICK_1X      = 378335,
+	parameter CD_TICK_1X_NTSC = 381818
 )
 (
 	input             clk,
@@ -61,6 +66,7 @@ module akiko #(
 	// 3 = 4x. 0 is 8x so that an older Main, which leaves these bits clear
 	// and paces sectors itself, is not slowed down by a newer core.
 	input       [1:0] cd_rate,
+	input             cd_ntsc,   // clk_sys is at its NTSC rate
 	input             cs,
 	input             rd,
 	input             wr,        // ~rnw & (lds|uds), pre-OR'd at fastchip
@@ -497,6 +503,10 @@ if (NATIVE_CD32) begin : g_cd
 	localparam [18:0] CD_PERIOD_2X = CD_TICK_1X / 2 - 2;
 	localparam [18:0] CD_PERIOD_4X = CD_TICK_1X / 4 - 2;
 	localparam [18:0] CD_PERIOD_8X = CD_TICK_1X / 8 - 2;
+	localparam [18:0] CD_PERIOD_1X_N = CD_TICK_1X_NTSC     - 2;
+	localparam [18:0] CD_PERIOD_2X_N = CD_TICK_1X_NTSC / 2 - 2;
+	localparam [18:0] CD_PERIOD_4X_N = CD_TICK_1X_NTSC / 4 - 2;
+	localparam [18:0] CD_PERIOD_8X_N = CD_TICK_1X_NTSC / 8 - 2;
 	reg  [1:0] cd_rate_r;
 	reg [18:0] cd_period;
 	reg [18:0] cd_tick_cnt;
@@ -504,10 +514,10 @@ if (NATIVE_CD32) begin : g_cd
 	always @(posedge clk) begin
 		cd_rate_r <= cd_rate;
 		case (cd_rate_r)
-			2'd1:    cd_period <= CD_PERIOD_1X;
-			2'd2:    cd_period <= CD_PERIOD_2X;
-			2'd3:    cd_period <= CD_PERIOD_4X;
-			default: cd_period <= CD_PERIOD_8X;
+			2'd1:    cd_period <= cd_ntsc ? CD_PERIOD_1X_N : CD_PERIOD_1X;
+			2'd2:    cd_period <= cd_ntsc ? CD_PERIOD_2X_N : CD_PERIOD_2X;
+			2'd3:    cd_period <= cd_ntsc ? CD_PERIOD_4X_N : CD_PERIOD_4X;
+			default: cd_period <= cd_ntsc ? CD_PERIOD_8X_N : CD_PERIOD_8X;
 		endcase
 	end
 

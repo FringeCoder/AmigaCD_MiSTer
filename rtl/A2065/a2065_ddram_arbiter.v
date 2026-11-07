@@ -65,7 +65,12 @@ module a2065_ddram_arbiter #(
     output wire [DATA_W-1:0]   s_writedata,
     output wire [BYTE_W-1:0]   s_byteenable,
     output wire                s_write,
-    input  wire                s_waitrequest
+    input  wire                s_waitrequest,
+
+    // Debug only (the FMV diag window, AmigaCD.sv): {m0 grants, m1 grants,
+    // busy, owner, owner_is_read, m0_req, m1_req, s_waitrequest,
+    // m0_waitrequest, m1_waitrequest, beats_left[7:0]}. Grant counts wrap.
+    output wire [31:0]         dbg
 );
 
     localparam M0 = 1'b0;
@@ -172,6 +177,15 @@ module a2065_ddram_arbiter #(
     assign m1_waitrequest = (busy && owner == M1) ? s_waitrequest // m1 owns it
                           : (busy || m0_req)      ? 1'b1          // m0 owns or wants it
                                                   : s_waitrequest;
+
+    reg [7:0] dbg_g0 = 8'd0, dbg_g1 = 8'd0;
+    always @(posedge clk)
+        if (!busy && starting && !s_waitrequest) begin
+            if (sel == M0) dbg_g0 <= dbg_g0 + 1'd1;
+            else           dbg_g1 <= dbg_g1 + 1'd1;
+        end
+    assign dbg = {dbg_g0, dbg_g1, busy, owner, owner_is_read, m0_req, m1_req,
+                  s_waitrequest, m0_waitrequest, m1_waitrequest, beats_left[7:0]};
 
     assign m0_readdata       = s_readdata;
     assign m1_readdata       = s_readdata;

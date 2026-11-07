@@ -155,6 +155,16 @@ module cpu_wrapper
 	output            a2065_ena,
 	output reg  [7:0] a2065_base,
 
+	// The CD32 FMV board (rtl/fmv, FringeCoder/AmigaCD docs/fmv-contract.md).
+	// Present when status[64] is on and Main has raised ALIVE, sampled at
+	// reset. It goes first in the chain, so it is given $200000, the base its
+	// ROM expects. Its autoconfig nibbles come from the ROM image Main loaded.
+	input             fmv_present,
+	input       [3:0] fmv_nib,
+	output      [5:0] fmv_nib_addr,
+	output            fmv_ena,
+	output reg  [7:0] fmv_base,
+
 	// CDTV mode. When 1, the CDTV DMAC card joins the autoconfig chain
 	// ahead of Toccata/Z2 fastram with the WinUAE-canonical ROM bytes
 	// from cdtv.cpp cdtv_init.
@@ -325,7 +335,9 @@ always @* begin
 		chip_rw      = c_rw;
 		chip_uds     = c_uds;
 		chip_lds     = c_lds;
-		chip_addr    = ((c_long | w32_fl) & ~c_rw) ? {w32_adr, 1'b0} : if_go ? {if_a, if_lo} : cpu_addr_m[23:1];
+		// if_x: an FMV ROM fill reads the word asked for first (below), so
+		// its first address is the CPU's own and nothing moves as AS falls.
+		chip_addr    = ((c_long | w32_fl) & ~c_rw) ? {w32_adr, 1'b0} : if_go ? {if_a, if_lo ^ if_x} : cpu_addr_m[23:1];
 		chip_din     = ((c_long | w32_fl) & ~c_rw) ? w32_hi : cpu_dout_p;
 		chip_long    = c_long;
 		chip_din2    = cpu_dout_p;
@@ -614,11 +626,13 @@ wire ckick = turbokick_d & !cpustate;
 reg turbochip_d;
 reg turbokick_d;
 reg ic_ena;
+reg ic_fmv;
 always @(posedge clk) begin
 	if (~reset | ~reset_out) begin
 		turbochip_d <= 0;
 		turbokick_d <= 0;
 		ic_ena <= 0;
+		ic_fmv <= 0;
 	end
 	else if (~cpu_req) begin	// No mem access, so safe to switch chipram access mode
 		// the proxy's FAST reads (proxy68k.v) take the same route. Not the
@@ -628,6 +642,8 @@ always @(posedge clk) begin
 		turbochip_d <= (cachecfg[0] & cpucfg[1] & ~ec020) | (px_own_s & px_fast_s);
 		turbokick_d <= (cachecfg[1] & cpucfg[1]) | (px_own_s & px_fast_s);
 		ic_ena <= cachecfg[0] & ec020;
+		// The CD32 FMV board's ROM, on either 68020: see fmv_rom_a below.
+		ic_fmv <= (cpucfg[1:0] == 2'b11);
 	end
 end
 
@@ -781,7 +797,22 @@ reg [15:0] r32_lo;
 reg [15:0] chip_dout2_p;
 always @(posedge clk) chip_dout2_p <= chip_dout2;
 
-wire        ifch = ic_ena & ~|cpustate_p & ~|cpu_addr_m[23:21];
+// The CD32 FMV board's ROM (rtl/fmv): the first 256 KB of its 1 MB, once
+// autoconfig has placed it. Code runs from it over the chip bus bridge, and
+// upstream's cache takes only chip RAM fetches, since everything else that
+// holds code is on the fast path: so every fetch of the FMV driver was a
+// chip bus cycle. Its copy loop (move.w (a1)+,(a3) / dbf at 0x203b5a) then
+// took about 5 us a word, 32 % of the 68k's time, and the stream played at
+// 0.865 of real time (FringeCoder/AmigaCD docs/fmv-plan.md, run v31). A real
+// 68EC020 runs it from its cache. The ROM is read only (fmv_bus drops
+// writes), so a line can only go stale if the ROM itself changes, which
+// happens with the board off and the CPU reset. Its fills are two 16-bit
+// reads, as without AGA: fmv_bus answers 16 bits, never a long chip read.
+// The registers and RAM above the ROM are not cached.
+reg         fmv_cfgd;      // the board is configured (autoconfig, below)
+wire        fmv_rom_a = fmv_cfgd & ~|cpu_addr_m[31:24] & (cpu_addr_m[23:20] == fmv_base[7:4]) &
+                        (cpu_addr_m[19:18] == 2'b00);
+wire        ifch = ~|cpustate_p & ((ic_ena & ~|cpu_addr_m[23:21]) | (ic_fmv & fmv_rom_a));
 reg  [16:0] ic_tag[64];
 reg  [31:0] ic_dat[64];
 reg  [63:0] ic_val;
@@ -797,6 +828,16 @@ reg         ih_v;
 reg  [23:2] ih_a;
 reg  [31:0] ih_d;
 reg         if_go, if_lo, if_dn, if_l, if_a1, if_s;
+// An FMV ROM fill started by a fetch of a long word's low half reads that
+// half first, then the high one. A fill switching the address as AS falls
+// (if_go) is read wrongly by fmv_bus, which takes the bridge's address
+// register, a clock late, on the first clock of AS: run v32 crashed on
+// exactly that (a Line F alert), the line's high half holding the low
+// word. e3819f9 showed the aligned address early instead, a decode of the
+// CPU's address into chip_addr, and cost 0.24 ns on the CPU read path
+// (seed-lottery row 56); this costs one register. Chip RAM keeps upstream's
+// order: its SRAM bridge samples the address later.
+reg         if_x;
 reg  [23:2] if_a;
 reg  [15:0] if_hi, if_lw;
 reg         nf_v, nf_s;
@@ -823,7 +864,7 @@ always @(posedge clk) begin
 	ic_vq <= ic_val[cpu_addr_m[7:2]];
 	ic_qa <= cpu_addr_m[23:2];
 	ic_qv <= ~clkena_p_throttled & ~ic_we & ~ic_clr & ~ic_clre;
-	nf_v  <= ec020 & clkena_p_throttled & ~|cpustate_p & |cpu_addr_m[23:21];
+	nf_v  <= ec020 & clkena_p_throttled & ~|cpustate_p & |cpu_addr_m[23:21] & ~(ic_fmv & fmv_rom_a);
 	nf_a  <= cpu_addr_m[23:2];
 	nf_s  <= fc_p[2];
 	if (~reset) ic_val <= 0;
@@ -931,12 +972,13 @@ always @(negedge clk, negedge reset) begin
 							c_rw <= 1;
 							c_uds <= 0;
 							c_lds <= 0;
-							c_long <= chip32_en & ~if_go;
+							c_long <= chip32_en & ~if_go & ~fmv_rom_a;
 							if (~if_go) begin
 								if_go <= 1;
-								if_l  <= chip32_en;
+								if_l  <= chip32_en & ~fmv_rom_a;
 								if_a  <= cpu_addr_m[23:2];
 								if_a1 <= cpu_addr_m[1];
+								if_x  <= fmv_rom_a & cpu_addr_m[1];
 								if_s  <= fc_p[2];
 							end
 						end
@@ -965,7 +1007,16 @@ always @(negedge clk, negedge reset) begin
 							end
 							ready <= ~w32_fl;
 							if (if_go) begin
-								if (~if_lo) if_hi <= chip_dout;
+								// if_x: the low half first, the high second, and
+								// the CPU's word (the low) is the first read's
+								if (~if_lo) begin
+									if (if_x) if_lw <= chip_dout;
+									else      if_hi <= chip_dout;
+								end
+								else if (if_x) begin
+									if_hi <= chip_dout;
+									chipdout_i <= if_lw;
+								end
 								else begin
 									if_lw <= chip_dout;
 									if (~if_a1) chipdout_i <= if_hi;
@@ -1011,6 +1062,7 @@ end
 reg       ac_toccata;
 reg       ac_a2065;
 reg       ac_cdtv;
+reg       ac_fmv;
 reg [2:0] ac_memcard;
 reg [3:0] autocfg_data;
 
@@ -1018,6 +1070,12 @@ reg [3:0] autocfg_data;
 always @(*) begin
 	autocfg_data = 4'b1111;
 
+	// The CD32 FMV board, first in the chain: its nibbles as the ROM holds
+	// them (nibble n = the high nibble of ROM byte 2n).
+	if (ac_fmv) begin
+		autocfg_data = fmv_nib;
+	end
+	else
 	// CDTV DMAC — first in the chain when cdtv_mode is on. ROM image is
 	// the WinUAE cdtv.cpp dmacmemory[] (cdtv_init: ew(0x00,0xC1),
 	// ew(0x04,0x03), ew(0x08,0x40), ew(0x10,0x02), ew(0x14,0x02), serial
@@ -1137,7 +1195,8 @@ always @(*) begin
 	end
 end
 
-wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_toccata || ac_a2065 || ac_cdtv); //$E80000 - $E8FFFF
+wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_toccata || ac_a2065 || ac_cdtv || ac_fmv); //$E80000 - $E8FFFF
+assign fmv_nib_addr = chip_addr[6:1];
 
 reg       z2ram_ena;
 reg [4:0] z3ram_base0;
@@ -1151,6 +1210,14 @@ always @(posedge clk) begin
 
 	if (~reset | ~reset_out) begin
 		ac_memcard  <= (cpucfg[1] & ~ec020) ? fastramcfg : fastramcfg[2] ? 3'd3 : {1'b0, fastramcfg[1:0]};
+		// Zorro II fast RAM is decoded at a fixed $200000-$9FFFFF whatever
+		// base it is given (memory_router.v), so it cannot share the space
+		// with the FMV board: with the board present only Z3 RAM is offered.
+		// A real CD32 with the cartridge had no Z2 RAM either.
+		if (fmv_present && !((cpucfg[1] & ~ec020) ? fastramcfg[2] : 1'b0))
+			ac_memcard <= 3'd0;
+		ac_fmv      <= fmv_present;
+		fmv_cfgd    <= 0;
 		// In CDTV mode, suppress Toccata (a real CDTV had no soundcard) so
 		// the DMAC card is alone in the chain, matching the WinUAE log
 		// "Card 01: CDTV DMAC" / end.
@@ -1171,7 +1238,17 @@ always @(posedge clk) begin
 		z3ram_base1 <= 1;
 	end
 	else if (sel_autoconfig && ~chip_rw && ~chip_uds && old_uds) begin
-		if(ac_cdtv) begin
+		if(ac_fmv) begin
+			if (chip_addr[6:1] == 6'b100100) begin // Register 0x48 - base address, the FMV board
+				fmv_base <= cpu_dout[7:0];
+				fmv_cfgd <= 1;
+				ac_fmv   <= 0;
+			end
+			else if (chip_addr[6:1] == 6'b100110) begin // Register 0x4C - shut up
+				ac_fmv   <= 0;
+			end
+		end
+		else if(ac_cdtv) begin
 			if (chip_addr[6:1] == 6'b100100) begin // Register 0x48 — KS writes the base address byte
 				cdtv_base <= cpu_dout[15:8];
 				ac_cdtv   <= 0;
@@ -1220,5 +1297,6 @@ end
 // would claim addr $00xxxx (the CPU reset vector) at FPGA boot. Mask it out.
 assign toccata_ena = ~ac_toccata & ~cdtv_mode;
 assign a2065_ena   = ~ac_a2065;
+assign fmv_ena     = fmv_cfgd;
 
 endmodule

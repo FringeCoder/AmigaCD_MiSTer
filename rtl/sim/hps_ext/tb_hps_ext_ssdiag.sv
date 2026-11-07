@@ -108,6 +108,15 @@ wire [127:0] ss_peek_data = { 16'hFEDC, 16'hBA98, 16'h7654, 16'h3210,
 wire         ss_peek_valid = 1'b1;
 
 // The restore post-mortem, behind the peek data in the same window.
+wire [127:0] fmv_diag = { 16'hF8F8, 16'hF7F7, 16'hF6F6, 16'hF5F5,
+                          16'hF4F4, 16'hF3F3, 16'hF2F2, 16'hF401 };
+wire [127:0] fmv_diag_x = { 16'hE8E8, 16'hE7E7, 16'hE6E6, 16'hE5E5,
+                            16'hE4E4, 16'hE3E3, 16'hE2E2, 16'hE1E1 };
+wire [127:0] fmv_diag_y = { 16'hD8D8, 16'hD7D7, 16'hD6D6, 16'hD5D5,
+                            16'hD4D4, 16'hD3D3, 16'hD2D2, 16'hD1D1 };
+wire [207:0] fmv_diag_z = { 16'hCDCD, 16'hCCCC, 16'hCBCB, 16'hCACA, 16'hC9C9, 16'hC8C8,
+                            16'hC7C7, 16'hC6C6, 16'hC5C5, 16'hC4C4, 16'hC3C3,
+                            16'hC2C2, 16'hC1C1 };
 wire [127:0] ss_pc_snapshot = { 32'h00FC0004, 32'h00003210, 32'h00002200, 32'h00001100 };
 wire  [63:0] ss_kick_pair   = { 32'hFEEDFACE, 32'hC0FFEE00 };
 
@@ -247,6 +256,34 @@ initial begin
 	xfer_rd(w[0]);
 	check("akiko class still reads akiko", {16'd0, w[0]}, 32'h0000AAAA);
 
+	@(negedge clk_sys); hps_uio = 1'b0;
+	@(negedge clk_sys);
+
+	// The FMV diag window on 0xFA00 (rtl/fmv/fmv.v): its own signature,
+	// then fmv_diag low word first, and the save state window untouched.
+	hps_uio = 1'b1;
+	xfer(16'h0062);
+	xfer(16'hFA00);
+	xfer(16'h0000);
+	for (k = 0; k < 42; k = k + 1) xfer_rd(w[k]);
+	check("fmv: signature",        {16'd0, w[0]}, 32'h0000A5F4);
+	check("fmv: version word",     {16'd0, w[1]}, 32'h0000F401);
+	check("fmv: word 2",           {16'd0, w[2]}, 32'h0000F2F2);
+	check("fmv: last word",        {16'd0, w[8]}, 32'h0000F8F8);
+	check("fmv: arbiter marker",   {16'd0, w[9]}, 32'h0000A5F5);
+	check("fmv: arbiter word 0",   {16'd0, w[10]}, 32'h0000E1E1);
+	check("fmv: arbiter word 7",   {16'd0, w[17]}, 32'h0000E8E8);
+	check("fmv: HPS marker",       {16'd0, w[18]}, 32'h0000A5F6);
+	check("fmv: HPS word 0",       {16'd0, w[19]}, 32'h0000D1D1);
+	check("fmv: HPS word 7",       {16'd0, w[26]}, 32'h0000D8D8);
+	check("fmv: interrupt marker", {16'd0, w[27]}, 32'h0000A5F7);
+	check("fmv: INTENA word",      {16'd0, w[28]}, 32'h0000C1C1);
+	check("fmv: INTREQ word",      {16'd0, w[29]}, 32'h0000C2C2);
+	check("fmv: PC low word",      {16'd0, w[30]}, 32'h0000C3C3);
+	check("fmv: halt word",        {16'd0, w[32]}, 32'h0000C5C5);
+	check("fmv: last ring word",   {16'd0, w[40]}, 32'h0000CDCD);
+	check("fmv: past the end",     {16'd0, w[41]}, 32'h00000000);
+	check("fmv: not the ss window", {31'd0, ss_diag_cs_probe}, 32'd0);
 	@(negedge clk_sys); hps_uio = 1'b0;
 	@(negedge clk_sys);
 

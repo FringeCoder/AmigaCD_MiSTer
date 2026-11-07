@@ -49,6 +49,16 @@ if [ -n "${BUILD_DATE:-}" ]; then
 		{ echo "could not pin BUILD_DATE in sys/build_id.tcl" >&2; exit 2; }
 fi
 
+# FMV_DIAG=1 builds the FMV diag window in (AmigaCD.sv): debug taps on the
+# DDR3 arbiters, the HPS port, Paula and the 68k PC that cost timing (seed
+# lottery rows 44-50). Off unless asked for, in this checkout's .qsf only.
+if [ "${FMV_DIAG:-}" = "1" ]; then
+	# A newline first: AmigaCD.qsf has none at its end, and without it this
+	# line was glued onto the last one and Quartus refused the file (the
+	# first fit with FMV_DIAG on, 2026-11-06, every seed at line 349).
+	printf '\nset_global_assignment -name VERILOG_MACRO "FMV_DIAG=1"\n' >> "$proj.qsf"
+fi
+
 status=0
 docker run --rm -v "$PWD":/project -w /project "$IMAGE" \
 	quartus_sh --flow compile "$proj" -c "$proj" > "fit_$seed.log" 2>&1 || status=$?
@@ -65,7 +75,13 @@ echo "== SDRAM address/bank pins: name ; pin ; bank ; X ; Y =="
 grep -E '^; SDRAM_(A|BA)\[' "output_files/$proj.fit.rpt" 2>/dev/null | awk -F';' '!seen[$2]++ {print $2";"$3";"$4";"$5";"$6}' || true
 
 rpt="output_files/$proj.sta.rpt"
-slack() {   # the worst of every corner's figure, so no corner hides a failure
+# The worst figure the flow's STA printed. AmigaCD.qsf has
+# TIMEQUEST_MULTICORNER_ANALYSIS OFF, so that is ONE corner (the MiSTer
+# template's default), not every corner: ok and the pick go by it. The
+# family table below is over every corner, and its all_setup can be worse
+# (seed-lottery row 54, seed 4: +0.029 here, -0.040 there). Both are kept;
+# the corner column in the family table says which corner that was.
+slack() {
 	grep -hoE "Worst-case $1 slack is [-0-9.]+" "$rpt" 2>/dev/null \
 		| grep -oE "[-0-9.]+$" | sort -g | head -1
 }

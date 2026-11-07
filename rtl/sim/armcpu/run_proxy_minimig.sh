@@ -10,6 +10,6 @@ iverilog -g2012 -o /tmp/tb_pm -I"$H" -s tb_proxy_minimig rtl/sim/armcpu/tb_proxy
   "$R/sim/cache/dpram_sim.v" "$R/amiga_clk.v" "$R/ss_regshadow.v" "$R/ss_freeze_phase.v" "$R/minimig.v" \
   "$R"/agnus*.v "$R"/paula*.v "$R"/denise*.v "$R"/cia*.v "$R/gary.v" "$R/gayle.v" "$R/ide.v" "$R/cart.v" \
   "$R/userio.v" "$R/minimig_bankmapper.v" "$R/minimig_m68k_bridge.v" "$R/minimig_sram_bridge.v" \
-  "$R/minimig_syscontrol.v" "$R"/MiSTerFloppy*.v "$R/cdtv_bridge.v" "$R/cdtv_nvram.v" "$R"/A2065/a2065*.v \
+  "$R/minimig_syscontrol.v" "$R"/MiSTerFloppy*.v "$R/cdtv_bridge.v" "$R/cdtv_nvram.v" "$R"/A2065/a2065*.v "$R"/fmv/fmv*.v \
   "$R/proxy68k.v"
 vvp -n /tmp/tb_pm

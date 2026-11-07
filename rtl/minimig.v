@@ -258,6 +258,15 @@ module minimig
 	input         a2065_ena,
 	input   [7:0] a2065_base,
 
+	// The CD32 FMV board (rtl/fmv). Enable and base from cpu_wrapper's
+	// autoconfig; presence and nibbles back to it.
+	input         fmv_on,          // status[64]
+	input         fmv_ena,
+	input   [7:0] fmv_base,
+	output        fmv_present,
+	input   [5:0] fmv_nib_addr,
+	output  [3:0] fmv_nib,
+
 	// CDTV mode (chipset_config[5]). 1 enables the CDTV DMAC autoconfig
 	// responder in cpu_wrapper; 0 keeps the existing Z2 fastram + Toccata
 	// chain behaviour.
@@ -338,6 +347,18 @@ module minimig
 	output [7:0]  a2065_mem_byteenable,
 	output        a2065_mem_write,
 	input         a2065_mem_waitrequest,
+
+	// The FMV board's DDR3 port, in the same clock as the A2065's
+	output [28:0] fmv_mem_address,
+	output [7:0]  fmv_mem_burstcount,
+	output        fmv_mem_read,
+	input  [63:0] fmv_mem_readdata,
+	input         fmv_mem_readdatavalid,
+	output [63:0] fmv_mem_writedata,
+	output [7:0]  fmv_mem_byteenable,
+	output        fmv_mem_write,
+	input         fmv_mem_waitrequest,
+	output [127:0] fmv_diag,         // hps_ext 0xFA00 (rtl/fmv/fmv.v)
 
 	// MiSTer Floppy / PSX SNAC (SNAC user port). USER_OUT is muxed against
 	// MT32-pi at the top level on user_port_mode; the tenants cannot be
@@ -524,6 +545,10 @@ wire        sel_cia_a;			//cia A select
 wire        sel_cia_b;			//cia B select
 	wire        sel_toccata;
 	wire        sel_a2065;
+	wire        sel_fmv;
+	// The FMV board's outputs, declared before their first use below
+	wire [15:0] fmv_dout;
+	wire        fmv_nrdy, fmv_int2;
 wire        sel_cdtv;            // $E90000-$E9FFFF DMAC/TPI/CR-511 window
 wire        sel_cdtv_nvram;
 wire        sel_cdtv_card;      // $DC8000-$DCFFFF battery RAM
@@ -763,7 +788,7 @@ paula PAULA1
 	.sof(sof),
 	.strhor(strhor_paula),
 	.vblint(vbl_int),
-	.int2(int2|(ide_fast ? ide_ext_irq : gayle_irq)|a2065_int2_sync|akiko_irq|cdtv_irq_w),
+	.int2(int2|(ide_fast ? ide_ext_irq : gayle_irq)|a2065_int2_sync|akiko_irq|cdtv_irq_w|fmv_int2),
 	.int3(int3),
 	.int6(int6 | int6_toccata),
 	._ipl(_iplx),
@@ -867,6 +892,16 @@ wire shres;
 assign ce_pix = (shres & |chipset_config[4:3]) | (hires & clk7n_en) | clk7_en;
 assign res = {shres & |chipset_config[4:3], hires};
 
+// Denise's picture, and the CD32 FMV cartridge's over it where ZD keys it
+// (FringeCoder/AmigaCD docs/fmv-contract.md v5). With the board off, or its
+// output off, fmv_show is 0 and Denise's pixels go through as they are.
+wire [7:0] den_red, den_green, den_blue;
+wire       den_zd;
+wire       fmv_show, fmv_key_all;
+wire [23:0] fmv_rgb;
+wire       fmv_sel = fmv_show & (den_zd | fmv_key_all);
+assign {red, green, blue} = fmv_sel ? fmv_rgb : {den_red, den_green, den_blue};
+
 //instantiate Denise
 denise DENISE1
 (		
@@ -886,9 +921,10 @@ denise DENISE1
 	.chip48(chip48),
 	.data_out(denise_data_out),
 	.blank(~_hsync|vblank),
-	.red(red),
-	.green(green),
-	.blue(blue),
+	.red(den_red),
+	.green(den_green),
+	.blue(den_blue),
+	.zd(den_zd),
 	.a1k(chipset_config[2]),
 	.ecs(|chipset_config[4:3]),
 	.aga(chipset_config[4]),
@@ -976,7 +1012,7 @@ minimig_m68k_bridge CPU1
 	.dbr(dbr),
 	.dbs(dbs),
 	.xbs(xbs),
-	.nrdy((gayle_nrdy & rd_cyc) | a2065_nrdy),
+	.nrdy((gayle_nrdy & rd_cyc) | a2065_nrdy | fmv_nrdy),
 	.bls(bls),
 	.blit_nasty(blit_nasty),
 	.memory_config(memory_config[3:0]),
@@ -1109,6 +1145,8 @@ gary GARY1
 	.cdtv_base(cdtv_base),
 	.a2065_ena(a2065_ena),
 	.a2065_base(a2065_base),
+	.fmv_ena(fmv_ena),
+	.fmv_base(fmv_base),
 	.cdtv_mode(chipset_config[5]),
 	.ar_on(ar_on),
 	.ram_rd(ram_rd),
@@ -1130,6 +1168,7 @@ gary GARY1
 	.sel_rtc(sel_rtc),
 	.sel_toccata(sel_toccata),
 	.sel_a2065(sel_a2065),
+	.sel_fmv(sel_fmv),
 	.sel_cdtv(sel_cdtv),
 	.sel_cdtv_nvram(sel_cdtv_nvram),
 	.sel_cdtv_card(sel_cdtv_card),
@@ -1244,6 +1283,43 @@ toccata #(
 //-------------------------------------------------------------------------------------
 // A2065 Ethernet card. Everything the card needs is inside this module; the
 // core sees only the 68k bus, an interrupt, and one memory port.
+
+// The CD32 FMV board (FringeCoder/AmigaCD docs/fmv-plan.md, phase 2). The
+// register file and the DDR3 transport to Main; the chips are modelled there.
+fmv fmv_inst (
+	.clk_sys          (clk),
+	.amiga_reset      (reset),
+	.fmv_on           (fmv_on),
+	.cpu_addr         (cpu_address_out[23:1]),
+	.cpu_data_in      (cpu_data_out),
+	.cpu_data_out     (fmv_dout),
+	.cpu_rw           (cpu_r_w),
+	.cpu_as_n         (_cpu_as),
+	.cpu_uds_n        (_cpu_uds),
+	.cpu_lds_n        (_cpu_lds),
+	.sel              (sel_fmv),
+	.nrdy             (fmv_nrdy),
+	.int2             (fmv_int2),
+	.ac_present       (fmv_present),
+	.ac_nib_addr      (fmv_nib_addr),
+	.ac_nib           (fmv_nib),
+	.clk_ddr          (a2065_clk_ddr),
+	.mem_address      (fmv_mem_address),
+	.mem_burstcount   (fmv_mem_burstcount),
+	.mem_read         (fmv_mem_read),
+	.mem_readdata     (fmv_mem_readdata),
+	.mem_readdatavalid(fmv_mem_readdatavalid),
+	.mem_writedata    (fmv_mem_writedata),
+	.mem_byteenable   (fmv_mem_byteenable),
+	.mem_write        (fmv_mem_write),
+	.mem_waitrequest  (fmv_mem_waitrequest),
+	.diag             (fmv_diag),
+	.hsync_n          (_hsync),
+	.vsync_n          (_vsync),
+	.vid_show         (fmv_show),
+	.vid_key_all      (fmv_key_all),
+	.vid_rgb          (fmv_rgb)
+);
 
 wire [15:0] a2065_dout;
 wire        a2065_nrdy;
@@ -1410,7 +1486,8 @@ assign cpu_data_in[15:0]= (gary_data_out[15:0] & cart_data_mask)
 							 | cart_data_out[15:0]
 							 | rtc_out
 							 | toccata_out
-							 | a2065_dout;
+							 | a2065_dout
+							 | fmv_dout;
 
 assign custom_data_out[15:0] = agnus_data_out[15:0]
 							 | paula_data_out[15:0]

@@ -144,7 +144,10 @@ wire [64:0] RTC;
 
 wire        ce_pix;
 wire  [1:0] buttons;
-wire [63:0] status;
+// hps_io drives all 128 bits; status[64] is the CD32 FMV board (Main:
+// support/minimig/fmv.h), the first bit free above [63:32].
+wire [127:0] status;
+wire        fmv_on = status[64];
 wire        forced_scandoubler;
 
 wire        io_strobe;
@@ -271,6 +274,14 @@ wire [35:0] EXT_BUS;
 // that this port is wired.
 wire [127:0] ss_diag;
 
+// The FMV front end's state (rtl/fmv/fmv.v) and the DDR3 arbiters' behind
+// it (assembled at fmv_arb below), on hps_ext's 0xFA00 read.
+wire [127:0] fmv_diag;
+wire [127:0] fmv_diag_x;
+wire [207:0] fmv_diag_z;    // Paula INTENA/INTREQ, Akiko's IRQ, the 68k's PC (below)
+wire        akiko_f_irq;    // fastchip's Akiko IRQ; declared here for fmv_diag_z
+wire [127:0] fmv_diag_y;    // the HPS port's counters (ddram_ctrl dbg_hps)
+
 // Live memory peek: hps_ext (clk_sys) asks, ss_ctrl (clk_114) answers.
 //
 // The request is a single clk_sys pulse and clk_114 is four times faster, so
@@ -297,6 +308,16 @@ end
 wire ss_peek_req_114 = ss_peek_tgl_sync ^ ss_peek_tgl_d;
 
 hps_ext hps_ext(.*, .ide_req(ide_fast ? ide_f_req : ide_c_req),  .ide_din(ide_fast ? ide_f_readdata : ide_c_readdata), .ss_diag(ss_diag),
+`ifdef FMV_DIAG
+	.fmv_diag(fmv_diag), .fmv_diag_x(fmv_diag_x), .fmv_diag_y(fmv_diag_y), .fmv_diag_z(fmv_diag_z),
+`else
+	// The FMV diag window (gate 1, fmv-plan.md) is off: constants in, so the
+	// taps behind it -- the arbiters' and ddram_ctrl's debug counters, the
+	// HPS port counters, the 68k PC ring, fmv.v's diag word -- have no load
+	// and are pruned. Seed-lottery rows 44-50 carried them; a FMV_DIAG=1
+	// fit (fit.yml input fmv_diag) brings them back.
+	.fmv_diag(128'd0), .fmv_diag_x(128'd0), .fmv_diag_y(128'd0), .fmv_diag_z(208'd0),
+`endif
 	.ss_peek_addr(ss_peek_addr), .ss_peek_req(ss_peek_req_sys),
 	.ss_peek_data(ss_peek_data), .ss_peek_valid(ss_peek_valid),
 	.ss_pc_snapshot(ss_pc_snapshot), .ss_kick_pair(ss_kick_pair),
@@ -1208,6 +1229,11 @@ cpu_wrapper cpu_wrapper
 	.toccata_ena  (toccata_ena     ),
 	.a2065_ena    (a2065_ena       ),
 	.a2065_base   (a2065_base      ),
+	.fmv_present  (fmv_present     ),
+	.fmv_nib      (fmv_nib         ),
+	.fmv_nib_addr (fmv_nib_addr    ),
+	.fmv_ena      (fmv_ena         ),
+	.fmv_base     (fmv_base        ),
 	.toccata_base (toccata_base    ),
 	.cdtv_mode    (cdtv_mode       ),
 
@@ -1531,6 +1557,11 @@ chipdma_arb chipdma_arb
 wire [15:0] ram_dout2;
 wire        ram_ready2;
 
+// The DDR3 arbiters' debug words, assembled into fmv_diag_x below
+wire [31:0] dsnd_arb_dbg, mirror_arb_dbg, fmv_arb_dbg;
+wire [39:0] ram2_dbg;
+wire [127:0] ram2_dbg_hps;
+
 ddram_ctrl ram2
 (
 	.sysclk       (clk_114         ),
@@ -1604,7 +1635,9 @@ ddram_ctrl ram2
 	.dmaU         (dma_ddr_u_w     ),
 	.dmaWR        (dma_ddr_wr_w    ),
 	.dmaRD        (dma_ddr_rd_w    ),
-	.dmaACK       (dma_ddr_ack_w   )
+	.dmaACK       (dma_ddr_ack_w   ),
+	.dbg          (ram2_dbg),
+	.dbg_hps      (ram2_dbg_hps)
 );
 
 ////////////////////////////  A2065 ETHERNET  ///////////////////////////////
@@ -1613,6 +1646,17 @@ ddram_ctrl ram2
 // memory port, which shares the core's DDR3 interface with the fast-RAM
 // controller above. Fast RAM has priority: it carries every 68k access to
 // Zorro RAM, while the card touches DDR3 rarely and can wait.
+
+// The CD32 FMV board: autoconfig between cpu_wrapper and minimig, and its
+// DDR3 port, which joins the chain below behind the chip RAM mirror.
+wire        fmv_present, fmv_ena;
+wire  [3:0] fmv_nib;
+wire  [5:0] fmv_nib_addr;
+wire  [7:0] fmv_base;
+wire [28:0] fmv_mem_address;
+wire  [7:0] fmv_mem_burstcount, fmv_mem_byteenable;
+wire        fmv_mem_read, fmv_mem_write, fmv_mem_readdatavalid, fmv_mem_waitrequest;
+wire [63:0] fmv_mem_readdata, fmv_mem_writedata;
 
 wire [28:0] a2065_mem_address;
 wire [7:0]  a2065_mem_burstcount, a2065_mem_byteenable;
@@ -1670,7 +1714,8 @@ a2065_ddram_arbiter dsnd_arb
 	.s_writedata     (dm_writedata),
 	.s_byteenable    (dm_byteenable),
 	.s_write         (dm_write),
-	.s_waitrequest   (dm_waitrequest)
+	.s_waitrequest   (dm_waitrequest),
+	.dbg             (dsnd_arb_dbg)
 );
 
 // and behind both of them, the chip RAM mirror (ARM-CPU plan, step 5)
@@ -1700,6 +1745,120 @@ a2065_ddram_arbiter mirror_arb
 	.m1_write        (cm_write),
 	.m1_waitrequest  (cm_waitrequest),
 
+	.s_address       (mf_address),
+	.s_burstcount    (mf_burstcount),
+	.s_read          (mf_read),
+	.s_readdata      (mf_readdata),
+	.s_readdatavalid (mf_readdatavalid),
+	.s_writedata     (mf_writedata),
+	.s_byteenable    (mf_byteenable),
+	.s_write         (mf_write),
+	.s_waitrequest   (mf_waitrequest),
+	.dbg             (mirror_arb_dbg)
+);
+
+// The DDR3 arbiters' state for the FMV diag window (hps_ext 0xFA00, after
+// fmv_diag). Gate 1 diag run, 2026-11-02: fmv_ddr sat in S_QW with
+// waitrequest high from its first request, so the grant is held above it.
+// These say at which level. Debug only, sampled in clk_114 and moved into
+// clk_sys through two flops; a read can catch a field mid-change.
+//   x0 fmv_arb {busy, owner, owner_is_read, m0_req, m1_req, s_waitrequest,
+//      m0_waitrequest, m1_waitrequest, beats_left[7:0]}  x1 fmv_arb {m0
+//      grants, m1 grants}  x2 mirror_arb as x0  x3 dsnd_arb as x0
+//   x4 ddram_ctrl's own arbiter as x0  x5 its {m0 grants, m1 grants}
+//   x6 {q2_v, q2_read, q2_write, ss_port_own, ram_rd, ram_we, DDRAM_BUSY,
+//      hs_waitrequest, dsnd_arb m1 grants}  x7 mirror_arb {m0, m1 grants}
+reg  [127:0] fmv_dx_114, fmv_dx_1, fmv_dx_2;
+always @(posedge clk_114)
+	fmv_dx_114 <= {mirror_arb_dbg[31:16], ram2_dbg[7:0], dsnd_arb_dbg[23:16],
+	               ram2_dbg[39:24], ram2_dbg[23:8], dsnd_arb_dbg[15:0],
+	               mirror_arb_dbg[15:0], fmv_arb_dbg[31:16], fmv_arb_dbg[15:0]};
+always @(posedge clk_sys) begin
+	fmv_dx_1 <= fmv_dx_114;
+	fmv_dx_2 <= fmv_dx_1;
+end
+assign fmv_diag_x = fmv_dx_2;
+
+reg  [127:0] fmv_dy_114, fmv_dy_1, fmv_dy_2;
+always @(posedge clk_114) fmv_dy_114 <= ram2_dbg_hps;
+always @(posedge clk_sys) begin
+	fmv_dy_1 <= fmv_dy_114;
+	fmv_dy_2 <= fmv_dy_1;
+end
+assign fmv_diag_y = fmv_dy_2;
+
+// The Amiga's side of the interrupt, for the FMV diag (gate 1 run v18: the
+// 68k stopped asking the CD and the FMV board for anything at the same
+// moment; storm or wait). Paula's live INTENA and INTREQ (clk_sys), and
+// Akiko's IRQ line, which shares INT2 with the FMV board, sampled through
+// two flops from clk_114. Debug only.
+//
+// Run v19 (2026-11-04) answered that: INTEN (INTENA bit 14) clear at both
+// stalls, every Paula source pending, the board's INT2 down. So the 68k is
+// spinning in a Disable()d section, in an Alert, or stopped. Where it is
+// comes next: the TG68K's executing PC now, a ring of four PCs about 1.15 ms
+// apart (2^15 clk_sys), and its halt flag (a double address error).
+//   [15:0] {0, INTENA}   [31:16] {Akiko IRQ, INTREQ}   [63:32] PC now
+//   [79:64] {halted, 0}  [207:80] the ring, oldest first, 32 bits each
+reg akiko_irq_s1, akiko_irq_s2;
+reg [31:0] fmv_pc_now;
+reg [31:0] fmv_pc_ring [0:3];
+reg [14:0] fmv_pc_tick;
+reg        fmv_halt_s;
+reg [207:0] fmv_dz;
+always @(posedge clk_sys) begin
+	akiko_irq_s1 <= akiko_f_irq;
+	akiko_irq_s2 <= akiko_irq_s1;
+	fmv_pc_now   <= ss_pc;
+	fmv_halt_s   <= ss_cpu_halted;
+	fmv_pc_tick  <= fmv_pc_tick + 1'd1;
+	if (&fmv_pc_tick) begin
+		fmv_pc_ring[0] <= fmv_pc_ring[1];
+		fmv_pc_ring[1] <= fmv_pc_ring[2];
+		fmv_pc_ring[2] <= fmv_pc_ring[3];
+		fmv_pc_ring[3] <= fmv_pc_now;
+	end
+	fmv_dz <= {fmv_pc_ring[3], fmv_pc_ring[2], fmv_pc_ring[1], fmv_pc_ring[0],
+	           fmv_halt_s, 15'd0, fmv_pc_now,
+	           akiko_irq_s2, ss_intreq, 1'b0, ss_intena};
+end
+assign fmv_diag_z = fmv_dz;
+
+// and behind all of them, the CD32 FMV board (rtl/fmv). Lowest priority: its
+// event and update-queue traffic can wait, and its ROM/RAM accesses already
+// stretch the 68k for a DDR3 round trip, so a few more cycles there are only
+// that. It touches DDR3 only while status[64] is on.
+
+wire [28:0] mf_address;
+wire  [7:0] mf_burstcount, mf_byteenable;
+wire        mf_read, mf_write, mf_readdatavalid, mf_waitrequest;
+wire [63:0] mf_readdata, mf_writedata;
+
+a2065_ddram_arbiter fmv_arb
+(
+	.clk             (clk_114),
+	.rst             (reset_d),
+
+	.m0_address      (mf_address),
+	.m0_burstcount   (mf_burstcount),
+	.m0_read         (mf_read),
+	.m0_readdata     (mf_readdata),
+	.m0_readdatavalid(mf_readdatavalid),
+	.m0_writedata    (mf_writedata),
+	.m0_byteenable   (mf_byteenable),
+	.m0_write        (mf_write),
+	.m0_waitrequest  (mf_waitrequest),
+
+	.m1_address      (fmv_mem_address),
+	.m1_burstcount   (fmv_mem_burstcount),
+	.m1_read         (fmv_mem_read),
+	.m1_readdata     (fmv_mem_readdata),
+	.m1_readdatavalid(fmv_mem_readdatavalid),
+	.m1_writedata    (fmv_mem_writedata),
+	.m1_byteenable   (fmv_mem_byteenable),
+	.m1_write        (fmv_mem_write),
+	.m1_waitrequest  (fmv_mem_waitrequest),
+
 	.s_address       (mem2_address),
 	.s_burstcount    (mem2_burstcount),
 	.s_read          (mem2_read),
@@ -1708,7 +1867,8 @@ a2065_ddram_arbiter mirror_arb
 	.s_writedata     (mem2_writedata),
 	.s_byteenable    (mem2_byteenable),
 	.s_write         (mem2_write),
-	.s_waitrequest   (mem2_waitrequest)
+	.s_waitrequest   (mem2_waitrequest),
+	.dbg             (fmv_arb_dbg)
 );
 
 wire [15:0] fastchip_dout;
@@ -1723,7 +1883,6 @@ wire        fastchip_lw;
 wire        ide_fast;
 wire        ide_f_led;
 wire        ide_f_irq;
-wire        akiko_f_irq;
 wire  [5:0] ide_f_req;
 wire [15:0] ide_f_readdata;
 
@@ -1786,6 +1945,7 @@ fastchip fastchip
 	// The CD sector rate the Main asks for (akiko.v). Not upstream's
 	// status[54:53]: those are the save state's restore request and slot here.
 	.akiko_cd_rate   (status[62:61]     ),
+	.akiko_cd_ntsc   (ntsc              ),
 	.akiko_dma_rbyte (akiko_dma_rbyte_w ),
 	.akiko_dma_ack   (akiko_dma_ack_w   ),
 	.akiko_dma_arm   (akiko_dma_arm_w   ),
@@ -1974,6 +2134,12 @@ minimig minimig
 	.toccata_base (toccata_base),
 	.a2065_ena  (a2065_ena),
 	.a2065_base (a2065_base),
+	.fmv_on       (fmv_on),
+	.fmv_ena      (fmv_ena),
+	.fmv_base     (fmv_base),
+	.fmv_present  (fmv_present),
+	.fmv_nib_addr (fmv_nib_addr),
+	.fmv_nib      (fmv_nib),
 	.toccata_aud_left (toccata_aud_left),
 	.toccata_aud_right(toccata_aud_right),
 
@@ -2042,6 +2208,16 @@ minimig minimig
 	.a2065_mem_byteenable(a2065_mem_byteenable),
 	.a2065_mem_write(a2065_mem_write),
 	.a2065_mem_waitrequest(a2065_mem_waitrequest),
+	.fmv_mem_address(fmv_mem_address),
+	.fmv_mem_burstcount(fmv_mem_burstcount),
+	.fmv_mem_read(fmv_mem_read),
+	.fmv_mem_readdata(fmv_mem_readdata),
+	.fmv_mem_readdatavalid(fmv_mem_readdatavalid),
+	.fmv_mem_writedata(fmv_mem_writedata),
+	.fmv_mem_byteenable(fmv_mem_byteenable),
+	.fmv_mem_write(fmv_mem_write),
+	.fmv_mem_waitrequest(fmv_mem_waitrequest),
+	.fmv_diag     (fmv_diag),
 
 	.USER_IN              (USER_IN              ),
 	.USER_OUT             (IndirectUserOutFlop  ),

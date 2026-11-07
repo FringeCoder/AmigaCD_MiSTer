@@ -74,3 +74,6 @@ seed_sweep/.fit.lock
 seed_sweep/*.out
 seed_sweep/*.log
 seed_sweep/*.rbf
+
+# Python bytecode from rtl/sim/run-mutations.py and friends
+__pycache__/

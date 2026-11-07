@@ -364,6 +364,90 @@ jobs:
           vvp -n tb | tee out.log
           grep -q "RUN: PASS" out.log
 
+      # The CD32 FMV module's front end (rtl/fmv) against the FPGA side of
+      # FringeCoder/AmigaCD docs/fmv-contract.md v3 -- whose executable form
+      # is tests/fmv_fpga_ref.h there, which Main's own tests run against.
+      # Neither repository's CI can see the other, so this bench is what keeps
+      # the core honest to the contract. Covers:
+      #   - the masked 68k writes and HMEM indirection;
+      #   - event entries with SEQ, and updates waited for until theirs lands;
+      #   - the INT line, the L64111 read acknowledge and the guard;
+      #   - the IO-word mirrors;
+      #   - ROM/RAM in 68k byte order, with ROM writes dropped;
+      #   - back-pressure on HOST_RDIDX;
+      #   - the RESET event, the register file outliving it, and status[64]
+      #     gating it all.
+      # Falsified 2026-11-02 with 13 mutations, now in run-mutations.py.
+      - name: FMV front end matches the contract (tb_fmv.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/fmv
+          iverilog -g2012 -o tb ../../fmv/fmv_afifo.v ../../fmv/fmv_bus.v ../../fmv/fmv_ddr.v ../../fmv/fmv_video.v ../../fmv/fmv.v tb_fmv.sv
+          vvp -n tb | tee out.log
+          grep -q "RUN: PASS" out.log
+
+      # The FMV cartridge's picture (contract v5): fmv_video's window,
+      # border, VSYNC-latched register set, BLANK and KEY_ALL, and fmv_ddr's
+      # line fetch (one per window line, DISP_W/4 words, bursts of 32), on a
+      # PAL-timed raster against a DDR3 model with random latency. It also
+      # pins the output's lag behind the beam (2 clk_sys), which Main's
+      # horizontal calibration assumes, so a pipeline change fails here
+      # rather than shifting the picture on hardware. Falsified 2026-11-05
+      # with 11 mutations, now in run-mutations.py; sampling one clock per
+      # pixel and checking the request toggle's level were both vacuous, and
+      # found that way. Not covered: Denise's ZD output (one registered
+      # compare in denise.v); no bench here drives the whole of Denise.
+      - name: FMV picture (tb_fmv_video.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/fmv
+          iverilog -g2012 -o tbv ../../fmv/fmv_ddr.v ../../fmv/fmv_video.v tb_fmv_video.sv
+          vvp -n tbv | tee outv.log
+          grep -q "RUN: PASS" outv.log
+
+      # tb_fmv.sv drives the front end straight from a DDR3 model. This one
+      # puts it behind the real path in AmigaCD.sv: fmv_arb, ddram_ctrl's mem2
+      # port with its q2 skid and arbiter, and ddr_cmd_pipe. It also checks
+      # the diag window Main reads over SPI. It exists because on hardware
+      # (gate 1 rerun, 2026-11-02) the core never took a queued update. It
+      # passes, so the fault is not in this path when it is otherwise idle; it
+      # would catch a grant, routing or address bug on the way to the window.
+      # Falsified 2026-11-02: the outer arbiter's m1 readdatavalid tied low,
+      # and the diag uq_rd field wired to the event count; and for the
+      # arbiters' debug words (the diag run that followed), their grant
+      # counters swapped, busy tied low, and q2_v tied low.
+      - name: FMV front end through ddram_ctrl (tb_fmv_chain.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/fmv
+          iverilog -g2012 -o tbc ../../ddram_ctrl.v ../../ddr_cmd_pipe.v ../../cpu_cache_new.v \
+            ../../A2065/a2065_ddram_arbiter.v ../cache/dpram_sim.v \
+            ../../fmv/fmv_afifo.v ../../fmv/fmv_bus.v ../../fmv/fmv_ddr.v ../../fmv/fmv_video.v ../../fmv/fmv.v \
+            tb_fmv_chain.sv
+          vvp -n tbc | tee outc.log
+          grep -q "RUN: PASS" outc.log
+
+      # The A2065 mailbox behind the same real path (dsnd_arb, mirror_arb,
+      # fmv_arb, ddram_ctrl, ddr_cmd_pipe), polling as it does from reset
+      # and then serving random 68k board RAM reads, RMW writes and register
+      # commands, against a DDR3 model with random BUSY. On hardware (gate 1,
+      # 2026-11-02 night) the HPS port wedged after a few mailbox commands,
+      # FMV idle. This checks the core does not lose the beat: every read
+      # comes back, the mailbox keeps polling, no arbiter waits on a beat,
+      # and no burstcount-0 read reaches the pins. It passes, so a beat lost
+      # on hardware is not lost by this RTL with a well-behaved slave.
+      # Falsified 2026-11-02: one readdatavalid dropped at an arbiter, and
+      # ddr_cmd_pipe clearing a held read without presenting it.
+      - name: A2065 mailbox through the DDR3 path (tb_a2065_chain.sv)
+        run: |
+          set -euo pipefail
+          cd rtl/sim/fmv
+          iverilog -g2012 -o tba ../../ddram_ctrl.v ../../ddr_cmd_pipe.v ../../cpu_cache_new.v \
+            ../../A2065/a2065_ddram_arbiter.v ../../A2065/a2065_ddr3_mailbox.v \
+            ../cache/dpram_sim.v tb_a2065_chain.sv
+          vvp -n tba | tee outa.log
+          grep -q "RUN: PASS" outa.log
+
       # MEASUREMENT ONLY (step 1 of the ARM-CPU plan): latprobe_ddr3 echoes an
       # ARM request word back through DDR3 so the ARM can time the round trip.
       # It shares the A2065's DDR3 port, so it must never write unless armed,
@@ -951,6 +1035,20 @@ jobs:
           iverilog -g2012 -I ../.. -o tb             ../../cpu_wrapper.v ../../proxy68k.v ../../memory_router.v ../../cpu_cycles.v             cpu_core_stubs.v tb_cpu_wrapper_park.sv
           vvp tb | tee out.log
           grep -q "RUN: PASS" out.log
+
+      # The 68020 instruction cache on the CD32 FMV board's ROM (run v31): the
+      # driver's copy loop paid a chip bus cycle per fetch, 32 % of the 68k's
+      # time, because the cache took chip RAM fetches only. Catches a ROM fetch
+      # going back to the bus, a fill as a long chip read (fmv_bus is 16-bit),
+      # the board's registers or an unconfigured range cached, the 68020
+      # (Turbo On) left out, and an FMV hit rewriting its line (nf_v).
+      - name: CPU wrapper instruction cache, FMV ROM
+        run: |
+          set -euo pipefail
+          cd rtl/sim/cpuwrap
+          iverilog -g2012 -I ../.. -o tbi             ../../cpu_wrapper.v ../../proxy68k.v ../../memory_router.v ../../cpu_cycles.v             cpu_core_stubs.v tb_cpu_wrapper_icache.sv
+          vvp tbi | tee outi.log
+          grep -q "RUN: PASS" outi.log
 
       # ECS super hires colour: register 5 * v and the sub-pixel average
       # (vAmigaTS Denise/Modes/shres, A500+ photographs).

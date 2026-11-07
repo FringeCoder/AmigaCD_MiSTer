@@ -139,6 +139,18 @@ module hps_ext
 	// 7'b1111011 is the one free class in the range: ide is 1111000, cdda
 	// 1111001, akiko 1111010 and cdtv 1111100.
 	input     [127:0] ss_diag,
+	// The CD32 FMV front end's state (rtl/fmv/fmv.v), on 0xFA00: word 0 is
+	// the signature 0xA5F4, then fmv_diag from its version word up.
+	input     [127:0] fmv_diag,
+	// and the DDR3 arbiters' state behind it, after a 0xA5F5 marker
+	// (AmigaCD.sv, fmv_diag_x)
+	input     [127:0] fmv_diag_x,
+	// and the HPS port's own counters after a 0xA5F6 marker
+	input     [127:0] fmv_diag_y,
+	// and the Amiga's state after a 0xA5F7 marker: {0, INTENA}, {Akiko IRQ,
+	// INTREQ}, the 68k's PC, its halt flag and a ring of four PCs
+	// (AmigaCD.sv fmv_diag_z, words 31-43)
+	input     [207:0] fmv_diag_z,
 
 	// Live memory peek. Same UIO class as the diagnostics (0xF600) with
 	// io_din[5] as the sub-channel bit, so it costs no new class and cannot be
@@ -210,6 +222,7 @@ reg  [5:0] byte_cnt;
 // branch clears it at the end of every transaction, which is before any read
 // can reach it.
 reg        ss_diag_cs;
+reg        fmv_diag_cs;
 reg        ss_peek_cs;
 reg        ss_peek_arm;
 
@@ -245,6 +258,7 @@ always@(posedge clk_sys) begin : main_proc
 		cdtv_cs_nvr  <= 0;
 		cdtv_cs_card <= 0;
 		ss_diag_cs <= 0;
+		fmv_diag_cs <= 0;
 		ss_peek_cs <= 0;
 		ss_peek_arm <= 0;
 		ss_peek_req <= 0;
@@ -283,6 +297,7 @@ always@(posedge clk_sys) begin : main_proc
 			// io_din[5] picks between them, so the status window is unchanged
 			// for any host that never asks for a peek.
 			ss_diag_cs       <= (io_din[15:9] == 7'b1111011) && !io_din[5];
+			fmv_diag_cs      <= (io_din[15:9] == 7'b1111101);
 			ss_peek_cs       <= (io_din[15:9] == 7'b1111011) &&  io_din[5];
 			// io_din[4] ARMS a new read; without it the transaction only reads
 			// back what the last one fetched. They have to be separate, because
@@ -502,6 +517,52 @@ always@(posedge clk_sys) begin : main_proc
 							6'd52: io_dout <= {7'd0, ss_hpos_max};
 							6'd53: io_dout <= {8'd0, ss_vbl_int_count};
 							6'd54: io_dout <= {5'd0, ss_harddis, ss_varbeamen, ss_htotal};
+							default: io_dout <= 16'd0;
+						endcase
+					end
+					if(byte_cnt >= 3 && fmv_diag_cs) begin
+						case(byte_cnt)
+							5'd3:  io_dout <= 16'hA5F4;
+							5'd4:  io_dout <= fmv_diag[15:0];
+							5'd5:  io_dout <= fmv_diag[31:16];
+							5'd6:  io_dout <= fmv_diag[47:32];
+							5'd7:  io_dout <= fmv_diag[63:48];
+							5'd8:  io_dout <= fmv_diag[79:64];
+							5'd9:  io_dout <= fmv_diag[95:80];
+							5'd10: io_dout <= fmv_diag[111:96];
+							5'd11: io_dout <= fmv_diag[127:112];
+							5'd12: io_dout <= 16'hA5F5;
+							5'd13: io_dout <= fmv_diag_x[15:0];
+							5'd14: io_dout <= fmv_diag_x[31:16];
+							5'd15: io_dout <= fmv_diag_x[47:32];
+							5'd16: io_dout <= fmv_diag_x[63:48];
+							5'd17: io_dout <= fmv_diag_x[79:64];
+							5'd18: io_dout <= fmv_diag_x[95:80];
+							5'd19: io_dout <= fmv_diag_x[111:96];
+							5'd20: io_dout <= fmv_diag_x[127:112];
+							5'd21: io_dout <= 16'hA5F6;
+							5'd22: io_dout <= fmv_diag_y[15:0];
+							5'd23: io_dout <= fmv_diag_y[31:16];
+							5'd24: io_dout <= fmv_diag_y[47:32];
+							5'd25: io_dout <= fmv_diag_y[63:48];
+							5'd26: io_dout <= fmv_diag_y[79:64];
+							5'd27: io_dout <= fmv_diag_y[95:80];
+							5'd28: io_dout <= fmv_diag_y[111:96];
+							5'd29: io_dout <= fmv_diag_y[127:112];
+							5'd30: io_dout <= 16'hA5F7;
+							5'd31: io_dout <= fmv_diag_z[15:0];
+							6'd32: io_dout <= fmv_diag_z[31:16];
+							6'd33: io_dout <= fmv_diag_z[47:32];
+							6'd34: io_dout <= fmv_diag_z[63:48];
+							6'd35: io_dout <= fmv_diag_z[79:64];
+							6'd36: io_dout <= fmv_diag_z[95:80];
+							6'd37: io_dout <= fmv_diag_z[111:96];
+							6'd38: io_dout <= fmv_diag_z[127:112];
+							6'd39: io_dout <= fmv_diag_z[143:128];
+							6'd40: io_dout <= fmv_diag_z[159:144];
+							6'd41: io_dout <= fmv_diag_z[175:160];
+							6'd42: io_dout <= fmv_diag_z[191:176];
+							6'd43: io_dout <= fmv_diag_z[207:192];
 							default: io_dout <= 16'd0;
 						endcase
 					end

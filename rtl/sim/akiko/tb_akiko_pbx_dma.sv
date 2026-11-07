@@ -40,10 +40,13 @@ logic       hps_sec_done = 0;
 // CD_TICK_1X shrunk so the pacing (Test J) runs in bench time: 1x is 96000
 // clocks here, 8x -- the rate every other test runs at -- 12000.
 localparam int TICK_1X = 96000;
+localparam int TICK_1X_NTSC = 96880;
 logic [1:0] cd_rate = 2'd0;
+logic       cd_ntsc = 1'b0;
 
-akiko #(.NATIVE_CD32(1), .CD_TICK_1X(TICK_1X)) u_dut (
+akiko #(.NATIVE_CD32(1), .CD_TICK_1X(TICK_1X), .CD_TICK_1X_NTSC(TICK_1X_NTSC)) u_dut (
 	.cd_rate(cd_rate),
+	.cd_ntsc(cd_ntsc),
 	.clk(clk), .reset(reset),
 	.cs(cs), .rd(rd), .wr(wr),
 	.lds(lds), .uds(uds),
@@ -585,14 +588,18 @@ initial begin
 	// Starts must be one period apart, the period running from each start,
 	// at every rate. The first ship after reset must not wait at all.
 	$display("--- Test J: sector rate ---");
-	for (int r = 0; r < 4; r++) begin
-		period = (r == 1) ? TICK_1X : (r == 2) ? TICK_1X/2 :
-		         (r == 3) ? TICK_1X/4 : TICK_1X/8;
+	// r 0-3 on the PAL clock, 4-7 the same rates on the NTSC one.
+	for (int r = 0; r < 8; r++) begin
+		int tick;
+		tick = (r >= 4) ? TICK_1X_NTSC : TICK_1X;
+		period = (r[1:0] == 1) ? tick : (r[1:0] == 2) ? tick/2 :
+		         (r[1:0] == 3) ? tick/4 : tick/8;
 		tag = $sformatf("J.rate%0d", r);
 		do_reset();
 		bus_write_long(5'b00100, 32'hFF000000);
 		set_addressdata(24'h010000);
 		cd_rate = r[1:0];
+		cd_ntsc = (r >= 4);
 		repeat (4) @(posedge clk);       // cd_rate_r, then cd_period
 		set_config(CFG_ENABLE | CFG_PBX);
 		ship_n = 0;
@@ -612,6 +619,7 @@ initial begin
 		         ship_t[0] - push_done_t);
 	end
 	cd_rate = 2'd0;
+	cd_ntsc = 1'b0;
 
 	$display("------------------------------------");
 	$display("checks=%0d errors=%0d", checks, errs);
