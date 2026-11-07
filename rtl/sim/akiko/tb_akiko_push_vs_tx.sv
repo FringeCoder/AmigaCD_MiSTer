@@ -72,7 +72,7 @@ logic       hps_result_done = 1'b0;
 wire        hps_rx_busy;
 
 akiko #(.NATIVE_CD32(1)) u_dut (
-	.cd_rate(2'd0),
+	.cd_rate(2'd0), .cd_ntsc(1'b0),
 	.clk(clk), .reset(reset),
 	.cs(cs), .rd(rd), .wr(wr),
 	.lds(lds), .uds(uds),

@@ -74,6 +74,7 @@ module fastchip
 	output [23:0] akiko_dma_baddr,
 	output  [7:0] akiko_dma_wbyte,
 	input   [1:0] akiko_cd_rate,   // status[62:61], see akiko.v
+	input         akiko_cd_ntsc,   // clk_sys is at its NTSC rate
 	input   [7:0] akiko_dma_rbyte,
 	input         akiko_dma_ack,
 	input         akiko_dma_arm,   // owner-freeze pulse from chipdma_arb
@@ -145,6 +146,7 @@ akiko #(.NATIVE_CD32(NATIVE_CD32)) akiko
 	.clk(clk_sys),
 	.reset(reset),
 	.cd_rate(akiko_cd_rate),
+	.cd_ntsc(akiko_cd_ntsc),
 	.cs(sel_akiko && !addr[7:6]),
 	.rd(rnw),
 	.wr(~rnw & (lds|uds)),
