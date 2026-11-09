@@ -122,7 +122,7 @@ module tb_cpu_wrapper_icache;
 
 		.toccata_ena(), .toccata_base(), .a2065_ena(), .a2065_base(),
 
-		.cdtv_mode(1'b0), .cdtv_din(16'd0), .cdtv_selack(1'b0),
+		.cdtv_mode(1'b0), .no_zorro(1'b0), .cdtv_din(16'd0), .cdtv_selack(1'b0),
 		.ar_on(1'b0), .ar_fetch(),
 		.cdtv_base(),
 
