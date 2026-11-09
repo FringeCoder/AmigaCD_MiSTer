@@ -166,7 +166,7 @@ Inherited from Minimig-AGA, with this fork's additions marked **+**.
 * RTG with up to 1920x1080 and 1600x1200 resolutions
 * Peripherals : USB keyboards, USB mice, USB gamepads
 * Serial connection to Linux with ability to connect to Internet.
-* Ethernet A2065.
+* Ethernet A2065 (not on a stock CD32, which has no Zorro slots).
 * Shared folder for rapid file exchange between Linux and Amiga.
 * MIDI: both MiSTer internal emulation and external through USER_IO port (MT32-pi and generic MIDI device)
 * Akiko chunk to planar implementation
@@ -228,6 +228,8 @@ The card is selected in the OSD under System → Ethernet. The setting is saved 
 * eth1 - a dedicated second NIC (e.g. USB Ethernet adapter), used exclusively by the Amiga.
 * macvlan - a virtual interface on top of eth0, so the Amiga has its own MAC/IP on the LAN without a second NIC.
 * tap0 - a tap device on a private subnet. Routing/NAT on the Linux side must be set up by the user. Use this for Amiga↔MiSTer-only networking or for going out over WiFi (a WiFi station can't carry a second MAC address).
+
+On a stock CD32 the card is not there at all, whatever this setting says. A real CD32 has no Zorro slots, so the core leaves both the A2065 and the Toccata sound card out of autoconfig when Main raises `status[65]`. Their ConfigDev records would otherwise sit in low chip RAM and move everything above them by 0x48 bytes, and Super Stardust's loader then ran out of contiguous chip RAM. CD32+ and the computer models keep both cards.
 
 On Amiga:
 - install a TCP/IP stack. Tested with [AmiNetXDuo](https://github.com/tinic/AmiNetXDuo) (free, MIT-licensed, IPv4+IPv6), Roadshow, MiamiDX and AmiTCP 3.3.
