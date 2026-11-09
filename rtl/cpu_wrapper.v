@@ -170,6 +170,10 @@ module cpu_wrapper
 	// from cdtv.cpp cdtv_init.
 	input             cdtv_mode,
 
+	// A CD32 has no Zorro slots: when 1, Toccata and the A2065 are left out
+	// of the autoconfig chain. The FMV cartridge and fast RAM are unaffected.
+	input             no_zorro,
+
 	input             ar_on,         // the Action Replay is fitted ($A80000-$AFFFFF through the chip bus)
 	output reg        ar_fetch = 0,  // an instruction fetch outside $A80000-$AFFFFF (one clock)
 
@@ -1221,8 +1225,8 @@ always @(posedge clk) begin
 		// In CDTV mode, suppress Toccata (a real CDTV had no soundcard) so
 		// the DMAC card is alone in the chain, matching the WinUAE log
 		// "Card 01: CDTV DMAC" / end.
-		ac_toccata  <= cdtv_mode ? 1'b0 : 1'b1;
-		ac_a2065    <= 1;
+		ac_toccata  <= (cdtv_mode | no_zorro) ? 1'b0 : 1'b1;
+		ac_a2065    <= ~no_zorro;
 		// The 6525 TPI is wired to D[7:0] on real CDTV silicon: the driver
 		// reads and writes TPI at ODD byte addresses ($B3/B5/...) via LDS.
 		// cdtv_bridge.v has to gate TPI writes on lwr and place tpi_rd on
@@ -1295,8 +1299,10 @@ end
 // In CDTV mode ac_toccata resets to 0 to suppress Toccata from autoconfig,
 // but toccata_base is uninitialized — without the cdtv_mode mask Toccata
 // would claim addr $00xxxx (the CPU reset vector) at FPGA boot. Mask it out.
-assign toccata_ena = ~ac_toccata & ~cdtv_mode;
-assign a2065_ena   = ~ac_a2065;
+// The same holds for both boards on a CD32 (no_zorro): their base registers
+// are never written, so the enables are masked as well as the chain entries.
+assign toccata_ena = ~ac_toccata & ~cdtv_mode & ~no_zorro;
+assign a2065_ena   = ~ac_a2065 & ~no_zorro;
 assign fmv_ena     = fmv_cfgd;
 
 endmodule

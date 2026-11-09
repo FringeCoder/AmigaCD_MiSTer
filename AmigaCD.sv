@@ -148,6 +148,11 @@ wire  [1:0] buttons;
 // support/minimig/fmv.h), the first bit free above [63:32].
 wire [127:0] status;
 wire        fmv_on = status[64];
+// status[65]: the machine is a CD32 (Main: AMIGACD_CD32_STATUS_OPT in
+// support/minimig/minimig_config.h). A real CD32 has no Zorro slots, so the
+// Toccata and A2065 boards stay out of the autoconfig chain. Their ConfigDev
+// records otherwise sit in low chip RAM and move everything above them.
+wire        cd32_machine = status[65];
 wire        forced_scandoubler;
 
 wire        io_strobe;
@@ -1236,6 +1241,7 @@ cpu_wrapper cpu_wrapper
 	.fmv_base     (fmv_base        ),
 	.toccata_base (toccata_base    ),
 	.cdtv_mode    (cdtv_mode       ),
+	.no_zorro     (cd32_machine    ),
 
 	// CDTV bridge data path — spec section 1. Short-circuits cpu_din the
 	// same cycle cdtv_selack fires, same shape as the fastchip path above.
