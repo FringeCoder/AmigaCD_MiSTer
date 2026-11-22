@@ -27,6 +27,11 @@ module fastchip
 
 	input         reset,
 
+	// cpu_wrapper: the access is in the RTG Zorro III board's register
+	// window. addr[23:1] then holds the offset inside it, not a $B80xxx
+	// address, so it selects the RTG block on its own.
+	input         rtg_reg_sel,
+
 	input         sel,
 	output        sel_ack, // 1 when fast chip is used instead of legacy chip
 	output        ready,
@@ -274,7 +279,7 @@ gayle gayle
 // rtg_dout in (line 123), corrupting Akiko register reads — e.g. the ID at
 // $B80000 (0xC0CA) reads back as RTG garbage, breaking the CD32 BIOS poll.
 // Gate sel_rtg with !sel_akiko so Akiko owns $B800xx; RTG keeps $B801xx+.
-wire        sel_rtg = sel && !sel_akiko && (addr[23:12] == 'hB80);
+wire        sel_rtg = sel && (rtg_reg_sel || (!sel_akiko && (addr[23:12] == 'hB80)));
 wire [15:0] rtg_dout;
 wire        rtg_ready;
 

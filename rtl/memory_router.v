@@ -49,6 +49,14 @@ module memory_router
 	input       [3:0] z3ram_base1,
 	input             z3ram_ena1,
 
+	// The RTG Zorro III board (upstream Minimig-AGA 3ea7f0e): its base in
+	// 8 MB units, {A31:A24, 0}, so a match is the board's lower 8 MB, the
+	// framebuffer. The fixed $02000000 window below stays decoded beside
+	// it for drivers that predate the board. Tie rtg_ena low where only
+	// the fixed window should exist (the DMA router, the 24-bit proxy).
+	input             rtg_ena,
+	input       [8:0] rtg_base,
+
 	// Decode signals. Consumed by cpu_wrapper to drive ramsel + cache
 	// gating. The bridge ignores sel_chipram / sel_kickram (it always
 	// reaches chip RAM via chipdma_arb's existing chipAddr path) and
@@ -78,7 +86,7 @@ assign sel_z3ram1   = (cpu_addr[31:28] == z3ram_base1) && z3ram_ena1;
 assign sel_z2ram    = !cpu_addr[31:24] && (cpu_addr[23] ^ |cpu_addr[22:21]) && z2ram_ena; // addr[23:21] = 1..4
 assign sel_zram     = sel_z3ram0 | sel_z3ram1 | sel_z2ram;
 assign sel_dd       = (cpu_addr[31:16] == 16'h00DD) && (cpu_addr[15:13] == 3'b010);
-assign sel_rtg      = (cpu_addr[31:24] == 8'h02);
+assign sel_rtg      = (rtg_ena && (cpu_addr[31:23] == rtg_base)) || (cpu_addr[31:24] == 8'h02);
 
 // don't sel_kickram when writing
 // CD32 mirrors $a8xxxx (mirror of $f8xxxx) and $b0xxxx (mirror of $e0xxxx)

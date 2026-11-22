@@ -105,6 +105,12 @@ module TG68KdotC_Kernel
 	reg  [31:0] r_addr         = 32'h00BF0000;
 	reg  [13:0] r_cacr         = 14'd0;  // bit 0: the instruction cache enabled
 	reg   [2:0] r_fc           = 3'd5;   // supervisor data
+	// Writes, for tb_cpu_wrapper_rtg's autoconfig. The defaults are the
+	// read-only levels the other benches were written against.
+	reg         r_nwr          = 1'b1;
+	reg         r_nuds         = 1'b1;
+	reg         r_nlds         = 1'b1;
+	reg  [15:0] r_wdata        = 16'd0;
 	// What the wrapper handed back: the word on data_in at each tick that
 	// completed an access, and how many accesses have completed.
 	reg  [15:0] r_rdata        = 16'd0;
@@ -124,10 +130,10 @@ module TG68KdotC_Kernel
 	assign addr_out       = r_addr;
 
 	assign regin_out      = 32'd0;
-	assign data_write     = 16'd0;
-	assign nwr            = 1'b1;
-	assign nuds           = 1'b1;
-	assign nlds           = 1'b1;
+	assign data_write     = r_wdata;
+	assign nwr            = r_nwr;
+	assign nuds           = r_nuds;
+	assign nlds           = r_nlds;
 	assign nresetout      = nreset;
 	assign longword       = 1'b0;
 	assign long_cand      = 1'b0;
