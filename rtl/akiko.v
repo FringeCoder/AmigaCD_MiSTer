@@ -492,25 +492,42 @@ if (NATIVE_CD32) begin : g_cd
 	// pushes. Upstream reads the rate out of the guest's READ command and the
 	// OSD; here the Main sends the rate it wants, cd_rate, because it already
 	// tracks the commanded speed and keeps it across a save state, which a
-	// register here would not. cd_tick is set when a period has run out and
-	// stays set until a ship takes it, so the first sector after an idle
-	// spell goes at once; a ship restarts the period. Neither is in the save state: a restore sets
-	// cd_tick, which can only let one sector go a period early.
-	// Minus two: the count restarts at 0 on the ship's start, and cd_tick is
-	// itself a register, read by PBX_IDLE a clock after it is set. So the next
-	// start lands exactly one period after the last (tb_akiko_pbx_dma, J).
-	localparam [18:0] CD_PERIOD_1X = CD_TICK_1X     - 2;
-	localparam [18:0] CD_PERIOD_2X = CD_TICK_1X / 2 - 2;
-	localparam [18:0] CD_PERIOD_4X = CD_TICK_1X / 4 - 2;
-	localparam [18:0] CD_PERIOD_8X = CD_TICK_1X / 8 - 2;
-	localparam [18:0] CD_PERIOD_1X_N = CD_TICK_1X_NTSC     - 2;
-	localparam [18:0] CD_PERIOD_2X_N = CD_TICK_1X_NTSC / 2 - 2;
-	localparam [18:0] CD_PERIOD_4X_N = CD_TICK_1X_NTSC / 4 - 2;
-	localparam [18:0] CD_PERIOD_8X_N = CD_TICK_1X_NTSC / 8 - 2;
+	// register here would not.
+	//
+	// The ships run on a fixed grid, one edge per period (after Minimig-AGA
+	// 48a35dd). cd_tick is set at each edge and stays set until a ship takes
+	// it, so a sector the Main pushes late still goes the moment it is
+	// ready, and the edge after it stays where it was: one owed tick. A late
+	// push used to delay every later sector too, because each ship restarted
+	// the period, and the stream ran 0.2-0.5 % slow (AmigaCD PR #159).
+	//
+	// cd_streaming says the grid is in use. It is set by a ship and cleared
+	// at an edge that finds cd_tick still untaken while the engine is not
+	// armed (no free slot, PBX or ENABLE off): a whole period has gone by
+	// without a ship, so nothing is owed. The first ship after such an idle
+	// spell goes at once, as before, and restarts the grid from its own
+	// start, so the second sector cannot follow it early. Neither register
+	// is in the save state: a restore sets cd_tick and clears cd_streaming,
+	// which can only let one sector go a period early.
+	//
+	// Minus one: the count runs 0..cd_period, one period of clocks. A
+	// restart loads 1, not 0, because cd_tick is itself a register, read by
+	// PBX_IDLE a clock after it is set; so a start lands exactly one period
+	// after the last on the grid and after a restart alike (tb_akiko_pbx_dma,
+	// J and K).
+	localparam [18:0] CD_PERIOD_1X = CD_TICK_1X     - 1;
+	localparam [18:0] CD_PERIOD_2X = CD_TICK_1X / 2 - 1;
+	localparam [18:0] CD_PERIOD_4X = CD_TICK_1X / 4 - 1;
+	localparam [18:0] CD_PERIOD_8X = CD_TICK_1X / 8 - 1;
+	localparam [18:0] CD_PERIOD_1X_N = CD_TICK_1X_NTSC     - 1;
+	localparam [18:0] CD_PERIOD_2X_N = CD_TICK_1X_NTSC / 2 - 1;
+	localparam [18:0] CD_PERIOD_4X_N = CD_TICK_1X_NTSC / 4 - 1;
+	localparam [18:0] CD_PERIOD_8X_N = CD_TICK_1X_NTSC / 8 - 1;
 	reg  [1:0] cd_rate_r;
 	reg [18:0] cd_period;
 	reg [18:0] cd_tick_cnt;
 	reg        cd_tick;
+	reg        cd_streaming;
 	always @(posedge clk) begin
 		cd_rate_r <= cd_rate;
 		case (cd_rate_r)
@@ -832,10 +849,15 @@ if (NATIVE_CD32) begin : g_cd
 			pbx_ship_invalid     <= 1'b0;
 			cd_tick_cnt          <= 19'd0;
 			cd_tick              <= 1'b1;
+			cd_streaming         <= 1'b0;
 		end else begin
 			if (cd_tick_cnt >= cd_period) begin
 				cd_tick_cnt <= 19'd0;
 				cd_tick     <= 1'b1;
+				if (cd_tick && !(cdrom_flags[CDFLAG_ENABLE_BIT]
+				                 && cdrom_flags[CDFLAG_PBX_BIT]
+				                 && (cdrom_pbx != 16'h0)))
+					cd_streaming <= 1'b0;
 			end else begin
 				cd_tick_cnt <= cd_tick_cnt + 19'd1;
 			end
@@ -1156,12 +1178,13 @@ if (NATIVE_CD32) begin : g_cd
 					    && cdrom_flags[CDFLAG_PBX_BIT]
 					    && (cdrom_pbx != 16'h0)
 					    && sector_ready && cd_tick && !subcode_busy) begin
-						// The period runs from this start, as the Main's own
-						// pacing did; upstream's counter runs free, which
-						// lets the second sector after an idle spell follow
-						// the first by anything from nothing to a period.
-						cd_tick      <= 1'b0;
-						cd_tick_cnt  <= 19'd0;
+						// On the grid the counter runs on; an edge in this
+						// same clock is owed to the next sector. After an
+						// idle spell the grid restarts from this start, see
+						// cd_streaming.
+						cd_tick      <= cd_streaming && (cd_tick_cnt >= cd_period);
+						cd_streaming <= 1'b1;
+						if (!cd_streaming) cd_tick_cnt <= 19'd1;
 						pbx_seccnt   <= highest_bit(cdrom_pbx);
 						// The status long (bytes 0..3) goes last, from
 						// PBX_STAT: the Core Design loader (Chuck Rock,
@@ -1492,6 +1515,7 @@ if (NATIVE_CD32) begin : g_cd
 				pbx_cnt              <= 5'h0;
 				cd_tick_cnt          <= 19'd0;
 				cd_tick              <= 1'b1;
+				cd_streaming         <= 1'b0;
 			end
 		end // else !reset
 	end
