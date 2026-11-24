@@ -173,9 +173,9 @@ always @(posedge clk) begin
 	end
 end
 
-// Ship starts, for Test J: the clock each PBX ship leaves PBX_IDLE.
+// Ship starts, for Tests J and K: the clock each PBX ship leaves PBX_IDLE.
 longint clk_n = 0;
-longint ship_t [4];
+longint ship_t [8];
 int     ship_n = 0;
 longint push_done_t = 0;
 always @(posedge clk) begin
@@ -185,7 +185,7 @@ end
 logic [2:0] pbx_state_d = 3'd0;
 always @(posedge clk) begin
 	pbx_state_d <= u_dut.g_cd.pbx_state;
-	if (pbx_state_d == 3'd0 && u_dut.g_cd.pbx_state != 3'd0 && ship_n < 4) begin
+	if (pbx_state_d == 3'd0 && u_dut.g_cd.pbx_state != 3'd0 && ship_n < 8) begin
 		ship_t[ship_n] <= clk_n;
 		ship_n         <= ship_n + 1;
 	end
@@ -585,7 +585,7 @@ initial begin
 	// Test J: the sector rate (cd_rate, after Minimig-AGA ce1f386). The host
 	// pushes each sector the moment sec_req asks, as the Main does now that
 	// it no longer sleeps, so any spacing between ship starts is the core's.
-	// Starts must be one period apart, the period running from each start,
+	// Starts must be one period apart, on the grid the first one restarts,
 	// at every rate. The first ship after reset must not wait at all.
 	$display("--- Test J: sector rate ---");
 	// r 0-3 on the PAL clock, 4-7 the same rates on the NTSC one.
@@ -620,6 +620,68 @@ initial begin
 	end
 	cd_rate = 2'd0;
 	cd_ntsc = 1'b0;
+
+	// Test K: the fixed grid (after Minimig-AGA 48a35dd). The second sector
+	// is pushed a quarter period late and ships the moment it is ready; the
+	// third is pushed on time and must ship on the grid, two periods after
+	// the first, not a period after the late one, which is the drift the
+	// grid removes. Then an idle spell: no free slot for two periods. The
+	// first sector after it goes at once and restarts the grid, so the
+	// next one follows it by exactly a period.
+	$display("--- Test K: fixed grid, one owed tick ---");
+	begin
+		longint late, t_re;
+		period = TICK_1X / 2;
+		late   = period / 4;
+		do_reset();
+		bus_write_long(5'b00100, 32'hFF000000);
+		set_addressdata(24'h010000);
+		cd_rate = 2'd2;
+		repeat (4) @(posedge clk);
+		set_config(CFG_ENABLE | CFG_PBX);
+		ship_n = 0;
+		write_pbx(16'h0007);
+		n = 0;
+		while (!hps_sec_req && n < 4*TICK_1X) begin @(posedge clk); n++; end
+		push_sector(8'h20);
+		// Sector 1: held back until a quarter period after its grid edge.
+		n = 0;
+		while (ship_n < 1 && n < 4*TICK_1X) begin @(posedge clk); n++; end
+		while (clk_n < ship_t[0] + period + late) @(posedge clk);
+		push_sector(8'h21);
+		// Sector 2: pushed the moment the core asks.
+		n = 0;
+		while (!hps_sec_req && n < 4*TICK_1X) begin @(posedge clk); n++; end
+		push_sector(8'h22);
+		wait_pbx_clear(4*TICK_1X, cyc);
+		check_bit("K.three_ships", 1'b1, ship_n == 3);
+		check_bit("K.late_ship_late", 1'b1, ship_t[1] - ship_t[0] > period + late);
+		check_bit("K.late_ship_at_once", 1'b1,
+		          ship_t[1] - ship_t[0] < period + late + 1176 + 16);
+		check_bit("K.on_grid", 1'b1, ship_t[2] - ship_t[0] == 2*period);
+		$display("    K: gaps %0d %0d, third %0d after the first (grid %0d)",
+		         ship_t[1] - ship_t[0], ship_t[2] - ship_t[1],
+		         ship_t[2] - ship_t[0], 2*period);
+
+		// Idle spell: every slot full for two periods, then two slots.
+		repeat (2*period + 100) @(posedge clk);
+		check_bit("K.idle_no_ship", 1'b1, ship_n == 3);
+		write_pbx(16'h0003);
+		n = 0;
+		while (!hps_sec_req && n < 4*TICK_1X) begin @(posedge clk); n++; end
+		push_sector(8'h23);
+		t_re = clk_n;
+		n = 0;
+		while (!hps_sec_req && n < 4*TICK_1X) begin @(posedge clk); n++; end
+		push_sector(8'h24);
+		wait_pbx_clear(4*TICK_1X, cyc);
+		check_bit("K.idle_two_ships", 1'b1, ship_n == 5);
+		check_bit("K.idle_first_at_once", 1'b1, ship_t[3] - t_re < 8);
+		check_bit("K.idle_restart", 1'b1, ship_t[4] - ship_t[3] == period);
+		$display("    K: after idle, first %0d after push, gap %0d (period %0d)",
+		         ship_t[3] - t_re, ship_t[4] - ship_t[3], period);
+	end
+	cd_rate = 2'd0;
 
 	$display("------------------------------------");
 	$display("checks=%0d errors=%0d", checks, errs);
