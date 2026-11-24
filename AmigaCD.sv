@@ -133,8 +133,13 @@ assign IndirectUserOutSnac = { snac_lightgun ? (hs & vs) : snac_user_out_raw[6],
 // OR rather than replace: a USB pad and a SNAC pad can both be connected, and
 // locking one out would be a surprise. Bits are active high here; they are
 // inverted at the minimig instantiation below.
-wire [15:0] JOY0_MUX = JOY0 | {5'd0, snac_joy0};
-wire [15:0] JOY1_MUX = JOY1 | {5'd0, snac_joy1};
+// No opposite directions at once, on the HPS joysticks only (upstream
+// c88a6f9, which moved this filter out of userio.v so that real devices
+// on the ports -- a mouse, the SNAC -- keep both lines).
+wire [15:0] joy0_hps = {JOY0[15:4], JOY0[3] & ~JOY0[2], JOY0[2], JOY0[1] & ~JOY0[0], JOY0[0]};
+wire [15:0] joy1_hps = {JOY1[15:4], JOY1[3] & ~JOY1[2], JOY1[2], JOY1[1] & ~JOY1[0], JOY1[0]};
+wire [15:0] JOY0_MUX = joy0_hps | {5'd0, snac_joy0};
+wire [15:0] JOY1_MUX = joy1_hps | {5'd0, snac_joy1};
 
 wire  [7:0] kbd_mouse_data;
 wire        kbd_mouse_level;
