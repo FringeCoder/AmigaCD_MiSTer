@@ -402,6 +402,9 @@ memory_router u_router
 	.z3ram_ena0    (z3ram_ena0),
 	.z3ram_base1   (z3ram_base1),
 	.z3ram_ena1    (z3ram_ena1),
+	// The DMA router never sees the RTG Zorro III board (upstream 3ea7f0e).
+	.rtg_ena       (1'b0),
+	.rtg_base      (9'd0),
 	.sel_chipram   (),
 	.sel_kickram   (),
 	.sel_kicklower (),

@@ -1285,6 +1285,7 @@ cpu_wrapper cpu_wrapper
 	.z3ram_ena0_out  (z3ram_ena0_w    ),
 	.z3ram_base1_out (z3ram_base1_w   ),
 	.z3ram_ena1_out  (z3ram_ena1_w    ),
+	.rtg_reg_sel     (rtg_reg_sel     ),
 	// Constant 1 since upstream 26eb46a; see cpu_wrapper.
 	.dcache_sw_en    (dcache_sw_en_w  ),
 
@@ -1390,6 +1391,7 @@ wire [4:0] z3ram_base0_w;
 wire       z3ram_ena0_w;
 wire [3:0] z3ram_base1_w;
 wire       z3ram_ena1_w;
+wire       rtg_reg_sel;
 
 // ram2 (DDR3) bridge-DMA bus. Driven by chipdma_arb when the
 // active master's address falls in a Zorro fast window; ack from ram2's
@@ -1906,6 +1908,7 @@ fastchip fastchip
 	.clk_sys      (clk_sys           ),
 
 	.reset        (~cpu_rst | ~cpu_nrst_out ),
+	.rtg_reg_sel  (rtg_reg_sel       ),
 	.sel          (fastchip_sel      ),
 	.sel_ack      (fastchip_selack   ),
 	.ready        (fastchip_ready    ),

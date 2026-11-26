@@ -1050,6 +1050,20 @@ jobs:
           vvp tbi | tee outi.log
           grep -q "RUN: PASS" outi.log
 
+      # The RTG board as a Zorro III autoconfig board (upstream Minimig-AGA
+      # 3ea7f0e): its nibbles, the base write, the framebuffer and register
+      # windows against the fixed $02000000/$B80100 ones, a restore keeping it,
+      # and which machines are offered it (none on a stock CD32). Mutations
+      # 2026-11-22: dropping the fastchip select, the no_zorro gate, the
+      # router's board term or the 64 KB bound each fail it.
+      - name: CPU wrapper RTG Zorro III board
+        run: |
+          set -euo pipefail
+          cd rtl/sim/cpuwrap
+          iverilog -g2012 -I ../.. -o tbr             ../../cpu_wrapper.v ../../proxy68k.v ../../memory_router.v ../../cpu_cycles.v             cpu_core_stubs.v tb_cpu_wrapper_rtg.sv
+          vvp tbr | tee outr.log
+          grep -q "RUN: PASS" outr.log
+
       # ECS super hires colour: register 5 * v and the sub-pixel average
       # (vAmigaTS Denise/Modes/shres, A500+ photographs).
       - name: Denise ECS super hires colour

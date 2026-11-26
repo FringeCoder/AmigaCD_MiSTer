@@ -205,6 +205,10 @@ module cpu_wrapper
 	output      [3:0] z3ram_base1_out,
 	output            z3ram_ena1_out,
 
+	// The RTG Zorro III board's register window, board+$800000..+$80FFFF,
+	// for fastchip (upstream Minimig-AGA 3ea7f0e).
+	output            rtg_reg_sel,
+
 	output            ramlong1,
 	output     [15:0] ramdin_lo,
 	input      [15:0] ramdout_hi,
@@ -242,6 +246,8 @@ assign z3ram_ena1_out  = z3ram_ena1;
 
 wire        ec020      = (cpucfg[1:0] == 2'b11) & cpucfg[2];
 wire        ec030      = (cpucfg[1:0] == 2'b10) & cpucfg[2];
+// The CPUs with a 32-bit bus: the ones offered Zorro III boards.
+wire        z3cpu      = cpucfg[1] & ~ec020;
 wire [31:0] cpu_addr_m = ec020 ? {8'd0, cpu_addr_p[23:0]} : cpu_addr_p;
 
 wire   ramsel_i     = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_dd | sel_rtg);
@@ -265,6 +271,15 @@ wire sel_zram;
 wire sel_dd;
 wire sel_rtg;
 
+// The RTG board (upstream Minimig-AGA 3ea7f0e): one 16 MB Zorro III board,
+// manufacturer $139C product $30, as the Maximig core presents it. The
+// framebuffer is its lower 8 MB (memory_router) and the registers a 64 KB
+// window at +$800000 (fastchip). The fixed $B80100/$02000000 decode stays
+// beside it, so a MiSTer.card older than 0.2 keeps working.
+reg         rtg_ena;
+reg   [7:0] rtg_base;
+assign rtg_reg_sel = rtg_ena & (cpu_addr_m[31:24] == rtg_base) & cpu_addr_m[23] & ~|cpu_addr_m[22:16];
+
 memory_router u_memory_router
 (
 	.cpu_addr      (cpu_addr      ),
@@ -279,6 +294,8 @@ memory_router u_memory_router
 	.z3ram_ena0    (z3ram_ena0    ),
 	.z3ram_base1   (z3ram_base1   ),
 	.z3ram_ena1    (z3ram_ena1    ),
+	.rtg_ena       (rtg_ena       ),
+	.rtg_base      ({rtg_base, 1'b0}),
 	.sel_chipram   (sel_chipram   ),
 	.sel_kickram   (sel_kickram   ),
 	.sel_kicklower (sel_kicklower ),
@@ -346,7 +363,7 @@ always @* begin
 		chip_long    = c_long;
 		chip_din2    = cpu_dout_p;
 		chip_data    = chipdout_i;
-		fastchip_sel = cpu_req & !cpu_addr_m[31:24] & ~req_gate;
+		fastchip_sel = cpu_req & (!cpu_addr_m[31:24] | rtg_reg_sel) & ~req_gate;
 		fastchip_lw  = longword;
 	end
 	else begin
@@ -529,6 +546,10 @@ memory_router u_px_router
 	.z3ram_ena0    (z3ram_ena0    ),
 	.z3ram_base1   (z3ram_base1   ),
 	.z3ram_ena1    (z3ram_ena1    ),
+	// 24-bit: the proxy cannot reach Zorro III space, and it only runs
+	// with the 68000 selected, which is never offered the board.
+	.rtg_ena       (1'b0          ),
+	.rtg_base      (9'd0          ),
 	.sel_chipram   (px_sel_chip   ),
 	.sel_kickram   (px_sel_kick   ),
 	.sel_kicklower (              ),
@@ -1067,6 +1088,7 @@ reg       ac_toccata;
 reg       ac_a2065;
 reg       ac_cdtv;
 reg       ac_fmv;
+reg       ac_rtg;
 reg [2:0] ac_memcard;
 reg [3:0] autocfg_data;
 
@@ -1197,9 +1219,24 @@ always @(*) begin
 			  default:;
 		endcase
 	end
+	// The RTG board, last in the chain: Zorro III, 16 MB, not memory,
+	// product $30, manufacturer $139C (inverted nibbles from $04 on).
+	else if(ac_rtg) begin
+		case (chip_addr[6:1])
+			6'h0: autocfg_data = 4'b1000;
+			6'h1: autocfg_data = 4'b0000;
+			6'h2: autocfg_data = 4'b1100;
+			6'h4: autocfg_data = 4'b0000;
+			6'h8: autocfg_data = 4'b1110;
+			6'h9: autocfg_data = 4'b1100;
+			6'ha: autocfg_data = 4'b0110;
+			6'hb: autocfg_data = 4'b0011;
+			default: ;
+		endcase
+	end
 end
 
-wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_toccata || ac_a2065 || ac_cdtv || ac_fmv); //$E80000 - $E8FFFF
+wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_toccata || ac_a2065 || ac_cdtv || ac_fmv || ac_rtg); //$E80000 - $E8FFFF
 assign fmv_nib_addr = chip_addr[6:1];
 
 reg       z2ram_ena;
@@ -1234,6 +1271,10 @@ always @(posedge clk) begin
 		// (`btst.b #2, $B5(a5)` at $F05D90 in cdtv.device) reads 0x00 and
 		// InitResident hangs before any visible log activity.
 		ac_cdtv     <= cdtv_mode;
+		// Not on a stock CD32 (no_zorro): one more ConfigDev moves ExecBase,
+		// the same reason Toccata and the A2065 are left out there.
+		ac_rtg      <= z3cpu & ~no_zorro;
+		rtg_ena     <= 0;
 		cdtv_base   <= 8'hE9;       // WinUAE default fallback ($E90000)
 		z2ram_ena   <= 0;
 		z3ram_ena0  <= 0;
@@ -1291,6 +1332,16 @@ always @(posedge clk) begin
 					z3ram_ena0 <= 1;
 					ac_memcard <= 0;
 				end
+			end
+		end
+		else if(ac_rtg) begin
+			if (chip_addr[6:1] == 6'b100010) begin // Register 0x44 - base address, A31:A24
+				rtg_base <= cpu_dout[15:8];
+				rtg_ena  <= 1;
+				ac_rtg   <= 0;
+			end
+			else if (chip_addr[6:1] == 6'b100110) begin // Register 0x4C - shut up
+				ac_rtg   <= 0;
 			end
 		end
 	end
