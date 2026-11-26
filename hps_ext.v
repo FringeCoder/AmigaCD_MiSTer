@@ -389,6 +389,12 @@ always@(posedge clk_sys) begin : main_proc
 						5: io_dout <= scr_hbl_r;
 						6: io_dout <= scr_vbl_t;
 						7: io_dout <= scr_vbl_b;
+						// The ARM CPU's bus proxy (rtl/armcpu_bridge.v) is built in. Main
+						// reads this before it offers the ARM CPU: a bridge access with
+						// nothing behind it hangs the ARM, so it has to ask first. A core
+						// without the proxy answers 0 here. 0xA5C1, not a bit, so a stray
+						// value cannot pass for it.
+						8: io_dout <= 16'hA5C1;
 					endcase
 
 				UIO_SET_VPOS:
