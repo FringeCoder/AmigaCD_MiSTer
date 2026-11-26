@@ -1050,6 +1050,22 @@ jobs:
           vvp tbi | tee outi.log
           grep -q "RUN: PASS" outi.log
 
+      # The ARM CPU's proxy reaches Akiko. Akiko lives in fastchip, which the
+      # 68000 path never selected, so the ARM CPU's cd.device found no Akiko
+      # and a CD32 never read its disc (hardware, 2026-11-26). Catches the
+      # select going back to 0, a select longer than one clock (Akiko's C2P
+      # buffer steps on every clock of it), the read word not reaching the
+      # bridge, the access leaking onto the chip bus, and a chip-bus access
+      # selecting fastchip. Falsified on the old cpu_wrapper and with the
+      # one-clock guard removed.
+      - name: CPU wrapper, ARM proxy to Akiko
+        run: |
+          set -euo pipefail
+          cd rtl/sim/cpuwrap
+          iverilog -g2012 -I ../.. -o tbpa             ../../cpu_wrapper.v ../../proxy68k.v ../../memory_router.v ../../cpu_cycles.v             cpu_core_stubs.v tb_cpu_wrapper_px_akiko.sv
+          vvp tbpa | tee outpa.log
+          grep -q "RUN: PASS" outpa.log
+
       # ECS super hires colour: register 5 * v and the sub-pixel average
       # (vAmigaTS Denise/Modes/shres, A500+ photographs).
       - name: Denise ECS super hires colour

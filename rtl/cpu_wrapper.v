@@ -324,6 +324,13 @@ reg         lds_in;
 reg  [15:0] chip_data;
 reg  [31:0] vbr;
 
+// Akiko for the ARM CPU's proxy: see px_akiko below. Declared here, ahead of
+// the CPU mux that uses them.
+wire        px_akiko;
+wire        px_fc_sel;
+reg         px_fc_done;
+reg  [15:0] px_fc_data;
+
 always @* begin
 	if(cpucfg[1:0]) begin
 		cpu_dout     = cpu_dout_p;
@@ -359,7 +366,7 @@ always @* begin
 		uds_in       = uds_x;
 		lds_in       = lds_x;
 		reset_out    = reset_out_x;
-		chip_as      = ramsel | as_x;
+		chip_as      = ramsel | as_x | px_akiko;
 		chip_rw      = wr_x;
 		chip_uds     = uds_x;
 		chip_lds     = lds_x;
@@ -368,7 +375,7 @@ always @* begin
 		chip_long    = 0;
 		chip_din2    = 0;
 		chip_data    = chip_dout;
-		fastchip_sel = 0;
+		fastchip_sel = px_fc_sel;
 		fastchip_lw  = 0;
 	end
 end
@@ -574,8 +581,8 @@ proxy68k proxy
 	.lds_n(px_lds),
 	.addr(px_addr_o),
 	.dout(px_dout),
-	.dtack_n(ramsel ? ~ramready_fx : chip_dtack),
-	.din(cpu_din)
+	.dtack_n(px_akiko ? ~px_fc_done : ramsel ? ~ramready_fx : chip_dtack),
+	.din(px_akiko ? px_fc_data : cpu_din)
 );
 
 wire [15:0] cpu_dout_x  = px_own_s ? px_dout   : cpu_dout_o;
@@ -586,6 +593,25 @@ wire        uds_x       = px_own_s ? px_uds    : uds_o;
 wire        lds_x       = px_own_s ? px_lds    : lds_o;
 // the fx68k's oRESETn, or the ARM's RESET instruction while it owns the bus
 wire        reset_out_x = px_own_s ? ~px_reset_s : reset_out_o;
+
+// Akiko ($B800xx) lives in fastchip, which only the 68020 path selected: on
+// the 68000 path fastchip_sel was 0, so the ARM CPU's cd.device found no
+// Akiko and a CD32 never read its disc. While the ARM owns the bus, an
+// access there goes to fastchip instead of the chip bus. Akiko acts on its
+// chip select every clk_sys cycle (the C2P buffer steps its pointer, the
+// PIO port takes an edge), and a 68000 cycle holds AS for many, so the
+// select is one clock long, once the data strobes are down (a write's come
+// a phase after AS), and the read word is kept for the proxy until AS rises.
+// The fx68k's own cycles are not touched: px_own_s is low for them.
+assign px_akiko  = px_own_s & ~as_x & (cpu_addr_x[23:8] == 16'hB800);
+assign px_fc_sel = px_akiko & ~(uds_x & lds_x) & ~px_fc_done;
+always @(posedge clk) begin
+	if (!px_akiko) px_fc_done <= 1'b0;
+	else if (px_fc_sel) begin
+		px_fc_done <= 1'b1;
+		px_fc_data <= fastchip_dout;
+	end
+end
 
 fx68k cpu_inst_o
 (
