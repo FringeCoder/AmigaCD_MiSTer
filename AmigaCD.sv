@@ -1100,6 +1100,34 @@ wire [15:0] ram_din_lo;
 wire [15:0] ram_dout2_hi;
 wire        ram_ready2_l;
 
+// status[66]: fast RAM behind chip RAM, for a CD32 (Main: AMIGACD_FAST_LAST_
+// STATUS_OPT in support/minimig/minimig_config.h, the FastRAM row's "after
+// chip" sizes).
+//
+// expansion.library builds a fast RAM board's MemHeader at the board's base
+// and enqueues it into exec's memory list by its ln_Pri, at +9: 0 for a
+// board, -10 for chip RAM, so fast RAM is handed out first. A CD32 game that
+// takes MEMF_ANY memory for something Akiko or the chipset must reach then
+// gets fast RAM. James Pond 3 goes black after its intro that way, here and on
+// Copperline, with any fast RAM at all.
+//
+// With this bit set, the byte written at +9 of each board's base reaches DDR3
+// as -20 ($EC), whatever the CPU wrote, so the board is enqueued behind chip
+// RAM and only used once chip RAM is full. It is the trick armcpu's -B plays
+// on its own board (tools/armcpu, Main). The write is one Kickstart makes
+// once, at autoconfig; nothing else writes into a live MemHeader's node.
+//
+// The addresses are the DDR3 word addresses memory_router.v maps each
+// board's base + 8 to (ln_Type at +8 in the upper byte, ln_Pri at +9 in the
+// lower): Z2 at $200000 into bank 100 at $00200000, the 256 MB Z3 board (Z3_1)
+// at bank 10x offset 0, the 128 MB one (Z3_0) at bank 01x offset 0. Only one
+// of Z2 and Z3 is ever live (cpu_wrapper.v ac_memcard).
+wire        fast_last  = status[66];
+wire        fast_hdr   = (ram_addr == 28'h8100004)   // Z2:   $10200008 >> 1
+                       | (ram_addr == 28'h8000004)   // Z3_1: $10000008 >> 1
+                       | (ram_addr == 28'h4000004);  // Z3_0: $08000008 >> 1
+wire [15:0] ram_din_z  = (fast_last & fast_hdr) ? {ram_din[15:8], 8'hEC} : ram_din;
+
 cpu_rdgate cpu_rdgate
 (
 	.clk        (clk_114),
@@ -1604,7 +1632,7 @@ ddram_ctrl ram2
 	.mem2_write        (mem2_write),
 	.mem2_waitrequest  (mem2_waitrequest),
 
-	.cpuWR        (ram_din         ),
+	.cpuWR        (ram_din_z       ),
 	.cpuAddr      (ram_addr        ),
 	.cpuU         (ram_uds         ),
 	.cpuL         (ram_lds         ),
